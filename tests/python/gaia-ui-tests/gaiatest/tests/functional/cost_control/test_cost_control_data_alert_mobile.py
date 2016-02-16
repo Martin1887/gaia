@@ -2,20 +2,19 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from marionette.by import By
+from marionette_driver import Wait
+
 from gaiatest import GaiaTestCase
-from gaiatest.apps.browser.app import Browser
+from gaiatest.apps.search.app import Search
 from gaiatest.apps.cost_control.app import CostControl
+from gaiatest.apps.system.app import System
 
 
 class TestCostControlDataAlertMobile(GaiaTestCase):
 
-    # notification bar locators
-    _cost_control_widget_locator = (By.CSS_SELECTOR, '#cost-control-widget > iframe')
-    _data_usage_view_locator = (By.ID, 'datausage-limit-view')
-
     def setUp(self):
         GaiaTestCase.setUp(self)
+        self.data_layer.set_bool_pref('privacy.trackingprotection.enabled', False)
         self.data_layer.disable_wifi()
         self.data_layer.connect_to_cell_data()
 
@@ -32,28 +31,32 @@ class TestCostControlDataAlertMobile(GaiaTestCase):
         self.assertFalse(cost_control.is_wifi_data_tracking_on)
 
         settings = cost_control.tap_settings()
-        settings.toggle_data_alert_switch(True)
-        settings.select_when_use_is_above_unit_and_value(u'MB', '0.1')
+        settings.enable_data_alert_switch()
         settings.reset_mobile_usage()
+        settings.select_when_use_is_above_unit_and_value(u'MB', '0.1')
         settings.tap_done()
         self.assertTrue(cost_control.is_mobile_data_tracking_on)
 
         # open browser to get some data downloaded
-        browser = Browser(self.marionette)
-        browser.launch()
-        browser.go_to_url('http://www.mozilla.org/', timeout=180)
+        search = Search(self.marionette)
+        search.launch(launch_timeout=30000)
+        search.go_to_url('http://mozqa.com/qa-testcase-data/Images/sample_png_02.png')
 
-        # get the notification bar
-        self.device.touch_home_button()
+        system = System(self.marionette)
+        # We could have waited on the page to be loaded, but the toaster can appear before
+        # the end of the load. That's why the timeout is expanded, the webpage loaded just above
+        # might take longer.
+        system.wait_for_notification_toaster_displayed(timeout=180)
+        system.wait_for_notification_toaster_not_displayed()
+        utility_tray = system.open_utility_tray()
+
+        cost_control_widget = utility_tray.cost_control_widget
+        cost_control_widget.wait_for_limit_to_be_reached()
+        cost_control_widget.tap()
+        cost_control.wait_to_be_displayed()
+
+    def tearDown(self):
         self.marionette.switch_to_frame()
-        self.marionette.execute_script("window.wrappedJSObject.UtilityTray.show()")
-
-        # switch to cost control widget
-        usage_iframe = self.marionette.find_element(*self._cost_control_widget_locator)
-        self.marionette.switch_to_frame(usage_iframe)
-
-        # make sure the color changed
-        self.wait_for_condition(
-            lambda m: 'reached-limit' in self.marionette.find_element(
-                *self._data_usage_view_locator).get_attribute('class'),
-            message='Data usage bar did not breach limit')
+        self.data_layer.disable_cell_data()
+        self.data_layer.clear_user_pref('privacy.trackingprotection.enabled')
+        GaiaTestCase.tearDown(self)

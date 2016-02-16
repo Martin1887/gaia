@@ -1,6 +1,4 @@
-/* -*- Mode: js; js-indent-level: 2; indent-tabs-mode: nil -*- */
-/* vim: set shiftwidth=2 tabstop=2 autoindent cindent expandtab: */
-
+/* global DUMP, LazyLoader, icc_worker, MozActivity, Service, STKHelper */
 'use strict';
 
 var icc = {
@@ -8,9 +6,27 @@ var icc = {
   _defaultURL: null,
   _inputTimeout: 40000,
   _toneDefaultTimeout: 5000,
+  _screen: null,
+  _currentMessage: null,
+
+  checkPlatformCompatibility: function icc_checkPlatformCompat() {
+    // The STK_RESULT_ACTION_CONTRADICTION_TIMER_STATE constant will be added
+    // in the next versions of the platform. This code avoid errors if running
+    // in old versions. See bug #1026556
+    // Remove this workaround as soon as Gecko has the constant defined.
+    // Followup bug #1059166
+    if (!('STK_RESULT_ACTION_CONTRADICTION_TIMER_STATE' in this._iccManager)) {
+      this._iccManager.STK_RESULT_ACTION_CONTRADICTION_TIMER_STATE = 0x24;
+    }
+  },
 
   init: function icc_init() {
     this._iccManager = window.navigator.mozIccManager;
+    if (!this._iccManager) {
+      return;
+    }
+    this._screen = document.getElementById('screen');
+    this.checkPlatformCompatibility();
     var self = this;
     this.clearMenuCache(function() {
       window.navigator.mozSetMessageHandler('icc-stkcommand',
@@ -20,12 +36,11 @@ var icc = {
           }
         });
     });
-
+    window.addEventListener('home', this);
     this.hideViews();
     this.protectForms();
     this.getIccInfo();
 
-    var self = this;
     // Update displayTextTimeout with settings parameter
     var reqDisplayTimeout = window.navigator.mozSettings.createLock().get(
       'icc.displayTextTimeout');
@@ -61,21 +76,40 @@ var icc = {
         self._toneDefaultTimeout = e.settingValue;
       }
     );
+
+    window.addEventListener('iac-settingsstk', function(evt) {
+      var message = evt.detail;
+      DUMP('STK_System IAC!!!!');
+      if (message === 'StkMenuHidden') {
+        window.dispatchEvent(new CustomEvent('stkMenuHidden'));
+      }
+    });
+
+    // Wait desktop-notification-resend event
+    // for loading all notifications before last power off.
+    window.addEventListener('desktop-notification-resend',
+      self.clearIdleTextNotification);
+  },
+
+  clearIdleTextNotification: function icc_clearIdleTextNotification() {
+    Notification.get().then(function(notifications) {
+      for (var i = 0; i < notifications.length; i++) {
+        if (notifications[i].tag.indexOf('stkNotification_') === 0) {
+          notifications[i].close();
+        }
+      }
+    });
   },
 
   getIccInfo: function icc_getIccInfo() {
     var self = this;
-    var xhr = new XMLHttpRequest();
-    xhr.onerror = function() {
-      DUMP('Failed to fetch file: ' + href, xhr.statusText);
-    };
-    xhr.onload = function() {
-      self._defaultURL = xhr.response.defaultURL;
+    var url = '/resources/icc.json';
+    LazyLoader.getJSON(url).then(function(json) {
+      self._defaultURL = json.defaultURL;
       DUMP('ICC default URL: ', self._defaultURL);
-    };
-    xhr.open('GET', '/resources/icc.json', true);
-    xhr.responseType = 'json';
-    xhr.send();
+    }, function(error) {
+      DUMP('Failed to fetch file: ' + url + ',' + error);
+    });
   },
 
   getIcc: function icc_getIcc(iccId) {
@@ -127,7 +161,7 @@ var icc = {
 
     DUMP('STK Proactive Command for SIM ' + message.iccId + ': ',
       message.command);
-    if (FtuLauncher.isFtuRunning()) {
+    if (Service.query('isFtuRunning')) {
       // Delay the stk command until FTU is done
       var self = this;
       window.addEventListener('ftudone', function ftudone() {
@@ -137,22 +171,40 @@ var icc = {
       return DUMP('FTU is running, delaying STK...');
     }
 
-    var cmdId = '0x' + message.command.typeOfCommand.toString(16);
+    /* TODO: cleanup branching after bug 819831 landed */
+    var cmdId;
+    if (typeof message.command.typeOfCommand === 'string') {
+      cmdId = message.command.typeOfCommand;
+    } else {
+      cmdId = '0x' + message.command.typeOfCommand.toString(16);
+    }
     if (icc_worker[cmdId]) {
+      this.resize();
       return icc_worker[cmdId](message);
     }
 
     DUMP('STK Command not recognized ! - ', message);
   },
 
+  handleEvent: function icc_handleEvent(evt) {
+    switch (evt.type) {
+      case 'home':
+        if (this.isVisible()) {
+          this.hideViews();
+        }
+        break;
+    }
+  },
 
   /**
    * Response ICC Command
    */
   responseSTKCommand: function icc_responseSTKCommand(message, response) {
+    DUMP('sendStkResponse to message: ', message);
     DUMP('STK sendStkResponse -- # response = ', response);
     var _icc = icc.getIcc(message.iccId);
     _icc && _icc.sendStkResponse(message.command, response);
+    message.response = true;
   },
 
   /**
@@ -188,12 +240,11 @@ var icc = {
 
     // Prevents from reloading the system app when
     // the user taps on the Enter key
-    var iccView = document.getElementById('icc-view');
-    if (!iccView) {
+    if (!this.icc_view) {
       return;
     }
 
-    var forms = iccView.getElementsByTagName('form');
+    var forms = this.icc_view.getElementsByTagName('form');
     if (!forms) {
       return;
     }
@@ -213,7 +264,7 @@ var icc = {
     var timeout = timeInterval;
     switch (timeUnit) {
       case this._iccManager.STK_TIME_UNIT_MINUTE:
-        timeout *= 3600000;
+        timeout *= 60000;
         break;
       case this._iccManager.STK_TIME_UNIT_SECOND:
         timeout *= 1000;
@@ -229,69 +280,142 @@ var icc = {
     if (!this.icc_view) {
       this.icc_view = document.getElementById('icc-view');
     }
+    this._screen.classList.remove('icc');
     this.icc_view.classList.remove('visible');
     var icc_view_boxes = this.icc_view.children;
     for (var i = 0; i < icc_view_boxes.length; i++) {
       icc_view_boxes[i].classList.remove('visible');
     }
+    window.removeEventListener('keyboardchange', this.keyboardChangedEvent);
+    window.removeEventListener('keyboardhide', this.keyboardChangedEvent);
+    this._currentMessage = null;
   },
 
-  alert: function icc_alert(stkMessage, message) {
-    var _ = navigator.mozL10n.get;
+  setupView: function icc_setupView(viewId) {
+    // If the view has a form, we should be care of the keyboard changes
+    if (viewId.getElementsByTagName('form').length > 0) {
+      this.keyboardChangedEvent(viewId);
+      window.addEventListener('keyboardchange',
+        this.keyboardChangedEvent.bind(undefined, viewId, false));
+      window.addEventListener('keyboardhide',
+        this.keyboardChangedEvent.bind(undefined, viewId, true));
+    }
+  },
+
+  keyboardChangedEvent: function(viewId, hidden) {
+    var keyboardHeight = 0;
+    if (!hidden) {
+      keyboardHeight = Service.query('InputWindowManager.getHeight') || 0;
+    }
+    var form = viewId.getElementsByTagName('form');
+    var height = (window.innerHeight - keyboardHeight);
+    height -= (Service.query('Statusbar.height') || 0);
+    height -= (Service.query('SoftwareButtonManager.height') || 0);
+    viewId.style.height = height + 'px';
+    if (form && viewId.clientHeight > 0) {
+      var input = viewId.getElementsByTagName('input')[0];
+      var header = viewId.getElementsByTagName('gaia-header')[0];
+      var headerSubtitle = viewId.getElementsByTagName('gaia-subheader')[0];
+      var menu = viewId.getElementsByTagName('menu')[0];
+      var formHeight = viewId.clientHeight;
+      formHeight -= (header.clientHeight + headerSubtitle.clientHeight);
+      formHeight -= menu.clientHeight;
+      form[0].style.height = formHeight + 'px';
+      input.scrollIntoView();
+    }
+  },
+
+  resize: function() {
+    if (!this.isVisible()) {
+      return;
+    }
+    this.icc_view.style.top = Service.query('Statusbar.height') + 'px';
+    this.icc_view.style.bottom =
+      Service.query('SoftwareButtonManager.height') + 'px';
+  },
+
+  alert: function icc_alert(stkMessage, messageL10n, icons) {
     if (!this.icc_alert) {
       this.icc_alert = document.getElementById('icc-alert');
-      this.icc_alert_title = document.getElementById('icc-alert-title');
+      this.icc_alert_subtitle = document.getElementById('icc-alert-subtitle');
+      this.icc_alert_icons = document.getElementById('icc-alert-icons');
       this.icc_alert_msg = document.getElementById('icc-alert-msg');
       this.icc_alert_btn = document.getElementById('icc-alert-btn');
+      this.setupView(this.icc_alert);
     }
 
-    this.icc_alert_title.textContent = _('icc-message-title', {
-        'id': this.getSIMNumber(stkMessage.iccId)
-      });
+    // Clear previous icons
+    this.icc_alert_icons.innerHTML = '';
+
+    document.l10n.setAttributes(
+      this.icc_alert_subtitle,
+      'icc-message-subtitle',
+      { 'id': this.getSIMNumber(stkMessage.iccId) }
+    );
 
     var self = this;
     this.icc_alert_btn.onclick = function closeICCalert() {
       self.hideViews();
     };
 
-    this.icc_alert_msg.textContent = message;
+    if (icons && icons.length > 0) {
+      this.icc_alert.dataset.icons = true;
+      this.drawMessageIcons(this.icc_alert_icons, icons);
+    } else {
+      delete this.icc_alert.dataset.icons;
+    }
+
+    this.localizeElement(this.icc_alert_msg, messageL10n);
+    this._screen.classList.add('icc');
     this.icc_alert.classList.add('visible');
     this.icc_view.classList.add('visible');
+    this.resize();
+  },
+
+  isVisible: function() {
+    return this.icc_view.classList.contains('visible');
   },
 
   /**
    * callback responds with "userCleared"
    */
-  confirm: function(stkMessage, message, timeout, callback) {
-    var _ = navigator.mozL10n.get;
+  confirm: function(stkMessage, messageL10n, icons, timeout, callback) {
     if (!this.icc_confirm) {
       this.icc_confirm = document.getElementById('icc-confirm');
-      this.icc_confirm_title = document.getElementById('icc-confirm-title');
+      this.icc_confirm_subtitle =
+        document.getElementById('icc-confirm-subtitle');
+      this.icc_confirm_icons = document.getElementById('icc-confirm-icons');
       this.icc_confirm_msg = document.getElementById('icc-confirm-msg');
       this.icc_confirm_btn = document.getElementById('icc-confirm-btn');
-      this.icc_confirm_btn_back =
-        document.getElementById('icc-confirm-btn_back');
+      this.icc_confirm_header =
+        document.getElementById('icc-confirm-header');
       this.icc_confirm_btn_close =
         document.getElementById('icc-confirm-btn_close');
+      this.setupView(this.icc_confirm);
     }
+
+    // Clear previous icons
+    this.icc_confirm_icons.innerHTML = '';
 
     if (typeof callback != 'function') {
       callback = function() {};
     }
 
-    this.icc_confirm_title.textContent = _('icc-message-title', {
-        'id': this.getSIMNumber(stkMessage.iccId)
-      });
+    document.l10n.setAttributes(
+      this.icc_confirm_subtitle,
+      'icc-message-subtitle',
+      { 'id': this.getSIMNumber(stkMessage.iccId) }
+    );
 
     var self = this;
 
     // STK Default response (BACK and CLOSE)
-    this.icc_confirm_btn_back.onclick = function() {
+    this.icc_confirm_header.addEventListener('action', function() {
       clearTimeout(timeoutId);
       self.hideViews();
       self.backResponse(stkMessage);
       callback(null);
-    };
+    });
     this.icc_confirm_btn_close.onclick = function() {
       clearTimeout(timeoutId);
       self.hideViews();
@@ -313,52 +437,87 @@ var icc = {
       callback(true);
     };
 
-    this.icc_confirm_msg.textContent = message;
+    if (icons && icons.length > 0) {
+      this.icc_confirm.dataset.icons = true;
+      this.drawMessageIcons(this.icc_confirm_icons, icons);
+    } else {
+      delete this.icc_confirm.dataset.icons;
+    }
+
+    this.localizeElement(this.icc_confirm_msg, messageL10n);
+    this._screen.classList.add('icc');
     this.icc_confirm.classList.add('visible');
     this.icc_view.classList.add('visible');
+    this.resize();
   },
 
-  asyncConfirm: function(stkMessage, message, callback) {
-    var _ = navigator.mozL10n.get;
+  asyncConfirm: function(stkMessage, messageL10n, icons, callback) {
     if (typeof callback != 'function') {
       callback = function() {};
     }
     if (!this.icc_asyncconfirm) {
       this.icc_asyncconfirm =
         document.getElementById('icc-asyncconfirm');
-      this.icc_asyncconfirm_title =
-        document.getElementById('icc-asyncconfirm-title');
+      this.icc_asyncconfirm_subtitle =
+        document.getElementById('icc-asyncconfirm-subtitle');
+      this.icc_asyncconfirm_icons =
+        document.getElementById('icc-asyncconfirm-icons');
       this.icc_asyncconfirm_msg =
         document.getElementById('icc-asyncconfirm-msg');
       this.icc_asyncconfirm_btn_no =
         document.getElementById('icc-asyncconfirm-btn-no');
       this.icc_asyncconfirm_btn_yes =
         document.getElementById('icc-asyncconfirm-btn-yes');
+      this.setupView(this.icc_asyncconfirm);
     }
 
-    this.icc_asyncconfirm_title.textContent = _('icc-message-title', {
-        'id': this.getSIMNumber(stkMessage.iccId)
-      });
+    // Clear previous icons
+    this.icc_asyncconfirm_icons.innerHTML = '';
+
+    document.l10n.setAttributes(
+      this.icc_asyncconfirm_subtitle,
+      'icc-message-subtitle',
+      { 'id': this.getSIMNumber(stkMessage.iccId) }
+    );
 
     var self = this;
+
+    function stkMenuHiddenHandler(event) {
+      window.removeEventListener('stkMenuHidden', stkMenuHiddenHandler);
+      self.hideViews();
+      callback(false);
+    }
+    window.addEventListener('stkMenuHidden', stkMenuHiddenHandler);
+
     this.icc_asyncconfirm_btn_no.onclick = function rejectConfirm() {
+      window.removeEventListener('stkMenuHidden', stkMenuHiddenHandler);
       self.hideViews();
       callback(false);
     };
     this.icc_asyncconfirm_btn_yes.onclick = function acceptConfirm() {
+      window.removeEventListener('stkMenuHidden', stkMenuHiddenHandler);
       self.hideViews();
       callback(true);
     };
 
-    this.icc_asyncconfirm_msg.textContent = message;
+    if (icons && icons.length > 0) {
+      this.icc_asyncconfirm.dataset.icons = true;
+      this.drawMessageIcons(this.icc_asyncconfirm_icons, icons);
+    } else {
+      delete this.icc_asyncconfirm.dataset.icons;
+    }
+
+    this.localizeElement(this.icc_asyncconfirm_msg, messageL10n);
+    this._screen.classList.add('icc');
     this.icc_asyncconfirm.classList.add('visible');
     this.icc_view.classList.add('visible');
+    this.resize();
   },
 
   /**
    * Open URL
    */
-  showURL: function(stkMessage, url, confirmMessage) {
+  showURL: function(stkMessage, url, icons, messageL10n) {
     function openURL(url) {
       // Sanitise url just in case it doesn't start with http or https
       // the web activity won't work, so add by default the http protocol
@@ -366,18 +525,19 @@ var icc = {
         // Our url doesn't contains the protocol
         url = 'http://' + url;
       }
+      /* jshint nonew: false */
       new MozActivity({
         name: 'view',
         data: { type: 'url', url: url }
       });
     }
-    if (url == null || url.length == 0) {
+    if (url === null || url.length === 0) {
       url = this._defaultURL;
     }
     DUMP('Final URL to open: ' + url);
-    if (url != null || url.length != 0) {
-      if (confirmMessage) {
-        this.asyncConfirm(stkMessage, confirmMessage, function(res) {
+    if (url !== null || url.length !== 0) {
+      if (icons || messageL10n.raw !== '') {
+        this.asyncConfirm(stkMessage, messageL10n, icons, function(res) {
           if (res) {
             openURL(url);
           }
@@ -388,8 +548,7 @@ var icc = {
     }
   },
 
-  input: function(stkMessage, message, timeout, options, callback) {
-    var _ = navigator.mozL10n.get;
+  input: function(stkMessage, messageL10n, icons, timeout, options, callback) {
     var self = this;
     var timeoutId = null;
     /**
@@ -400,6 +559,21 @@ var icc = {
      * @param {Integer} maxLen      Maximum length required of the input.
      */
     function checkInputLengthValid(inputLen, minLen, maxLen) {
+      // Update input counter
+      var charactersLeft = maxLen - inputLen;
+      document.l10n.setAttributes(
+        self.icc_input_btn,
+        'okCharsLeft',
+        { n: charactersLeft }
+      );
+      // Input box full feedback
+      if (charactersLeft === 0) {
+        self.icc_input_box.classList.add('full');
+        navigator.vibrate([500]);
+      } else {
+        self.icc_input_box.classList.remove('full');
+      }
+
       return (inputLen >= minLen) && (inputLen <= maxLen);
     }
     function clearInputTimeout() {
@@ -409,42 +583,72 @@ var icc = {
         timeoutId = null;
       }
     }
+    function stkMenuHiddenHandler(event) {
+      window.removeEventListener('stkMenuHidden', stkMenuHiddenHandler);
+      clearInputTimeout();
+      self.hideViews();
+      self.terminateResponse(stkMessage);
+      callback(null);
+    }
     function setInputTimeout() {
       DUMP('setting new STK INPUT timeout to - ', timeout);
       if (timeout) {
         clearInputTimeout();
         timeoutId = setTimeout(function() {
+          window.removeEventListener('stkMenuHidden', stkMenuHiddenHandler);
           self.hideViews();
           callback(false);
+          self.icc_input_header.removeEventListener('action', actionHandler);
         }, timeout);
+      }
+    }
+
+    function formatL10n(l10n) {
+      if (typeof(l10n) === 'string') {
+        return document.l10n.formatValue(l10n);
+      } else if (l10n.hasOwnProperty('raw')) {
+        return Promise.resolve(l10n.raw);
+      } else {
+        return document.l10n.formatValue(l10n.id, l10n.args);
       }
     }
 
     if (!this.icc_input) {
       this.icc_input = document.getElementById('icc-input');
-      this.icc_input_title = document.getElementById('icc-input-title');
+      this.icc_input_maintitle = document.getElementById('icc-input-maintitle');
+      this.icc_input_subtitle = document.getElementById('icc-input-subtitle');
+      this.icc_input_icons = document.getElementById('icc-input-icons');
       this.icc_input_msg = document.getElementById('icc-input-msg');
       this.icc_input_box = document.getElementById('icc-input-box');
       this.icc_input_btn = document.getElementById('icc-input-btn');
       this.icc_input_btn_yes = document.getElementById('icc-input-btn_yes');
       this.icc_input_btn_no = document.getElementById('icc-input-btn_no');
-      this.icc_input_btn_back = document.getElementById('icc-input-btn_back');
+      this.icc_input_header = document.getElementById('icc-input-header');
+      this.icc_input_btn_close = document.getElementById('icc-input-btn_close');
       this.icc_input_btn_help = document.getElementById('icc-input-btn_help');
+      this.setupView(this.icc_input);
     }
+
+    // Clear previous icons
+    this.icc_input_icons.innerHTML = '';
 
     if (typeof callback != 'function') {
       callback = function() {};
     }
     setInputTimeout();
 
-    this.icc_input_title.textContent = _('icc-inputbox-title', {
-        'id': this.getSIMNumber(stkMessage.iccId)
-      });
+    this.icc_input_maintitle.setAttribute('data-l10n-id',
+      'icc-message-maintitle');
+    document.l10n.setAttributes(
+      this.icc_input_subtitle,
+      'icc-message-subtitle',
+      { 'id': this.getSIMNumber(stkMessage.iccId) }
+    );
 
     // Help
     this.icc_input_btn_help.disabled = !options.isHelpAvailable;
 
-    if (!options.isYesNoRequired && !options.isYesNoRequested) {
+    if (!options.isYesNoRequested) {
       this.icc_input.classList.remove('yesnomode');
 
       // Workaround. See bug #818270. Followup: #895314
@@ -455,7 +659,9 @@ var icc = {
           self.icc_input_box.value.length, options.minLength,
           options.maxLength);
       }, 500);
-      this.icc_input_box.placeholder = message;
+      formatL10n(messageL10n).then(str => {
+        this.icc_input_box.placeholder = str;
+      });
       this.icc_input_box.type = options.isAlphabet ? 'text' : 'tel';
       if (options.hideInput) {
         this.icc_input_box.type = 'password';
@@ -475,51 +681,115 @@ var icc = {
         self.icc_input_btn.disabled = !checkInputLengthValid(
           self.icc_input_box.value.length, options.minLength,
           options.maxLength);
-        if (self.icc_input_box.value.length == options.maxLength) {
-          self.icc_input_btn.focus();
-        }
       };
       this.icc_input_btn.onclick = function() {
+        window.removeEventListener('stkMenuHidden', stkMenuHiddenHandler);
         clearInputTimeout();
         self.hideViews();
         callback(true, self.icc_input_box.value);
+        self.icc_input_header.removeEventListener('action', actionHandler);
       };
       this.icc_input_box.focus();
     } else {
       this.icc_input.classList.add('yesnomode');
       this.icc_input_box.type = 'hidden';
       this.icc_input_btn_yes.onclick = function(event) {
+        window.removeEventListener('stkMenuHidden', stkMenuHiddenHandler);
         clearInputTimeout();
         self.hideViews();
-        callback(true, 1);
+        callback(true, true);
+        self.icc_input_header.removeEventListener('action', actionHandler);
       };
       this.icc_input_btn_no.onclick = function(event) {
+        window.removeEventListener('stkMenuHidden', stkMenuHiddenHandler);
         clearInputTimeout();
         self.hideViews();
-        callback(true, 0);
+        callback(true, false);
+        self.icc_input_header.removeEventListener('action', actionHandler);
       };
     }
 
+    if (icons && icons.length > 0) {
+      this.icc_input.dataset.icons = true;
+      this.drawMessageIcons(this.icc_input_icons, icons);
+    } else {
+      delete this.icc_input.dataset.icons;
+    }
+
     this.icc_input_box.value = '';
-    this.icc_input_msg.textContent = message;
+
+    this.icc_input_msg.classList.toggle('stk-no-text', messageL10n.raw === '');
+    this.localizeElement(this.icc_input_msg, messageL10n);
+    this._screen.classList.add('icc');
     this.icc_input.classList.add('visible');
     this.icc_view.classList.add('visible');
+    this.resize();
 
-    // STK Default response (BACK and HELP)
-    this.icc_input_btn_back.onclick = function() {
+    var actionHandler = function() {
       clearInputTimeout();
       self.hideViews();
       self.backResponse(stkMessage);
       callback(null);
+      self.icc_input_header.removeEventListener('action', actionHandler);
+      window.removeEventListener('stkMenuHidden', stkMenuHiddenHandler);
     };
-    this.icc_input_btn_help.onclick = function() {
+
+    window.addEventListener('stkMenuHidden', stkMenuHiddenHandler);
+
+    // STK Default response (BACK, CLOSE and HELP)
+    this.icc_input_header.addEventListener('action', actionHandler);
+
+    this.icc_input_btn_close.onclick = function() {
+      window.removeEventListener('stkMenuHidden', stkMenuHiddenHandler);
       clearInputTimeout();
       self.hideViews();
-      self.responseSTKCommand({
+      self.terminateResponse(stkMessage);
+      callback(null);
+      self.icc_input_header.removeEventListener('action', actionHandler);
+    };
+    this.icc_input_btn_help.onclick = function() {
+      window.removeEventListener('stkMenuHidden', stkMenuHiddenHandler);
+      clearInputTimeout();
+      self.hideViews();
+      self.responseSTKCommand(stkMessage, {
         resultCode: self._iccManager.STK_RESULT_HELP_INFO_REQUIRED
       });
       callback(null);
+      self.icc_input_header.removeEventListener('action', actionHandler);
     };
+  },
+
+  discardCurrentMessageIfNeeded: function(new_message) {
+    var _currentMessage = this._currentMessage;
+    if (_currentMessage && _currentMessage !== new_message) {
+      this.hideViews();
+      if (!_currentMessage.response) {
+        DUMP('New message received, discarding previous message...');
+        this.responseSTKCommand(_currentMessage, {
+          resultCode:
+            icc._iccManager.STK_RESULT_TERMINAL_CRNTLY_UNABLE_TO_PROCESS
+        });
+      }
+    }
+
+    this._currentMessage = new_message;
+  },
+
+  drawMessageIcons: function(container, icons) {
+    for (var i = 0; i < icons.length; i++) {
+      container.appendChild(STKHelper.getIconCanvas(icons[i]));
+    }
+  },
+
+  localizeElement: function(elem, l10n) {
+    if (typeof(l10n) === 'string') {
+      elem.setAttribute('data-l10n-id', l10n);
+    } else if (l10n.hasOwnProperty('raw')) {
+      elem.removeAttribute('data-l10n-id');
+      elem.textContent = l10n.raw;
+    } else {
+      document.l10n.setAttributes(elem, l10n.id, l10n.args);
+    }
   }
 };
 

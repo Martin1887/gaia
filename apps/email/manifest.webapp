@@ -9,18 +9,21 @@
   },
   "messages": [
     { "alarm": "/index.html" },
-    { "notification": "/index.html" }
+    { "notification": "/index.html" },
+    { "request-sync": "/index.html" }
   ],
   "permissions": {
     "alarms":{},
+    "themeable":{},
+    "browser": {},
     "audio-channel-notification":{},
     "contacts":{ "access": "readcreate" },
     "desktop-notification":{},
-    "storage":{},
+    "downloads":{},
     "device-storage:sdcard":{ "access": "readcreate" },
     "systemXHR":{},
-    "settings":{ "access": "readonly" },
-    "tcp-socket":{}
+    "tcp-socket":{},
+    "moz-extremely-unstable-and-will-change-webcomponents":{}
   },
   "locales": {
     "ar": {
@@ -42,10 +45,11 @@
   },
   "default_locale": "en-US",
   "icons": {
-    "79": "/style/icons/Email_90.png",
-    "60": "/style/icons/Email_60.png",
-    "120": "/style/icons/Email_120.png",
-    "135": "/style/icons/Email_135.png"
+    "84": "/style/icons/email_84.png",
+    "126": "/style/icons/email_126.png",
+    "142": "/style/icons/email_142.png",
+    "189": "/style/icons/email_189.png",
+    "284": "/style/icons/email_284.png"
   },
   "activities": {
     "new": {
@@ -53,23 +57,33 @@
         "type": "mail"
       },
       "disposition": "window",
+      "href": "/index.html",
       "returnValue": true
     },
     "share": {
       "filters": {
-        "type": ["audio/*", "image/*", "url", "video/*"]
+        "type": ["audio/*", "image/*", "url", "application/vnd.moz-systemlog",
+                 "video/*", "application/*", "text/vcard"]
       },
       "disposition": "window",
+      "href": "/index.html",
       "returnValue": true
     },
     "view": {
       "filters": {
         "type": "url",
-        "url": { "required":true, "pattern":"mailto:.{1,16384}" },
-        "disposition": "window",
-        "returnValue": true
-      }
+        "url": { "required":true, "pattern":"mailto:.{1,16384}" }
+      },
+      "disposition": "window",
+      "href": "/index.html",
+      "returnValue": true
     }
   },
+  "redirects": [
+    {
+      "from": "http://localhost",
+      "to": "/js/cards/oauth2/redirect.html"
+    }
+  ],
   "orientation": "default"
 }

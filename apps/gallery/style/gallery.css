@@ -1,4 +1,10 @@
-* { -moz-box-sizing: border-box; }
+* { -moz-box-sizing: border-box;
+  /**
+    By default do not allow any user text selection, only enable
+    for certain parts on a per-element/region area
+  */
+    -moz-user-select: none;
+}
 
 html {
   height: 100%;
@@ -28,19 +34,20 @@ section {
 }
 
 .large-only {
-  display: none;
+  display: none !important;
 }
 
 .hidden {
   display: none;
 }
 
-#thumbnails-list-top {
-  display: none;
+/* hide sections from screen reader when modal dialogs are showing */
+body.showing-dialog > section {
+  visibility: hidden;
 }
 
 /* All of the main views fill the screen */
-#thumbnail-list-view, #thumbnail-select-view, #fullscreen-view, #pick-view, #edit-view, #crop-view {
+#fullscreen-view, #edit-view, #crop-view, #thumbnail-views {
   position: absolute;
   top: 0;
   left: 0;
@@ -54,32 +61,41 @@ section {
   display: none;
 }
 
-body.thumbnailListView #thumbnail-list-view,
-body.thumbnailSelectView #thumbnail-select-view,
+/* Hide unresolved gaia-header elements */
+gaia-header:unresolved {
+  visibility:hidden;
+}
+
+#thumbnail-views > gaia-header {
+  position: absolute;
+  width: 100%;
+  top: 0;
+}
+
+/* Bug 1111735 - !important is needed because of the shadow CSS polyfill */
+.thumbnails-list, .thumbnails-select, .thumbnails-pick {
+  /* display will be determined by LAYOUT_MODE */
+  display: none !important;
+}
+
+body.thumbnailListView .thumbnails-list,
+body.thumbnailSelectView .thumbnails-select,
+body.pickView .thumbnails-pick {
+  display: block !important;
+}
+
+body.thumbnailListView #thumbnail-views,
+body.thumbnailSelectView #thumbnail-views,
+body.pickView #thumbnail-views,
 body.fullscreenView #fullscreen-view,
-body.pickView #pick-view,
 body.editView #edit-view,
 body.cropView #crop-view {
   display: block;
 }
 
-/*
- * The overlay is where we display messages like Scanning, No Photos,
- * No SD card and SD Card in Use along with instructions for resolving
- * the issue.  The user can't interact with the app while the overlay
- * is displayed.
- */
-#overlay,
-#confirm-dialog {
-  /* it takes up the whole screen */
-  position: absolute;
-  top: 0;
-  left: 0;
-  bottom: 0;
-  right: 0;
-
-  /* almost transparent gray */
-  background-color: rgba(0, 0, 0, 0.4);
+/* Header in default thumbnail list in tablets only, see gallery_tablet.css */
+body.thumbnailListView #thumbnails-list-top {
+  display: none !important;
 }
 
 /*
@@ -188,11 +204,20 @@ body.pickView #thumbnails {
   top: 5rem;
 }
 
+/*
+ * Give the very last thumbnail a large bottom margin so that it doesn't
+ * hide behind the overlaid toolbar in thumbnail list and select view.
+ */
+body.thumbnailSelectView #thumbnails > li:last-child .thumbnail:last-child,
+body.thumbnailListView #thumbnails > li:last-child .thumbnail:last-child {
+  margin-bottom: 4.5rem;
+}
+
 .thumbnail-group-header {
   font-size: 1.6rem;
   font-weight: 400;
   color: #8a9699;
-  padding: 0 0 0 0.5rem;
+  -moz-padding-start: 0.5rem;
   height: 4rem;
   line-height: 4rem;
   width:100%;
@@ -225,7 +250,7 @@ body.pickView #thumbnails {
 }
 
 .thumbnail {
-  margin-right: 0.1rem;
+  -moz-margin-end: 0.1rem;
   margin-bottom: 0.1rem;
   padding: 0;
   /* default to left-to-right, but overridden for rtl languages below */
@@ -244,21 +269,11 @@ body.pickView #thumbnails {
   width: calc((100% - 0.2rem) / 3 );
   height: 0;
   padding-bottom: calc((100% - 0.2rem) / 3 );
-}
-
-/* Favor scrolling performance for the thumbnails list while
- * scrolling.
- */
-#thumbnails.scrolling .thumbnail {
-  image-rendering: -moz-crisp-edges;
-}
-
-#thumbnails.scrolling .thumbnail-group-header {
-  text-rendering: optimizeSpeed;
+  outline: none;
 }
 
 .thumbnail:nth-child(3n) {
-  margin-right: 0;
+  -moz-margin-end: 0;
 }
 
 .thumbnailImage{
@@ -270,12 +285,9 @@ body.pickView #thumbnails {
   outline-offset: -0.2rem;
 }
 
-/*
- * give the very last thumbnail a large bottom margin so that it doesn't
- * get stuck hidden behind the overlaid toolbar.
- */
-#thumbnails>li:last-child {
-  margin-bottom: 4.5rem;
+/* RTL modifications */
+html[dir=rtl] #thumbnails-number-selected {
+  direction: rtl;
 }
 
 @media (orientation: landscape) {
@@ -285,10 +297,10 @@ body.pickView #thumbnails {
     padding-bottom: calc((100%  - 0.3rem) / 4);
   }
   .thumbnail:nth-child(3n) {
-    margin-right: 0.1rem;
+    -moz-margin-end: 0.1rem;
   }
   .thumbnail:nth-child(4n) {
-    margin-right: 0;
+    -moz-margin-end: 0;
   }
 }
 
@@ -305,8 +317,18 @@ body.pickView #thumbnails {
   font-size: 0;
   border-radius: 50%;
   border: none;
-  background: rgba(95, 95, 95, 0.3) url(images/back.png) no-repeat 50% 50%;
+  background: rgba(95, 95, 95, 0.3);
+  color: inherit;
   transition: opacity 0.2s linear;
+  z-index: 10;
+}
+
+/**
+ * 1. Make sure icon is aligned inside circle
+ */
+
+#fullscreen-back-button-tiny:before {
+  margin-left: -0.3rem; /* 1 */
 }
 
 #fullscreen-back-button-tiny:active {
@@ -336,7 +358,7 @@ body.pickView #thumbnails {
   will-change: scroll-position;
 }
 
-.frame > img {
+.frame > .image-view {
   top: 0;  /* javascript modifies this position with a transform */
   left: 0;
   position: absolute;
@@ -345,19 +367,7 @@ body.pickView #thumbnails {
   margin: 0;
   pointer-events: none;
   -moz-user-select: none;
-}
-
-/*
- * these styles apply when we're swapping out a preview image to replace
- * it with a full-resolution image, but the full image isn't ready yet.
- * This happens when the user starts to zoom in on the image. We need
- * some sort of simple visual effect to fill ~500ms of dead time so the
- * user doesn't think the app has frozen up
- */
-.frame > img.swapping {
-  opacity: 0.8;
-  outline: dashed #0ac 0.4rem;
-  outline-offset: -0.4rem;
+  transition: opacity 100ms ease-in;
 }
 
 .frame > video {
@@ -374,7 +384,7 @@ body.hidden *[data-l10n-id] {
 }
 
 /* the indeterminate progress bar displayed while scanning */
-#progress {
+#throbber {
   position: absolute;
   top: 0;
   left: 0;
@@ -382,26 +392,33 @@ body.hidden *[data-l10n-id] {
   height: 0.3rem;
   border: none;
   overflow: hidden;
+  background-size: 1rem;
+  background-image: repeating-linear-gradient(135deg,
+                                              #000 0%,  #000 42%,
+                                              #32D1F2 42%, #32D1F2 57%,
+                                              #000 57%, #000 100%);
   z-index: 10; /* has to be higher than pick-top */
 }
 
-#throbber {
-  height: 2.4rem;
-  background-image: url(images/progress.png);
-  background-size: auto 100%;
-}
-
 #throbber.throb {
-  animation: 1s throb infinite steps(7);
+  animation: throb 1s steps(10) infinite;
 }
 
 @keyframes throb {
-  from {
-    transform: translateY(0);
-  }
-  to {
-    transform: translateY(-2.1rem);
-  }
+  from { background-position: 0 0; }
+  to   { background-position: -1rem 0; }
+}
+
+#spinner {
+  position: absolute;
+  top: calc(50% - 1.5rem);
+  left: calc(50% - 1.5rem);
+  z-index: 1000;
+}
+
+/* override progress_activity.css */
+#spinner.hidden {
+  display: none;
 }
 
 /* buttons */
@@ -453,7 +470,6 @@ footer {
   width: 50%;
   height: 100%;
   left: 0;
-  background-image: url('images/iconaction_camera_30x30.png');
   border-right: 0.1rem solid #000;
 }
 
@@ -462,7 +478,6 @@ footer {
   width: 50%;
   height: 100%;
   left: 50%;
-  background-image: url('images/iconaction_select_30x30.png');
 }
 
 #thumbnails-delete-button {
@@ -470,7 +485,6 @@ footer {
   width: 50%;
   height: 100%;
   left: 0;
-  background-image: url('images/iconaction_delete_30x30.png');
   border-right: 0.1rem solid #000;
 }
 
@@ -479,7 +493,6 @@ footer {
   width: 50%;
   height: 100%;
   left: 50%;
-  background-image: url('images/iconaction_share_30x30.png');
 }
 
 #fullscreen-toolbar {
@@ -490,6 +503,7 @@ footer {
   right: 0;
   font-size: 0;
   visibility: visible;
+  direction: ltr; /* buttons in toolbar are not directional and stays LTR */
 
   /**
     Bug 991367 - This is a temporary workaround for an issue where
@@ -501,6 +515,7 @@ footer {
    */
   transition: visibility 0.2s linear 0.1s, transform 0.2s linear 0.1s;
 }
+
 /* only for large screen */
 #fullscreen-toolbar-header {
   display: none;
@@ -525,11 +540,12 @@ footer {
 
 #fullscreen-view.toolbar-hidden #fullscreen-back-button-tiny {
   opacity: 0;
+  pointer-events: none;
 }
 
-#pick-top {
+#pick-header {
   /*
-   * we want the user to be able to push the back button even if
+   * we want the user to be able to push the close button even if
    * an overlay is displayed, so be sure that this titlebar/toolbar
    * is above the overlay
    */
@@ -549,8 +565,6 @@ footer {
   -moz-user-select: none;
 }
 
-
-/* copied from .frame > img */
 #crop-image {
   top: 0;  /* javascript modifies this position with a transform */
   left: 0;
@@ -568,14 +582,14 @@ footer {
   left: 0;
   right: 0;
   top: 5rem;
-  bottom: 9.5rem; /* 4.5rem for edit-toolbar, 5rem for edit-options */
+  bottom: 4.5rem; /* 4.5rem for edit-toolbar */
 }
 
 #edit-preview-canvas {
   position: absolute;
   top: 1.5rem;
-  left: 1.5rem;
-  width: calc(100% - 3rem);  /* I can't do right: 1.5rem here. Bug? */
+  left: 2.5rem;
+  width: calc(100% - 5rem);  /* I can't do right: 2.5rem here. Bug? */
   height: calc(100% - 3rem);  /* can't just set bottom: 1.5rem here */
 }
 
@@ -592,7 +606,7 @@ footer {
   left: 0;
   width: 100%;
   height: 5rem;
-  bottom: 4.5rem;
+  bottom: 0;
   background: url(images/options-background.png);
 }
 
@@ -635,7 +649,6 @@ footer {
   border-width: 0;
   border-right: solid black 0.1rem;
   overflow: hidden;
-  padding-top: 1.6rem;
   font-size: 1.4rem;
   background-position: center;
 }
@@ -645,25 +658,25 @@ footer {
   outline-offset: -0.2rem;
 }
 
-#edit-crop-none {
-  left: 0;
-  background-image: url('images/iconaction_undo_30x30.png');
-}
 #edit-crop-aspect-free {
-  left: 20%;
+  left: 0;
   background-image: url('images/iconaction_camera_freecrop_30x30.png');
 }
 #edit-crop-aspect-portrait {
-  left: 40%;
+  left: 20%;
   background-image: url('images/iconaction_camera_crop2x3_30x30.png');
 }
 #edit-crop-aspect-landscape {
-  left: 60%;
+  left: 40%;
   background-image: url('images/iconaction_camera_crop3x2_30x30.png');
 }
 #edit-crop-aspect-square {
-  left: 80%;
+  left: 60%;
   background-image: url('images/iconaction_camera_crop1x1_30x30.png');
+}
+
+#edit-crop-aspect-more {
+  left: 80%;
 }
 
 /* instead of using images inside the buttons above, just draw boxes */
@@ -741,13 +754,19 @@ a.filter-faded {
   right: 0;
   font-size: 0;
   transition: transform 0.2s linear;
+  direction: ltr; /* buttons in toolbar are not directional and stays LTR */
 }
 
 /* all buttons in the toolbar share these styles */
 #edit-toolbar > a {
   display: inline-block;
+  vertical-align: top;
   width: 25%;
   height: 100%;
+}
+
+#edit-toolbar > a.selected {
+  color: #00CAF2;
 }
 
 #edit-exposure-button {
@@ -770,36 +789,16 @@ a.filter-faded {
   left: 80%;
 }
 
-#edit-enhance-options {
-  line-height: 5.5rem;
+/* Override the styles from shared/styles/status.css */
+#edit-copy-save-banner.banner, #edit-enhance-banner.banner {
+  position: absolute;
+  left: 0;
+  bottom: 4.5rem;
+  background-color: #0E1214;
+}
+
+#edit-copy-save-banner > p, #edit-enhance-banner > p {
   text-align: center;
-}
-#fullscreen-camera-button-tiny {
-  background-image: url('images/iconaction_camera_30x30.png');
-}
-
-#fullscreen-edit-button-tiny {
-  background-image: url('images/iconaction_camera_editphoto_30x30.png');
-}
-
-#fullscreen-share-button-tiny {
-  background-image: url('images/iconaction_share_30x30.png');
-}
-
-#fullscreen-info-button-tiny {
-  background-image: url('images/iconaction_media_info_30x30.png');
-}
-
-#fullscreen-delete-button-tiny {
-  background-image: url('images/iconaction_delete_30x30.png');
-}
-
-#edit-exposure-button {
-  background-image: url('images/actionicon_gallery_edit_exposure_30x30.png');
-}
-
-#edit-crop-button {
-  background-image: url('images/actionicon_gallery_edit_crop_30x30.png');
 }
 
 #edit-effect-button {
@@ -814,44 +813,8 @@ a.filter-faded {
   background-image: url('images/actionicon_gallery_edit_enhance_30x30.png');
 }
 
-#edit-effect-button.selected{
-  background-image: url('images/actionicon_gallery_edit_effect_selected_30x30.png');
-}
-
-#edit-crop-button.selected {
-  background-image: url('images/actionicon_gallery_edit_crop_selected_30x30.png');
-}
-
-#edit-exposure-button.selected {
-  background-image: url('images/actionicon_gallery_edit_exposure_selected_30x30.png');
-}
-
-#edit-enhance-button.selected {
-  background-image: url('images/actionicon_gallery_edit_enhance_selected_30x30.png');
-}
-
 #edit-enhance-button.on {
   background-image: url('images/actionicon_gallery_edit_enhance_on_30x30.png');
-}
-
-#edit-enhance-button.selected.on {
-  background-image: url('images/actionicon_gallery_edit_enhance_on_selected_30x30.png');
-}
-
-#edit-enhance-options a.button {
-  position: absolute;
-  display: block;
-  top: 0;
-  bottom: 0;
-  width: 20%;
-  margin: 0;
-  padding: 0;
-  border-width: 0;
-  border-right: solid black 0.1rem;
-  overflow: hidden;
-  padding-top: 1.6rem;
-  font-size: 1.4rem;
-  background-position: center;
 }
 
 /*
@@ -892,8 +855,8 @@ a.filter-faded {
   position: absolute;
   width: 3.6rem;
   height: 2.6rem;
-  left: calc(3.9rem - 1.8rem);
-  background: url(images/slider-scrubber.png) no-repeat center center;
+  -moz-margin-start: calc(3.9rem - 1.8rem);
+  background: url(images/slider-scrubber.png) no-repeat center center / 100%;
   font: 0/0 a;
 }
 
@@ -918,34 +881,42 @@ a.filter-faded {
   font-size: 1.5rem;
 }
 
+html[dir="rtl"] .sliderlabel {
+  background: url(images/slider-marker.png) no-repeat top right;
+}
+
 .sliderlabel:after {
   content: attr(data-label);
   position: relative;
   text-align: center;
   top: 0.9rem;
   width: 1rem;
-  left: calc(-50%  + 0.1rem);
+  margin: 0 calc(-50% + 0.1rem);
+
+  /* Slider labels are numbers */
+  direction: ltr;
+  unicode-bidi: -moz-isolate;
 }
 
 #slider-3 {
-  left: 3.9rem;
+  -moz-margin-start: 3.9rem;
 }
 #slider-2 {
-  left: calc(3.9rem + (100% - 2 * 3.9rem) / 6);
+  -moz-margin-start: calc(3.9rem + (100% - 2 * 3.9rem) / 6);
 }
 #slider-1 {
-  left: calc(3.9rem + (100% - 2 * 3.9rem) * 2 / 6);
+  -moz-margin-start: calc(3.9rem + (100% - 2 * 3.9rem) * 2 / 6);
 }
 #slider0 {
-  left: calc(3.9rem + (100% - 2 * 3.9rem) * 3 / 6);
+  -moz-margin-start: calc(3.9rem + (100% - 2 * 3.9rem) * 3 / 6);
   color: #fff;
 }
 #slider1 {
-  left: calc(3.9rem + (100% - 2 * 3.9rem) * 4 / 6);
+  -moz-margin-start: calc(3.9rem + (100% - 2 * 3.9rem) * 4 / 6);
 }
 #slider2 {
-  left: calc(3.9rem + (100% - 2 * 3.9rem) * 5 / 6);
+  -moz-margin-start: calc(3.9rem + (100% - 2 * 3.9rem) * 5 / 6);
 }
 #slider3 {
-  left: calc(3.9rem + (100% - 2 * 3.9rem));
+  -moz-margin-start: calc(3.9rem + (100% - 2 * 3.9rem));
 }

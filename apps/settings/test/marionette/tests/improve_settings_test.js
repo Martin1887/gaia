@@ -1,8 +1,11 @@
+'use strict';
 var Settings = require('../app/app'),
     assert = require('assert');
 
 marionette('improve b2g', function() {
-  var client = marionette.client();
+  var client = marionette.client({
+    desiredCapabilities: { raisesAccessibilityExceptions: false }
+  });
   var settingsApp;
   var improvePanel;
   var feedbackPanel;
@@ -14,12 +17,6 @@ marionette('improve b2g', function() {
   });
 
   suite('improve page', function() {
-    test('enable performance data', function() {
-      improvePanel.enableSubmitPerfData();
-      assert.ok(true,
-        'performance data is enabled'
-      );
-    });
 
     test('enable always send report', function() {
       // make sure the item displaying on the screen
@@ -65,10 +62,6 @@ marionette('improve b2g', function() {
 
   suite('send feedback page', function() {
     var feedbackPanel;
-    var onLine = false;
-    var offLineMsg =
-      'Sorry, the system can’t send your suggestion due to a data connection' +
-      ' error. Please try again when the issue is resolved.';
     setup(function() {
       feedbackPanel = settingsApp.feedbackPanel;
       improvePanel.enterFeedbackPanel();

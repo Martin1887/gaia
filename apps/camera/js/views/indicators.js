@@ -5,7 +5,8 @@ define(function(require, exports, module) {
  * Dependencies
  */
 
-var View = require('vendor/view');
+var debug = require('debug')('view:indicators');
+var View = require('view');
 
 /**
  * Exports
@@ -21,13 +22,23 @@ module.exports = View.extend({
 
   render: function() {
     this.el.innerHTML = this.template();
+
+    // Clean up
+    delete this.template;
+
+    debug('rendered');
+    return this;
   },
 
   template: function() {
-    return '<li class="indicator_timer icon-timer rotates"></li>' +
-    '<li class="indicator_hdr icon-hdr rotates"></li>' +
-    '<li class="indicator_geolocation icon-geolocation rotates"></li>' +
-    '<li class="indicator_battery icon rotates"></li>';
+    return '<li class="indicator_countdown rotates" data-icon="self-timer" ' +
+               'data-l10n-id="self-timer-indicator"></li>' +
+    '<li class="indicator_hdr rotates" data-icon="hdr" ' +
+        'data-l10n-id="hdr-indicator"></li>' +
+    '<li class="indicator_geolocation rotates" data-icon="location" ' +
+        'data-l10n-id="location-indicator"></li>' +
+    '<li class="indicator_battery rotates" data-icon="battery-3" ' +
+        'data-l10n-id="battery-low-indicator"></li>';
   }
 });
 

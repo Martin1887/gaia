@@ -6,27 +6,19 @@ var MockMmiManager = {
       cb();
     }
   },
-  send: function(message) {
-
+  send: function(message) {},
+  notifySuccess: function(evt) {},
+  notifyError: function(evt) {},
+  openUI: function() {},
+  handleMMIReceived: function(message, session, cardIndex) {},
+  handleRequest: function(conn, message, request) {},
+  sendNotification: function(message, cardIndex) {
+    return { then: function(callback) { callback(); } };
   },
-  notifySuccess: function(evt) {
-
-  },
-  notifyError: function(evt) {
-
-  },
-  openUI: function() {
-
-  },
-  handleMMIReceived: function(message, sessionEnded) {
-
-  },
-  isMMI: function(number) {
-    return false;
-  },
-  handleEvent: function(evt) {
-
-  }
+  handleEvent: function(evt) {},
+  isImei: function() { return false; },
+  showImei: function() {},
+  cancel: function(){},
 };
 
 window.MockMmiManager = MockMmiManager;

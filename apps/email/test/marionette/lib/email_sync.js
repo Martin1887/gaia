@@ -1,3 +1,4 @@
+'use strict';
 /*jshint node: true, browser: true */
 var SHARED_PATH = __dirname + '/../../../../../shared/test/integration';
 
@@ -15,12 +16,14 @@ EmailSync.prototype = {
     this.client.contentScript.inject(
       SHARED_PATH + '/mock_navigator_moz_set_message_handler.js'
     );
+    this.client.contentScript.inject(
+      SHARED_PATH + '/mock_navigator_mozalarms.js'
+    );
   },
 
   /**
    * Does the work to trigger a sync using helpers in
-   * mock_navigator_mozalarms.js. Assumes the mock
-   * mock_navigator_mozalarms.js was already injected.
+   * mock_navigator_moz_set_message_handler.js.
    */
   triggerSync: function() {
     // trigger sync in Email App
@@ -35,7 +38,7 @@ EmailSync.prototype = {
           timestamp: date
         }
       };
-      return window.wrappedJSObject.fireMessageHandler(alarm);
+      return window.wrappedJSObject.fireMessageHandler(alarm, 'alarm');
     });
   }
 };

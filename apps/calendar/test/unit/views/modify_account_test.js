@@ -1,16 +1,25 @@
-/*global Factory */
+define(function(require) {
+'use strict';
 
-requireLib('oauth_window.js');
-requireLib('provider/abstract.js');
-requireLib('provider/local.js');
+var AccountModel = require('models/account');
+var Factory = require('test/support/factory');
+var FakePage = require('test/support/fake_page');
+var ModifyAccount = require('views/modify_account');
+var OAuthWindow = require('oauth_window');
+var Presets = require('common/presets');
+var core = require('core');
+var nextTick = require('common/next_tick');
+var router = require('router');
 
-suiteGroup('Views.ModifyAccount', function() {
-  'use strict';
+require('/shared/elements/gaia-header/dist/gaia-header.js');
+require('dom!modify_event');
+require('dom!show_event');
 
+suite('Views.ModifyAccount', function() {
   var subject;
   var account;
   var triggerEvent;
-  var app;
+  var storeFactory;
 
   var mozApp = {};
 
@@ -31,13 +40,13 @@ suiteGroup('Views.ModifyAccount', function() {
   var realMozApps;
   function setupOauth() {
     realMozApps = navigator.mozApps;
-    RealOAuth = Calendar.OAuthWindow;
-    Calendar.OAuthWindow = MockOAuth;
+    RealOAuth = OAuthWindow;
+    OAuthWindow = MockOAuth;
 
     navigator.mozApps = {
       getSelf: function() {
         var req = {};
-        Calendar.nextTick(function() {
+        nextTick(function() {
           if (req.onsuccess) {
             req.onsuccess({
               target: {
@@ -53,7 +62,7 @@ suiteGroup('Views.ModifyAccount', function() {
   }
 
   function teardownOauth() {
-    Calendar.OAuthWindow = RealOAuth;
+    OAuthWindow = RealOAuth;
     navigator.mozApps = realMozApps;
   }
 
@@ -85,27 +94,29 @@ suiteGroup('Views.ModifyAccount', function() {
     div.id = 'test';
     div.innerHTML = [
       '<div id="modify-account-view">',
+        '<gaia-header id="modify-account-header" action="back">',
+          '<h1>Account</h1>',
+          '<button class="save">Save</button>',
+        '</gaia-header>',
         '<button class="save">save</button>',
         '<button class="cancel">cancel</button>',
         '<button class="delete-cancel">cancel</button>',
         '<section role="status">',
           '<div class="errors"></div>',
         '</section>',
-        '<form>',
+        '<form class="modify-account-form">',
           '<input name="user" />',
           '<input name="password" />',
           '<input name="fullUrl" />',
         '</form>',
+        '<a role="button" class="delete-record">',
         '<button class="delete-confirm">',
         '<a class="force-oauth2"></a>',
       '</div>',
       '<section id="oauth2">',
-        '<header>',
-          '<button class="cancel">',
-            '<a>cancel</a>',
-          '</button>',
-          '<h1 class="toolbar"></h1>',
-        '</header>',
+        '<gaia-header id="oauth-header" action="back">',
+          '<h1 class="oauth-browser-title"> </h1>',
+        '</gaia-header>',
         '<div class="browser-container"></div>',
       '</section>'
     ].join('');
@@ -115,46 +126,28 @@ suiteGroup('Views.ModifyAccount', function() {
 
   // db
   setup(function(done) {
-    app = testSupport.calendar.app();
-
     account = Factory('account', { _id: 1 });
 
     // assumes account is in a "modify" state
-    subject = new Calendar.Views.ModifyAccount({
-      app: app,
+    subject = new ModifyAccount({
       model: account
     });
 
-    app.db.open(function() {
-      app.store('Account').persist(account, done);
+    storeFactory = core.storeFactory;
+    core.db.open(function() {
+      storeFactory.get('Account').persist(account, done);
     });
   });
 
   teardown(function(done) {
     testSupport.calendar.clearStore(
-      app.db,
+      core.db,
       ['accounts'],
       function() {
-        app.db.close();
+        core.db.close();
         done();
       }
     );
-  });
-
-  suite('initialization', function() {
-
-    test('when given correct fields', function() {
-      var subject = new Calendar.Views.ModifyAccount({
-        model: account,
-        type: 'new'
-      });
-
-      assert.instanceOf(
-        subject.accountHandler,
-        Calendar.Utils.AccountCreation
-      );
-    });
-
   });
 
   test('#authenticationType', function() {
@@ -173,6 +166,10 @@ suiteGroup('Views.ModifyAccount', function() {
     assert.ok(subject.deleteButton);
   });
 
+  test('#deleteRecordButton', function() {
+    assert.ok(subject.deleteRecordButton);
+  });
+
   test('#saveButton', function() {
     assert.ok(subject.saveButton);
   });
@@ -185,20 +182,37 @@ suiteGroup('Views.ModifyAccount', function() {
     assert.ok(subject.form);
   });
 
-  suite('#handleEvent', function() {
+  suite('#showErrors', function() {
     var handler;
+    var offline;
+    var sentErr;
+    var show;
     var showErrorCall;
 
     setup(function() {
-      handler = subject.accountHandler;
+      handler = core.bridge.createAccount;
+      sentErr = new Error();
+      core.bridge.createAccount = function() {
+        throw sentErr;
+      };
+      show = subject.showErrors;
       subject.showErrors = function() {
-        showErrorCall = arguments;
+        showErrorCall = Array.slice(arguments);
+      };
+      offline = subject.isOffline;
+      subject.isOffline = function() {
+        return false;
       };
     });
 
+    teardown(function() {
+      core.bridge.createAccount = handler;
+      subject.isOffline = offline;
+      subject.showErrors = show;
+    });
+
     test('authorizeError', function() {
-      var sentErr = new Error();
-      handler.emit('authorizeError', sentErr);
+      subject.save(null);
 
       assert.deepEqual(
         showErrorCall,
@@ -221,32 +235,39 @@ suiteGroup('Views.ModifyAccount', function() {
   });
 
   suite('#deleteRecord', function() {
-    var calledShow;
-    var calledRemove;
+    var model;
+    var show;
 
     setup(function() {
+      // assign model to simulate
+      // a record that has been dispatched
+      model = Factory('account');
+      model._id = 'myaccount';
+      subject.model = model;
+      show = router.show;
+    });
 
-      var store = app.store('Account');
+    teardown(function() {
+      router.show = show;
+    });
+
+    test('with existing model', function() {
+      var calledShow;
+      var calledRemove;
+      var store = storeFactory.get('Account');
+
       // we don't really need to redirect
       // in the test just confirm that it does
-      app.router.show = function() {
-        calledShow = arguments;
+      router.show = function() {
+        calledShow = Array.slice(arguments);
       };
 
       // again fake model so we do a fake remove
       store.remove = function() {
-        calledRemove = arguments;
+        calledRemove = Array.slice(arguments);
       };
-    });
 
-    test('with existing model', function() {
-      // assign model to simulate
-      // a record that has been dispatched
-      var model = Factory('account');
-      model._id = 'myaccount';
-      subject.model = model;
       subject.render();
-
       triggerEvent(subject.deleteButton, 'click');
 
       assert.ok(calledRemove, 'called remove');
@@ -257,26 +278,77 @@ suiteGroup('Views.ModifyAccount', function() {
         ['/advanced-settings/']
       );
     });
+
+    test('#deleteRecordButton click', function() {
+      this.sinon.stub(subject, 'hideHeaderAndForm');
+
+      subject.render();
+      triggerEvent(subject.deleteRecordButton, 'click');
+      assert.isTrue(subject.hideHeaderAndForm.called);
+    });
+
+    test('#hideHeaderAndForm + #dispatch', function() {
+      assert.isFalse(subject.element.classList.contains(
+        subject.removeDialogClass));
+      subject.hideHeaderAndForm();
+      assert.isTrue(subject.element.classList.contains(
+        subject.removeDialogClass));
+      subject.dispatch({ params: { preset: 'local' } });
+      assert.isFalse(subject.element.classList.contains(
+        subject.removeDialogClass));
+    });
+
+    test('#deleteRecordButton click', function() {
+      this.sinon.stub(subject, 'cancelDelete');
+
+      subject.render();
+      triggerEvent(subject.cancelDeleteButton, 'click');
+      assert.isTrue(subject.cancelDelete.called);
+    });
+
+    test('#cancelDelete', function() {
+      subject.element.classList.add(subject.removeDialogClass);
+      this.sinon.stub(subject, 'cancel');
+
+      subject.cancelDelete();
+      assert.isTrue(subject.cancel.called);
+      assert.isFalse(subject.element.classList.contains(
+        subject.removeDialogClass));
+    });
   });
 
   suite('#save', function() {
 
     var calledWith;
+    var create;
+    var offline;
 
     setup(function() {
       calledWith = null;
       subject.completeUrl = '/settings';
-      Calendar.Test.FakePage.shown = null;
+      FakePage.shown = null;
 
-      subject.accountHandler.send = function() {
+      create = core.bridge.createAccount;
+      core.bridge.createAccount = function() {
         calledWith = arguments;
+        return Promise.resolve();
       };
+
+      offline = subject.isOffline;
+      subject.isOffline = function() {
+        return false;
+      };
+    });
+
+    teardown(function() {
+      core.bridge.createAccount = create;
+      subject.isOffline = offline;
     });
 
     test('clears errors', function() {
       subject.errors.textContent = 'foo';
       subject.save();
-      assert.ok(!subject.errors.textContent, 'clears text');
+      assert.equal(subject.errors.textContent, '', 'clears text');
     });
 
     test('with updateModel option', function() {
@@ -285,43 +357,52 @@ suiteGroup('Views.ModifyAccount', function() {
       assert.equal(subject.model.user, 'iupdatedu');
     });
 
-    test('on success', function() {
-      subject.save();
-      assert.isTrue(hasClass(subject.progressClass));
+    test('on success', function(done) {
+      subject.save().then(() => {
+        done(() => {
+          assert.equal(calledWith[0], subject.model, 'model');
 
-      assert.equal(calledWith[0], subject.model);
-      calledWith[1]();
+          assert.equal(
+            FakePage.shown,
+            subject.completeUrl,
+            'redirects to complete url'
+          );
 
-      assert.equal(
-        Calendar.Test.FakePage.shown,
-        subject.completeUrl,
-        'redirects to complete url'
-      );
-
-      assert.isFalse(
-        hasClass(subject.progressClass),
-        'disabled progress class'
-      );
+          assert.isFalse(
+            hasClass(subject.progressClass),
+            'disabled progress class'
+          );
+        });
+      }).catch(done);
     });
 
-    test('on failure', function() {
-      subject.save();
-      assert.ok(calledWith, 'sends request');
-      assert.equal(calledWith[0], subject.model);
+    suite('on failure', function() {
+      setup(function() {
+        core.bridge.createAccount = function() {
+          calledWith = arguments;
+          return Promise.reject();
+        };
+      });
 
-      assert.isTrue(hasClass(subject.progressClass));
-      calledWith[1](new Error());
+      test('failure', function(done) {
+        subject.save().catch(() => {
+          done(() => {
+            assert.ok(calledWith, 'sends request');
+            assert.equal(calledWith[0], subject.model);
 
-      assert.ok(
-        !hasClass(subject.progressClass),
-        'hides progress'
-      );
+            assert.ok(
+              !hasClass(subject.progressClass),
+              'hides progress'
+            );
 
-      assert.notEqual(
-        Calendar.Test.FakePage.shown,
-        subject.completeUrl,
-        'does not redirect on complete'
-      );
+            assert.notEqual(
+              FakePage.shown,
+              subject.completeUrl,
+              'does not redirect on complete'
+            );
+          });
+        });
+      });
     });
 
   });
@@ -333,11 +414,11 @@ suiteGroup('Views.ModifyAccount', function() {
 
     var model = subject._createModel(preset);
 
-    assert.instanceOf(model, Calendar.Models.Account);
+    assert.instanceOf(model, AccountModel);
 
     assert.equal(
       model.providerType,
-      Calendar.Presets.local.providerType
+      Presets.local.providerType
     );
   });
 
@@ -370,27 +451,25 @@ suiteGroup('Views.ModifyAccount', function() {
   suite('#dispatch', function() {
 
     test('new', function(done) {
-      subject.ondispatch = function() {
+      subject.dispatch({
+        params: { preset: 'local' }
+      }).then(() => {
         done(function() {
           assert.instanceOf(
             subject.model,
-            Calendar.Models.Account,
+            AccountModel,
             'creates model'
           );
 
           assert.hasProperties(
             subject.model,
-            Calendar.Presets.local.options,
+            Presets.local.options,
             'uses preset options'
           );
 
-          assert.equal(subject.preset, Calendar.Presets.local);
+          assert.equal(subject.preset, Presets.local);
           assert.equal(subject.completeUrl, '/settings/');
         });
-      };
-
-      subject.dispatch({
-        params: { preset: 'local' }
       });
     });
 
@@ -402,7 +481,10 @@ suiteGroup('Views.ModifyAccount', function() {
         destroyed = true;
       };
 
-      subject.ondispatch = function() {
+      subject.dispatch({
+        // send as string to emulate real conditions
+        params: { id: String(account._id) }
+      }).then(() => {
         done(function() {
           assert.ok(destroyed, 'should destroy previous state');
           assert.equal(subject.completeUrl, '/settings/');
@@ -413,11 +495,6 @@ suiteGroup('Views.ModifyAccount', function() {
             'loads account'
           );
         });
-      };
-
-      subject.dispatch({
-        // send as string to emulate real conditions
-        params: { id: String(account._id) }
       });
     });
   });
@@ -436,16 +513,24 @@ suiteGroup('Views.ModifyAccount', function() {
 
     suite('normal flow', function() {
 
+      var create;
+
       setup(function() {
+        create = core.bridge.createAccount;
         account.user = 'foo';
         subject.fields.password.value = 'foo';
         subject.render();
       });
 
+      teardown(function() {
+        core.bridge.createAccount = create;
+      });
+
+
       test('save button', function(done) {
         subject.fields.user.value = 'updated';
 
-        subject.accountHandler.send = function(model) {
+        core.bridge.createAccount = function(model) {
           done(function() {
             assert.equal(
               model.user,
@@ -492,7 +577,7 @@ suiteGroup('Views.ModifyAccount', function() {
         clearBrowserData: function() {
           var req = {};
 
-          Calendar.nextTick(function() {
+          nextTick(function() {
             clearsCookies = true;
             req.onsuccess && req.onsuccess();
           });
@@ -509,7 +594,7 @@ suiteGroup('Views.ModifyAccount', function() {
         // Oauth flows are only for new accounts
         subject.model = {};
 
-        subject.preset = Calendar.Presets.google;
+        subject.preset = Presets.google;
         subject.render();
 
         var realFlow = subject._redirectToOAuthFlow;
@@ -556,7 +641,7 @@ suiteGroup('Views.ModifyAccount', function() {
       suiteTeardown(teardownOauth);
 
       setup(function() {
-        subject.preset = Calendar.Presets.google;
+        subject.preset = Presets.google;
         subject.render();
       });
 
@@ -620,7 +705,7 @@ suiteGroup('Views.ModifyAccount', function() {
 
     suite('oauth2 edit flow', function() {
       setup(function() {
-        subject.preset = Calendar.Presets.google;
+        subject.preset = Presets.google;
         subject.model._id = 1;
 
         assert.equal(subject.authenticationType, 'oauth2');
@@ -638,11 +723,17 @@ suiteGroup('Views.ModifyAccount', function() {
     });
 
     suite('submit form', function() {
+      var create;
 
       setup(function() {
+        create = core.bridge.createAccount;
         account.user = 'foo';
         subject.fields.password.value = 'foo';
         subject.render();
+      });
+
+      teardown(function() {
+        core.bridge.createAccount = create;
       });
 
       test('default is prevented', function(done) {
@@ -651,12 +742,13 @@ suiteGroup('Views.ModifyAccount', function() {
           done();
         });
 
-        subject.accountHandler.send = function(model) {};
+        core.bridge.createAccount = function(model) {};
 
         triggerEvent(subject.form, 'submit');
       });
 
     });
   });
+});
 
 });

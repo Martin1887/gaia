@@ -19,7 +19,8 @@ class TestSmsAddContact(GaiaTestCase):
         # insert contact
         self.contact = MockContact(tel={
             'type': 'Mobile',
-            'value': '555%s' % repr(time.time()).replace('.', '')[8:]})
+            'value': '555%s' % repr(time.time()).replace('.', '')[8:]},
+            email=None)
         self.data_layer.insert_contact(self.contact)
 
         self.messages = Messages(self.marionette)
@@ -29,11 +30,8 @@ class TestSmsAddContact(GaiaTestCase):
         contacts_app = new_message.tap_add_recipient()
         contacts_app.wait_for_contacts()
 
-        contacts_app.contact(self.contact['givenName']).tap(return_details=False)
-        contacts_app.wait_for_contacts_frame_to_close()
-
-        # Now switch to the displayed frame which should be Messages app
-        self.apps.switch_to_displayed_app()
+        # After tap, don't return a class; fall back to the displayed frame which should be Messages app
+        contacts_app.contact(self.contact['givenName']).tap(return_class=None)
 
         self.assertIn(self.contact['givenName'], new_message.first_recipient_name)
         self.assertEquals(self.contact['tel']['value'], new_message.first_recipient_number_attribute)

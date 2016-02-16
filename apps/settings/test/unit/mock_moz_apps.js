@@ -21,6 +21,11 @@ var MockMozApps = {
     getAll: function() {
       return MockMozApps.mGetAllAppsCallback;
     },
+    mUninstallCallback: {
+      set onsuccess(callback) {
+        callback();
+      }
+    },
     uninstall: function(app) {
       for (var i = 0; i < MockMozApps.mApps.length; i++) {
         if (MockMozApps.mApps[i].manifest.name && app.manifest.name &&
@@ -29,7 +34,14 @@ var MockMozApps = {
           break;
         }
       }
-    }
+      return this.mUninstallCallback;
+    },
+    setEnabled: function(app, enabled) {
+      app.enabled = enabled;
+    },
+    addEventListener: function() {},
+    removeEventListener: function() {},
+    getIcon: function() { return Promise.resolve(); }
   },
   getSelf: function() {
     return MockMozApps.mGetCurrentAppCallback;

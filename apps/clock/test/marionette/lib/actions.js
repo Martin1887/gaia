@@ -6,11 +6,18 @@ var StopwatchActions = require('./stopwatch_actions');
 var TimerActions = require('./timer_actions');
 var AlarmActions = require('./alarm_actions');
 
-function ClockAppActions() {
+function ClockAppActions(options) {
   this._client = marionette.client({
-    prefs: {
-      'focusmanager.testmode': true
-    }
+    profile: {
+      prefs: {
+        // we need to disable the keyboard to avoid intermittent failures on
+        // Travis (transitions might take longer to run and block UI).
+        'dom.mozInputMethod.enabled': false,
+        // NOTE: We used to require 'focusmanager.testmode=true' for
+        // B2G-Desktop, but Mulet and Device tests do not require it.
+      }
+    },
+    desiredCapabilities: options && options.desiredCapabilities
   });
 
   this.stopwatch = new StopwatchActions(this._client);
@@ -52,11 +59,22 @@ ClockAppActions.prototype = {
   tapAndTransition: function(selector) {
     var previousPanel = this.currentPanelId;
 
-    $(selector).tap();
+    if (typeof selector === 'string') {
+      selector = this._client.findElement(selector);
+    }
+    selector.tap();
+    this._client.switchToShadowRoot();
 
+    var self = this;
     this._client.waitFor(function() {
-      return this.currentPanelId && (previousPanel !== this.currentPanelId) &&
+      var searchTimeout = self._client.searchTimeout;
+      self._client.setSearchTimeout(0);
+
+      var test = this.currentPanelId &&
+        (previousPanel !== this.currentPanelId) &&
         !$('.slide-in-right, .slide-in-left')[0];
+      self._client.setSearchTimeout(searchTimeout);
+      return test;
     }.bind(this));
   },
 
@@ -80,4 +98,3 @@ ClockAppActions.prototype = {
   }
 
 };
-

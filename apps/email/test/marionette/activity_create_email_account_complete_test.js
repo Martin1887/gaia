@@ -1,17 +1,14 @@
+'use strict';
 /*jshint node: true */
 /*global marionette */
-'use strict';
+
 var Email = require('./lib/email');
-var assert = require('assert');
 var serverHelper = require('./lib/server_helper');
 
 marionette('activity create email account', function() {
   var app,
       client = marionette.client({
-        settings: {
-          // disable keyboard ftu because it blocks our display
-          'keyboard.ftu.enabled': false
-        }
+        desiredCapabilities: { raisesAccessibilityExceptions: false }
       }),
       server = serverHelper.use({
         credentials: {
@@ -40,7 +37,7 @@ marionette('activity create email account', function() {
     client.waitFor(function() {
       return client.executeScript(function() {
         var req = window.wrappedJSObject.require;
-        return req.defined('mail_common');
+        return req.defined('cards');
       });
     });
 

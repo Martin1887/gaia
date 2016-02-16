@@ -20,7 +20,7 @@ var FxaMenu = (function fxa_menu() {
   }
 
   function refreshStatus() {
-    fxaHelper.getAccounts(onStatusChange, onStatusError);
+    fxaHelper.getAccount(onStatusChange, onStatusError);
   }
 
   // if e == null, user is logged out.
@@ -30,13 +30,14 @@ var FxaMenu = (function fxa_menu() {
     var email = e ? Normalizer.escapeHTML(e.email) : '';
 
     if (!e) {
-      navigator.mozL10n.localize(menuStatus, 'fxa-invitation');
+      menuStatus.setAttribute('data-l10n-id', 'fxa-invitation');
+      menuStatus.removeAttribute('data-l10n-args');
     } else if (e.verified) {
-      navigator.mozL10n.localize(menuStatus, 'fxa-logged-in-text', {
+      document.l10n.setAttributes(menuStatus, 'fxa-logged-in-text', {
         email: email
       });
     } else { // unverified
-      navigator.mozL10n.localize(menuStatus, 'fxa-confirm-email', {
+      document.l10n.setAttributes(menuStatus, 'fxa-confirm-email', {
         email: email
       });
     }
@@ -49,12 +50,13 @@ var FxaMenu = (function fxa_menu() {
   function onVisibilityChange() {
     if (document.hidden) {
       fxaHelper.removeEventListener('onlogin', refreshStatus);
-      fxaHelper.removeEventListener('onverifiedlogin', refreshStatus);
+      fxaHelper.removeEventListener('onverified', refreshStatus);
       fxaHelper.removeEventListener('onlogout', refreshStatus);
     } else {
       fxaHelper.addEventListener('onlogin', refreshStatus);
-      fxaHelper.addEventListener('onverifiedlogin', refreshStatus);
+      fxaHelper.addEventListener('onverified', refreshStatus);
       fxaHelper.addEventListener('onlogout', refreshStatus);
+      refreshStatus();
     }
   }
 

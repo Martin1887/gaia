@@ -1,5 +1,6 @@
 /*jshint loopfunc: true */
-/* global LazyLoader, utils, contacts */
+/* global mozContact, LazyLoader, utils, contacts */
+/* global Matcher */
 /* exported SimContactsImporter */
 /* -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- /
 /* vim: set shiftwidth=2 tabstop=2 autoindent cindent expandtab: */
@@ -29,6 +30,8 @@ function SimContactsImporter(targetIcc) {
   var icc = targetIcc;
   var iccId = icc.iccInfo && icc.iccInfo.iccid;
 
+  var numDupsMerged = 0;
+
   function generateIccContactUrl(contactid) {
     var urlValue = 'urn:' + 'uuid:' + (iccId || 'iccId') + '-' + contactid;
     return [{
@@ -39,7 +42,7 @@ function SimContactsImporter(targetIcc) {
 
   function notifyFinish() {
     if (typeof self.onfinish === 'function') {
-      window.setTimeout(self.onfinish, 0);
+      window.setTimeout(self.onfinish, 0, numDupsMerged, iccId);
     }
   }
 
@@ -71,7 +74,26 @@ function SimContactsImporter(targetIcc) {
     }
   }
 
+  function onContactsReadyForImport() {
+    if (typeof self.onread === 'function') {
+      // This way the total number can be known by the caller
+      self.onread(self.items.length);
+    }
+
+    if (loadedMatch) {
+      startMigration();
+    }
+    else {
+      document.addEventListener('matchLoaded', function mloaded() {
+        document.removeEventListener('matchLoaded', mloaded);
+        startMigration();
+      });
+    }
+  }
+
   this.start = function() {
+    numDupsMerged = 0;
+
     if (mustFinish) {
       notifyFinish();
       return;
@@ -88,49 +110,50 @@ function SimContactsImporter(targetIcc) {
       document.dispatchEvent(new CustomEvent('matchLoaded'));
     });
 
-    var request;
+    var requestAdn, requestSdn;
 
     // request contacts with readContacts() -- valid types are:
     //   'adn': Abbreviated Dialing Numbers
     //   'fdn': Fixed Dialing Numbers
+    //   'sdn': Service Dialing Numbers
     if (icc && icc.readContacts) {
-      request = icc.readContacts('adn');
-    }
-    else if (navigator.mozContacts) {
-      // Just to enable import on builds different than M-C
-      // In the longer term this line of code would disappear
-      request = navigator.mozContacts.getSimContacts('ADN');
-    }
-    else {
+      requestAdn = icc.readContacts('adn');
+    } else {
       throw new Error('Not able to obtain a SIM import function from platform');
     }
 
-    request.onsuccess = function onsuccess() {
+    requestAdn.onsuccess = function onsuccess() {
       if (mustFinish) {
         notifyFinish();
         return;
       }
+      self.items = requestAdn.result || [];
 
-      self.items = request.result; // array of mozContact elements
-      if (typeof self.onread === 'function') {
-        // This way the total number can be known by the caller
-        self.onread(self.items.length);
-      }
+      requestSdn = icc.readContacts('sdn');
+      requestSdn.onsuccess = function onsuccess() {
+        if (mustFinish) {
+          notifyFinish();
+          return;
+        }
 
-      if (loadedMatch) {
-        startMigration();
-      }
-      else {
-        document.addEventListener('matchLoaded', function mloaded() {
-          document.removeEventListener('matchLoaded', mloaded);
-          startMigration();
-        });
-      }
+        if (Array.isArray(requestSdn.result)) {
+          self.items = self.items.concat(requestSdn.result);
+        }
+        onContactsReadyForImport();
+      };
+      requestSdn.onerror = function error() {
+        if (mustFinish) {
+          notifyFinish();
+          return;
+        }
+        console.warn('Could not read SDN Contacts from SIM Card', error.name);
+        onContactsReadyForImport();
+      };
+
     };
-
-    request.onerror = function error() {
+    requestAdn.onerror = function error() {
       if (typeof self.onerror === 'function') {
-        self.onerror(request.error);
+        self.onerror(requestAdn.error);
       }
     };
   };
@@ -169,16 +192,19 @@ function SimContactsImporter(targetIcc) {
 
       item.category = ['sim'];
       item.url = generateIccContactUrl(item.id);
-      delete item.id;
 
       // Item is presumably a mozContact but for some reason if
       // we don't create a new mozContact sometimes the save call fails
-      var contact = utils.misc.toMozContact(item);
+      var contact = item;
 
       var cbs = {
         onmatch: function(results) {
+
           var mergeCbs = {
-            success: continueCb,
+            success: function() {
+              numDupsMerged++;
+              continueCb();
+            },
             error: function(e) {
               window.console.error('Error while merging: ', e.name);
               continueCb();
@@ -192,13 +218,13 @@ function SimContactsImporter(targetIcc) {
         }.bind(contact)
       };
 
-      contacts.Matcher.match(item, 'passive', cbs);
+      Matcher.match(item, 'passive', cbs);
     }
   } // importSlice
 
 
   function saveContact(contact) {
-    var req = window.navigator.mozContacts.save(contact);
+    var req = window.navigator.mozContacts.save(new mozContact(contact));
       req.onsuccess = function saveSuccess() {
         continueCb();
       };

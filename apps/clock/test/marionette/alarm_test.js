@@ -4,7 +4,9 @@ marionette('Alarm', function() {
   var assert = require('assert');
   var $ = require('./lib/mquery');
   var utils = require('./lib/utils');
-  var actions = new (require('./lib/actions'))();
+  var actions = new (require('./lib/actions'))({
+    desiredCapabilities: { raisesAccessibilityExceptions: false }
+  });
   var alarm = actions.alarm;
 
   setup(function() {
@@ -53,15 +55,15 @@ marionette('Alarm', function() {
 
     var selectedOptions = {
       snooze: '15 minutes',
-      sound: 'Gem Echoes',
+      sound: 'Cycle',
       repeat: 'Weekdays'
     };
 
-    assert.equal($('#sound-menu').text(), 'Classic Buzz');
+    assert.notEqual($('#sound-menu').text(), selectedOptions.sound);
     $('#sound-select').val(selectedOptions.sound);
     assert.equal($('#sound-menu').text(), selectedOptions.sound);
 
-    assert.equal($('#snooze-menu').text(), '5 minutes');
+    assert.notEqual($('#snooze-menu').text(), selectedOptions.snooze);
     $('#snooze-select').val(selectedOptions.snooze);
     assert.equal($('#snooze-menu').text(), selectedOptions.snooze);
 
@@ -71,6 +73,11 @@ marionette('Alarm', function() {
     assert.equal($('#sound-menu').text(), selectedOptions.sound);
     assert.equal($('#snooze-menu').text(), selectedOptions.snooze);
     assert.equal($('#repeat-menu').text(), selectedOptions.repeat);
+    // Ensure that the time button shows the value of the time
+    // <select>, since updating the select does not automatically
+    // change the button unless our code makes it do so.
+    utils.assertStringContainsTime($('#time-select + button').text(),
+                                   utils.stringToDate($('#time-select').val()));
   });
 
   test('Volume control saves immediately when changed', function() {
@@ -174,9 +181,44 @@ marionette('Alarm', function() {
     assert(alarm.list[0].enabled, 'Alarm is re-enabled after toggling');
   });
 
+  test('After snoozing, alarm should be canceled.', function() {
+    // Create an alarm and make it fire.
+    alarm.create();
+    alarm.fire(0, new Date(), function() {
+      // Click the snooze button.
+      var el = $('#ring-button-snooze');
+      try {
+        el.click();
+      } catch(e) {
+        // Marionette throws an error because the frame closes while
+        // handling the click event. This is expected.
+      }
+    });
+
+    // Fire the snooze alarm.
+    alarm.fire(0, new Date(), function() {
+      // Click the "stop" button
+      var el = $('#ring-button-stop');
+      try {
+        el.click();
+      } catch(e) {
+        // Marionette throws an error because the frame closes while
+        // handling the click event. This is expected.
+      }
+    }, 'snooze');
+
+    // The alarm must disable itself after the snooze fires.
+    $.client.waitFor(function() {
+      return !alarm.list[0].enabled;
+    }.bind(this));
+
+    // Make sure we can see the analog clock again.
+    $('#analog-clock').waitToAppear();
+  });
+
   test('Fire an alarm', function() {
     alarm.create();
-    alarm.fire(0, function() {
+    alarm.fire(0, new Date(), function() {
       // Click the "stop" button
       var el = $('#ring-button-stop');
       try {
@@ -186,6 +228,11 @@ marionette('Alarm', function() {
         // handling the click event. This is expected.
       }
     });
+
+    // The alarm must disable itself since it is not repeating.
+    $.client.waitFor(function() {
+      return !alarm.list[0].enabled;
+    }.bind(this));
 
     // Make sure we can see the analog clock again.
     $('#analog-clock').waitToAppear();

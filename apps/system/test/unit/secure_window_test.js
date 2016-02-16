@@ -1,3 +1,4 @@
+/* global BaseModule, MockContextMenu */
 'use strict';
 
 /**
@@ -6,21 +7,15 @@
  * this file would only contain those different parts of SecureWindow.
  */
 
-mocha.globals(['SettingsListener', 'removeEventListener', 'addEventListener',
-      'dispatchEvent', 'Applications', 'ManifestHelper',
-      'KeyboardManager', 'StatusBar', 'BrowserMixin',
-      'SoftwareButtonManager', 'AppWindow', 'SecureWindow',
-      'OrientationManager', 'SettingsListener', 'BrowserFrame',
-      'BrowserConfigHelper', 'System', 'AppTransitionController', 'stubById']);
-
-requireApp('system/test/unit/mock_orientation_manager.js');
+requireApp('system/shared/test/unit/mocks/mock_service.js');
 requireApp('system/shared/test/unit/mocks/mock_manifest_helper.js');
 requireApp('system/shared/test/unit/mocks/mock_settings_listener.js');
 requireApp('system/test/unit/mock_applications.js');
 requireApp('system/test/unit/mock_screen_layout.js');
+requireApp('system/test/unit/mock_context_menu.js');
 
 var mocksForSecureWindowManager = new window.MocksHelper([
-  'OrientationManager', 'Applications', 'SettingsListener',
+  'Service', 'Applications', 'SettingsListener',
   'ManifestHelper', 'ScreenLayout'
 ]).init();
 
@@ -37,15 +32,30 @@ suite('system/SecureWindow', function() {
   mocksForSecureWindowManager.attachTestHelpers();
 
   setup(function(done) {
-    stubById = this.sinon.stub(document, 'getElementById');
-    stubById.returns(document.createElement('div'));
-    requireApp('system/js/system.js');
+    stubById = this.sinon.stub(document, 'getElementById', function(id) {
+      var element = document.createElement('div');
+      if (id.indexOf('AppWindow') >= 0) {
+        var container = document.createElement('div');
+        container.className = 'browser-container';
+        element.appendChild(container);
+      }
+
+      return element;
+    });
     requireApp('system/js/browser_config_helper.js');
     requireApp('system/js/browser_frame.js');
     requireApp('system/js/app_window.js');
     requireApp('system/js/browser_mixin.js');
+    requireApp('system/js/base_module.js');
     requireApp('system/js/app_window.js');
-    requireApp('system/js/secure_window.js', done);
+    requireApp('system/js/secure_window.js', function() {
+      this.sinon.stub(BaseModule, 'instantiate', function(name) {
+        if (name === 'BrowserContextMenu') {
+          return MockContextMenu;
+        }
+      });
+      done();
+    }.bind(this));
   });
 
   teardown(function() {

@@ -3,26 +3,23 @@
 /* global MockApplications */
 /* global MocksHelper */
 /* global MockSettingsListener */
+/* global SettingsListener */
 /* global SearchWindow */
-
+/* global MockAppWindow */
+/* global MockService */
 
 requireApp('system/test/unit/mock_applications.js');
+requireApp('system/test/unit/mock_app_window.js');
 requireApp('system/shared/test/unit/mocks/mock_manifest_helper.js');
-requireApp('system/test/unit/mock_orientation_manager.js');
+requireApp('system/shared/test/unit/mocks/mock_manifest_helper.js');
+requireApp('system/shared/test/unit/mocks/mock_service.js');
 requireApp('system/shared/test/unit/mocks/mock_settings_listener.js');
-
-mocha.globals([
-  'applications',
-  'AppWindow',
-  'BrowserConfigHelper',
-  'SearchWindow'
-]);
 
 var mocks = new MocksHelper([
   'Applications',
   'ManifestHelper',
-  'OrientationManager',
-  'SettingsListener'
+  'SettingsListener',
+  'Service'
 ]).init();
 
 suite('system/SearchWindow', function() {
@@ -52,6 +49,27 @@ suite('system/SearchWindow', function() {
     realApplications = null;
   });
 
+  var fakeAppConfig1 = {
+    url: 'app://www.fake/index.html',
+    manifest: {},
+    manifestURL: 'app://wwww.fake/ManifestURL',
+    origin: 'app://www.fake'
+  };
+
+  test('constructor', function() {
+    var searchWindow = new SearchWindow();
+    assert.ok(searchWindow.constructor === SearchWindow,
+      'Uses the SearchWindow constructor');
+  });
+
+  test('destroy - unobserves setting', function() {
+    var subject = new SearchWindow();
+    this.sinon.spy(SettingsListener, 'unobserve');
+    subject.destroy();
+    sinon.assert.calledWith(SettingsListener.unobserve,
+      'rocketbar.searchAppURL', subject._setBrowserConfig);
+  });
+
   test('setBrowserConfig', function() {
     var searchWindow = new SearchWindow();
 
@@ -73,4 +91,20 @@ suite('system/SearchWindow', function() {
     assert.equal(searchWindow.searchAppURL, 'app://mozilla.org/');
   });
 
+  test('request close should close directly', function() {
+    var searchWindow = new SearchWindow();
+    var stubClose = this.sinon.stub(searchWindow, 'close');
+    searchWindow.requestClose();
+    assert.isTrue(stubClose.called);
+  });
+
+  test('call lockOrientation', function() {
+    var app1 = new MockAppWindow(fakeAppConfig1);
+    MockService.mockQueryWith('AppWindowManager.getActiveWindow', app1);
+    var searchWindow = new SearchWindow();
+    this.sinon.stub(app1, 'setOrientation');
+    searchWindow.lockOrientation();
+    assert.isTrue(app1.setOrientation.called,
+      'should lock orientation to root app');
+  });
 });

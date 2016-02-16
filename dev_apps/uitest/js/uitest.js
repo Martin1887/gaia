@@ -17,9 +17,9 @@ var UITest = {
     delete this.iframe;
     return this.iframe = document.getElementById('test-iframe');
   },
-  get backBtn() {
-    delete this.backBtn;
-    return this.backBtn = document.getElementById('test-panel-back');
+  get backHeader() {
+    delete this.backHeader;
+    return this.backHeader = document.getElementById('test-panel-header');
   },
   get panelTitle() {
     delete this.panelTitle;
@@ -46,13 +46,19 @@ var UITest = {
     if (!message.clicked) {
       return;
     }
-
-    // handle notifications when uitest is closed
+    this.bringSelfToForeground();
+  },
+  bringSelfToForeground: function() {
     navigator.mozApps.getSelf().onsuccess = function gotSelf(evt) {
       var app = evt.target.result;
-
       app.launch();
     };
+  },
+  handleActivity: function(activity) {
+    if (activity.source.name != 'internal-system-engineering-mode') {
+      return;
+    }
+    //TODO use mozEngineeringMode API to do something
   },
   init: function ut_init() {
     this.iframe.addEventListener('load', this);
@@ -60,9 +66,14 @@ var UITest = {
     document.body.addEventListener('transitionend', this);
     window.addEventListener('keyup', this);
     window.addEventListener('hashchange', this);
-    this.backBtn.addEventListener('click', this);
+    this.backHeader.addEventListener('action', this);
+
     navigator.mozSetMessageHandler('notification', function(msg) {
       this.handleNotificationMessage(msg);
+    }.bind(this));
+
+    navigator.mozSetMessageHandler('activity', function(activity) {
+      this.handleActivity(activity);
     }.bind(this));
 
     var name = this.getNameFromHash();
@@ -80,15 +91,15 @@ var UITest = {
     document.body.removeEventListener('transitionend', this);
     window.removeEventListener('keyup', this);
     window.removeEventListener('hashchange', this);
-    this.backBtn.removeEventListener('click', this);
+    this.backHeader.removeEventListener('action', this);
   },
   getNameFromHash: function ut_getNameFromHash() {
     return (/\btest=(.+)(&|$)/.exec(window.location.hash) || [])[1];
   },
   handleEvent: function ut_handleEvent(ev) {
     switch (ev.type) {
-      case 'click':
-        if (ev.target != this.backBtn) {
+      case 'action':
+        if (ev.target != this.backHeader) {
           return;
         }
         if (window.location.hash) {

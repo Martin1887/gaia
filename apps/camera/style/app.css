@@ -6,18 +6,31 @@ body {
   width: 100%;
   padding: 0;
   margin: 0;
+}
+
+html {
   overflow: hidden;
-  background-color: black;
+}
+
+/**
+ * 1. No content inside the app
+ *    should be user-selectable.
+ */
+
+body {
+  background-color: #000;
+  -moz-user-select: none; /* 1 */
 }
 
 /** Mini reset
  ---------------------------------------------------------*/
 
 * {
-  -moz-box-sizing: border-box;
+  box-sizing: border-box;
   font-weight: inherit;
   margin: 0;
   padding: 0;
+  -moz-user-select: none;
 }
 
 /** Lists
@@ -27,6 +40,7 @@ ul { list-style: none; }
 
 /** Rotates
  ---------------------------------------------------------*/
+
 .deg0 .rotates { transform: rotate(0deg); }
 .deg90 .rotates { transform: rotate(-90deg); }
 .deg180 .rotates { transform: rotate(-180deg); }

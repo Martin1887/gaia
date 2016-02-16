@@ -7,7 +7,7 @@ define(function(require, exports, module) {
 
 var debug = require('debug')('view:recording-timer');
 var formatTimer = require('lib/format-timer');
-var View = require('vendor/view');
+var View = require('view');
 
 /**
  * Exports
@@ -18,6 +18,7 @@ module.exports = View.extend({
 
   initialize: function() {
     this.value(0);
+    this.el.setAttribute('role', 'timer');
   },
 
   value: function(value) {

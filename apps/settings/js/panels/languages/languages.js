@@ -1,64 +1,86 @@
-/* global getSupportedLanguages */
 define(function(require) {
   'use strict';
 
   // AMD modules
+  var SettingsCache = require('modules/settings_cache');
   var KeyboardHelper = require('shared/keyboard_helper');
+  var LanguageList = require('shared/language_list');
+  // import this to update time format while laungage changed
+  require('modules/date_time');
 
   var Languages = function() {};
 
   Languages.prototype = {
-    init: function() {
-      this.langSel.innerHTML = '';
-      getSupportedLanguages(function fillLanguageList(languages) {
+    buildList: function() {
+      LanguageList.get(function fillList(languages, currentLang) {
+        var options = document.createDocumentFragment();
         for (var lang in languages) {
+          var isCurrent = (lang === currentLang);
           var option = document.createElement('option');
           option.value = lang;
-          // Right-to-Left (RTL) languages:
-          // (http://www.w3.org/International/questions/qa-scripts)
-          // Arabic, Hebrew, Farsi, Pashto, Urdu
-          var rtlList = ['ar', 'he', 'fa', 'ps', 'ur'];
-          // Use script direction control-characters to wrap the text labels
-          // since markup (i.e. <bdo>) does not work inside <option> tags
-          // http://www.w3.org/International/tutorials/bidi-xhtml/#nomarkup
-          var lEmbedBegin =
-              (rtlList.indexOf(lang) >= 0) ? '&#x202B;' : '&#x202A;';
-          var lEmbedEnd = '&#x202C;';
-          // The control-characters enforce the language-specific script
-          // direction to correctly display the text label (Bug #851457)
-          option.innerHTML = lEmbedBegin + languages[lang] + lEmbedEnd;
-          option.selected = (lang == document.documentElement.lang);
-          this.langSel.appendChild(option);
+          option.innerHTML = LanguageList.wrapBidi(lang, languages[lang]);
+          option.selected = isCurrent;
+          options.appendChild(option);
         }
+        this.elements.langSel.innerHTML = '';
+        this.elements.langSel.appendChild(options);
       }.bind(this));
-      setTimeout(this.update.bind(this));
     },
-    update: function() {
+    updateDateTime: function() {
       // update the date and time samples in the 'languages' panel
       if (this.panel.children.length) {
         var d = new Date();
-        var f = new navigator.mozL10n.DateTimeFormat();
-        var _ = navigator.mozL10n.get;
-        this.panel.querySelector('#region-date').textContent =
-            f.localeFormat(d, _('longDateFormat'));
-        this.panel.querySelector('#region-time').textContent =
-            f.localeFormat(d, _('shortTimeFormat'));
+        var dateString = d.toLocaleString(navigator.languages, {
+          weekday: 'long',
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric'
+        });
+        var timeString = d.toLocaleString(navigator.languages, {
+          hour12: navigator.mozHour12,
+          hour: 'numeric',
+          minute: 'numeric'
+        });
+        this.panel.querySelector('#region-date').textContent = dateString;
+        this.panel.querySelector('#region-time').textContent = timeString;
       }
     },
-    onInit: function(panel) {
+    showMoreLanguages: function() {
+      this.elements.moreLanguages.blur();
+      SettingsCache.getSettings(function(result) {
+        var version = result['langpack.channel'];
+        /* jshint nonew: false */
+        new window.MozActivity({
+          name: 'marketplace-category',
+          data: {
+            slug: 'langpacks',
+            // Marketplace expects major.minor
+            fxos_version: version.split('.').slice(0, 2).join('.')
+          }
+        });
+      });
+    },
+    onInit: function(panel, elements) {
       this.panel = panel;
-      this.langSel =
-        this.panel.querySelector('select[name="language.current"]');
+      this.elements = elements;
 
-      this.init();
+      // Installing additional languages is only available on phones for now;
+      // see https://bugzil.la/1124098.  On other device types the link to the
+      // Marketpace is hidden.  Don't set the handler if it's display: none.
+      if (this.elements.moreLanguages.offsetParent) {
+        this.elements.moreLanguages.addEventListener('click',
+          this.showMoreLanguages.bind(this));
+      }
+      this.elements.langSel.addEventListener('blur',
+        this.buildList.bind(this));
     },
     onLocalized: function() {
       // update keyboard layout
-      var lang = navigator.mozL10n.language.code;
+      var lang = document.documentElement.lang;
       KeyboardHelper.changeDefaultLayouts(lang);
 
-      // update UI
-      this.update();
+      // update the format example UI
+      this.updateDateTime();
     }
   };
 

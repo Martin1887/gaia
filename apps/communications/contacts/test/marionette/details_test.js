@@ -1,154 +1,116 @@
 'use strict';
 
 var Contacts = require('./lib/contacts');
+var ContactsData = require('./lib/contacts_data');
 var assert = require('assert');
-var fs = require('fs');
+var ContactsListView = require('./lib/views/contact-list/view');
 
 marionette('Contacts > Details', function() {
-  var client = marionette.client(Contacts.config);
-  var subject;
+  var client = marionette.client({
+    profile: Contacts.config,
+    desiredCapabilities: { raisesAccessibilityExceptions: false }
+  });
+  var subject, actions;
   var selectors;
+  var contactsData = new ContactsData(client);
+  var testContact;
 
   setup(function() {
     subject = new Contacts(client);
+    actions = client.loader.getActions();
+    subject.actions = actions;
     subject.launch();
 
     selectors = Contacts.Selectors;
-  });
 
-  test.skip('Display the phone number', function() {
-    var tel = 1231231234;
-
-    subject.addContact({
-      givenName: 'Hello',
-      tel: tel
-    });
-
-    client.helper.waitForElement(selectors.listContactFirstText)
-      .click();
-
-    subject.waitSlideLeft('details');
-
-    var telNode = client.helper.waitForElement(selectors.detailsTelButtonFirst);
-    assert.equal(telNode.text(), tel);
-  });
-
-  // Disabled: Bug 982260
-  test.skip('Merging 15 contacts', function() {
-    var tel = 666666666,
-        name = 'María Covadonga',
-        duplicateFrame,
-        mergeClose,
-        mergeAction;
-
-    for (var i = 1; i <= name.length; i++) {
-      subject.addContact({
-        givenName: name.substring(0, i),
-        tel: tel
-      });
-      if (i > 1) {
-        duplicateFrame = duplicateFrame ||
-          client.findElement(selectors.duplicateFrame);
-        subject.waitForSlideUp(duplicateFrame);
-        client.switchToFrame(duplicateFrame);
-        mergeClose = client.helper.waitForElement(selectors.duplicateClose);
-        subject.clickOn(mergeClose);
-        client.switchToFrame();
-        client.apps.switchToApp(Contacts.URL, 'contacts');
-        subject.waitForSlideDown(duplicateFrame);
-      }
-    }
-
-    var clickedContactName;
-    var firstContactText = client.helper.waitForElement(
-      selectors.listContactFirstText);
-    clickedContactName = firstContactText.text();
-    subject.clickOn(firstContactText);
-
-    subject.waitSlideLeft('details');
-
-    subject.clickOn(client.helper.waitForElement(
-      selectors.detailsFindDuplicate));
-
-    subject.waitForSlideUp(duplicateFrame);
-    client.switchToFrame(duplicateFrame);
-    mergeAction = client.helper.waitForElement(selectors.duplicateMerge);
-    subject.clickOn(mergeAction);
-    client.switchToFrame();
-    client.apps.switchToApp(Contacts.URL, 'contacts');
-    subject.waitForSlideDown(duplicateFrame);
-
-    var detailsEditContact = client.helper.waitForElement(
-      selectors.detailsEditContact);
-    subject.clickOn(detailsEditContact);
-
-    subject.waitForFormShown();
-
-    var formHeader = client.helper.waitForElement(selectors.formTitle);
-    var expectedResult = subject.l10n('/locales-obj/en-US.json',
-                                      'editContact');
-    var formContactName = client.helper.waitForElement(
-      selectors.formGivenName);
-
-    assert.equal(formHeader.text(), expectedResult);
-    assert.equal(formContactName.getAttribute('value'), clickedContactName);
-  });
-
-  // Skiping since we need to review the middleware used in this tests.
-  // This test is related to bug 983777, leaving it until we solve those
-  // test problems.
-  test.skip('Favorite FB contact and edit it', function() {
-    client.importScript(fs.readFileSync(__dirname +
-                                          '/data/facebook_contact_data.js',
-                                          'utf8'));
-    var saveFBContact = function() {
-      var fb = window.wrappedJSObject.fb,
-          data = window.wrappedJSObject.data;
-
-      var fbContact = new fb.Contact();
-      fbContact.setData(data.fbContactData);
-
-      var savingFBContact = fbContact.save();
-
-      savingFBContact.onsuccess = function() {
-        marionetteScriptFinished(data.fbContactData);
-      };
-
-      savingFBContact.onerror = function() {
-        marionetteScriptFinished();
-      };
+    testContact = {
+      tel: [{value: '1231231234', type: ['home']}],
+      givenName: ['Hello'],
+      familyName: ['World'],
+      name: ['Hello World'],
+      email: [{value: 'hello@example.com', type: ['home']}],
+      adr: [{type: ['home'], pref: true, streetAddress: 'False Street 123'}],
+      org: ['Mozilla'],
+      note: ['This is a note about the contact.']
     };
-
-    var fbContactData;
-    client.executeAsyncScript(saveFBContact, function(err, val) {
-      fbContactData = val;
-    });
-
-    client.waitFor(function() {
-      return fbContactData;
-    });
-
-    client.helper.waitForElement(selectors.listContactFirstText)
-      .click();
-
-    subject.waitSlideLeft('details');
-
-    // Check we loaded the FB contact
-    var telNode = client.helper.waitForElement(selectors.detailsTelButtonFirst);
-    assert.equal(telNode.text(), '+34666666666');
-
-    // It's not a favorite
-    var nameNode = client.helper.waitForElement(selectors.detailsContactName);
-    assert.equal(nameNode.getAttribute('class').indexOf('favorite'), -1);
-
-    // Click on favorite
-    client.helper.waitForElement(selectors.detailsFavoriteButton).click();
-    nameNode = client.helper.waitForElement(selectors.detailsContactName);
-    assert.notEqual(nameNode.getAttribute('class').indexOf('favorite'), -1);
-
-    // Click on edit and go to the edit form
-    client.helper.waitForElement(selectors.detailsEditContact).click();
-    subject.waitForFormShown();
   });
 
+  function assertContactData(mozContact) {
+    var telNode = client.helper.waitForElement(selectors.detailsTelButtonFirst);
+    assert.equal(telNode.text(), mozContact.tel[0].value);
+
+    var nameNode = client.helper.waitForElement(selectors.detailsContactName);
+    assert.equal(nameNode.text(), mozContact.name[0]);
+
+    var emailNode = client.helper.waitForElement(selectors.detailsEmail);
+    assert.equal(emailNode.text(), mozContact.email[0].value);
+
+    var addressNode = client.helper.waitForElement(selectors.detailsAddress);
+    assert.equal(addressNode.text(), mozContact.adr[0].streetAddress);
+
+    var orgNode = client.helper.waitForElement(selectors.detailsOrg);
+    assert.equal(orgNode.text(), mozContact.org[0]);
+
+    var noteNode = client.helper.waitForElement(selectors.detailsNote);
+    assert.equal(noteNode.text(), mozContact.note[0]);
+  }
+
+  test('Regular contact is displayed correctly', function() {
+    contactsData.createMozContact(testContact);
+    client.helper.waitForElement(selectors.listContactFirstText).click();
+    subject.waitSlideLeft('details');
+    assertContactData(testContact);
+  });
+
+  test('Show contact with picture', function() {
+    contactsData.createMozContact(testContact, true);
+    client.helper.waitForElement(selectors.listContactFirstText).click();
+    subject.waitSlideLeft('details');
+
+    assertContactData(testContact);
+
+    var coverImg = client.helper.waitForElement(selectors.detailsCoverImage);
+    assert.ok(coverImg, 'Element should exist.');
+    client.waitFor(function() {
+      return coverImg.getAttribute('style').indexOf('background-image') != -1;
+    });
+  });
+
+  test('Share Contact', function() {
+    contactsData.createMozContact(testContact);
+
+    client.helper.waitForElement(selectors.listContactFirstText).click();
+    subject.waitSlideLeft('details');
+
+    // Click on share button
+    client.helper.waitForElement(selectors.detailsShareButton).click();
+
+    var sysMenu = subject.systemMenu;
+
+    // In the sysMenu they should appear at least the Messages and email apps
+    var menuOptions = sysMenu.findElements('button');
+    assert.ok(menuOptions.length >= 2);
+  }); 
+
+  suite('Favorite contact', function() {
+    setup(function(){
+      contactsData.createMozContact(testContact);
+    });
+    test('Mark contact as favorite', function() {
+      var contactsListView = new ContactsListView(client);
+      var contactDetailsView = contactsListView.goToContact();
+      contactDetailsView.makeFavorited();
+      assertContactData(testContact);
+    });
+
+    test('Favorite contact should appear in' +
+      ' favorite and regular lists', function() {
+      var contactsListView = new ContactsListView(client);
+      var contactDetailsView = contactsListView.goToContact();
+      contactDetailsView.makeFavorited();
+      contactsListView = contactDetailsView.backtoContactsList();
+      assert.ok(contactsListView.firstContact.displayed());
+      assert.ok(contactsListView.firstFavorite.displayed());
+    });
+  });
 });

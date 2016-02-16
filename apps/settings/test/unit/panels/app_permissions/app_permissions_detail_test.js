@@ -1,14 +1,6 @@
 /* global MockMozApps, MockPermissionSettings */
 'use strict';
-mocha.globals([
-  'MockL10n',
-  'MockPermissionSettings',
-  'MockMozApps',
-  'MockManifestHelper'
-]);
-
 suite('app permission detail > ', function() {
-  var mockL10n, realL10n;
   var mockConfirmDialog, realConfirmDialog;
   var PermissionDetail;
 
@@ -25,19 +17,14 @@ suite('app permission detail > ', function() {
     developerHeader: {
       hidden: false
     },
-    developerName: {
-      textContent: 'testDeveloperName',
-      dataset: {
-        href: 'developerNameHref'
-      }
-    },
     developerLink: {
-      href: 'testDeveloperLink',
-      hidden: false,
-      textContent: 'devloperText',
-      dataset: {
-        href: 'developerNameHref'
-      }
+      href: 'testDeveloperLink'
+    },
+    developerName: {
+      textContent: 'testDeveloperName'
+    },
+    developerUrl: {
+      textContent: 'testDeveloperLink'
     },
     list: {
       appendChild: function(item) {
@@ -80,11 +67,8 @@ suite('app permission detail > ', function() {
   var mock_permissionsTable = {
     composedPermissions: ['testComposedPermissions'],
     accessModes: ['read', 'write', 'create'],
-    explicitCertifiedPermissions: [
-      {
-        explicitPermission: 'testComposedPermissions-read',
-        permission: 'testComposedPermissions'
-      }
+    plainPermissions: [
+      'testPlainPermissions'
     ]
   };
 
@@ -94,7 +78,6 @@ suite('app permission detail > ', function() {
 
   suiteSetup(function(done) {
     var modules = [
-      'unit/mock_l10n',
       'panels/app_permissions_detail/app_permissions_detail'
     ];
 
@@ -108,11 +91,7 @@ suite('app permission detail > ', function() {
       }
     };
     testRequire(modules, maps,
-      function(MockL10n, PermissionDetailModule) {
-        mockL10n = MockL10n;
-        realL10n = window.navigator.mozL10n;
-        window.navigator.mozL10n = mockL10n;
-
+      function(PermissionDetailModule) {
         realConfirmDialog = window.confirm;
         window.confirm = mockConfirmDialog;
 
@@ -123,7 +102,6 @@ suite('app permission detail > ', function() {
   });
 
   suiteTeardown(function() {
-    window.navigator.mozL10n = realL10n;
     window.confirm = realConfirmDialog;
   });
 
@@ -132,8 +110,13 @@ suite('app permission detail > ', function() {
     var mock_perm_not_composed = 'testNotComposedPermission';
     setup(function() {
       MockPermissionSettings.set('testComposedPermissions-read', 'prompt');
+      MockPermissionSettings.set('testPlainPermissions', 'allow');
       permissionDetail = PermissionDetail();
       permissionDetail.init(mock_elements, mock_permissionsTable);
+    });
+
+    teardown(function() {
+      MockPermissionSettings.mTeardown();
     });
 
     test('selectValueChanged', function() {
@@ -153,9 +136,19 @@ suite('app permission detail > ', function() {
 
     test('showAppDetails, test the content of detail dialog', function() {
       permissionDetail.showAppDetails(mock_app);
-      var selectOptions = mock_elements.list.children[0];
-      var target = selectOptions.querySelector('[selected="true"]');
+
+      var selectOption = mock_elements.list.children[0];
+      var target = selectOption.querySelector('[selected="true"]');
+      var selectItem = selectOption.querySelector('select');
+      assert.equal(target.value, 'allow');
+      assert.equal(selectItem.dataset.perm, 'testPlainPermissions');
+
+      selectOption = mock_elements.list.children[1];
+      target = selectOption.querySelector('[selected="true"]');
+      selectItem = selectOption.querySelector('select');
       assert.equal(target.value, 'prompt');
+      assert.equal(selectItem.dataset.perm, 'testComposedPermissions');
+
       assert.equal(permissionDetail._elements.detailTitle.textContent,
         mock_app.manifest.name);
       assert.equal(permissionDetail._elements.uninstallButton.disabled,
@@ -166,26 +159,20 @@ suite('app permission detail > ', function() {
         false);
       assert.equal(permissionDetail._elements.developerHeader.hidden,
         false);
-      assert.equal(permissionDetail._elements.developerLink.hidden,
+      assert.equal(permissionDetail._elements.developerUrl.hidden,
         false);
-      assert.equal(permissionDetail._elements.developerName.dataset.href,
-        mock_app.manifest.developer.url);
       assert.equal(permissionDetail._elements.developerLink.href,
         mock_app.manifest.developer.url);
-      assert.equal(permissionDetail._elements.developerLink.dataset.href,
-        mock_app.manifest.developer.url);
-      assert.equal(permissionDetail._elements.developerLink.textContent,
+      assert.equal(permissionDetail._elements.developerUrl.textContent,
         mock_app.manifest.developer.url);
       assert.equal(permissionDetail._elements.header.hidden,
         false);
 
       mock_app.manifest.developer.url = null;
       permissionDetail.showAppDetails(mock_app);
-      assert.equal(permissionDetail._elements.developerName.dataset.href,
-        undefined);
       assert.equal(permissionDetail._elements.developerLink.href,
         undefined);
-      assert.equal(permissionDetail._elements.developerLink.hidden,
+      assert.equal(permissionDetail._elements.developerUrl.hidden,
         true);
 
       delete mock_app.manifest.developer;
@@ -202,6 +189,15 @@ suite('app permission detail > ', function() {
       permissionDetail.uninstall();
       assert.equal(MockMozApps.mApps.length, 0,
         'should have no memeber in mozAppList if we remove it.');
+    });
+
+    test('would go back to previous panel when uninstalled', function() {
+      permissionDetail = PermissionDetail();
+      this.sinon.stub(permissionDetail, 'back');
+      permissionDetail.init(mock_elements, mock_permissionsTable);
+
+      window.dispatchEvent(new CustomEvent('applicationuninstall'));
+      assert.isTrue(permissionDetail.back.called);
     });
   });
 });

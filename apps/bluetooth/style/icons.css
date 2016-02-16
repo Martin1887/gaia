@@ -1,5 +1,5 @@
 /**
- * Reference these style sheet from Settings app 
+ * Reference these style sheet from Settings app
  */
 
 /******************************************************************************
@@ -9,7 +9,7 @@
 .bluetooth-device {
   background-repeat: no-repeat;
   background-position: right 3rem top 50%; /* same position as for Wi-Fi signal levels */
-  padding-right: 2rem;
+  -moz-padding-end: 2rem;
 }
 
 .bluetooth-device:before {
@@ -18,7 +18,7 @@
   height: 3rem;
   background: url(images/bluetooth_sprite.png) no-repeat 3rem 3rem / 39rem;
   position: absolute;
-  right: 0rem;
+  offset-inline-end: 0;
   top: 50%;
   margin-top: -1.5rem;
 }

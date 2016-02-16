@@ -1,4 +1,4 @@
-/* global Formatting, Toolkit, MockMozL10n */
+/* global Formatting, Toolkit */
 
 'use strict';
 
@@ -140,27 +140,11 @@ suite('Formatting Test Suite >', function() {
 
       var yesterday = Toolkit.toMidnight(new Date(today.getTime() - MINUTE));
       var oneTuesday = Toolkit.toMidnight(new Date(2014, 1, 25));
-      // As navigator.mozl10n.DateTimeFormat is a constructor, it is not
-      // possible to put an spy on its method localeFormat. For this reason,
-      // the spy must be placed into the Mock, instead of in the real method.
-      var dateSpy = this.sinon.spy(MockMozL10n.DateTimeFormat.prototype,
-                        'localeFormat');
 
       assert.equal(f.formatTime(), 'never');
-      f.formatTime(oneTuesday, '%a');
-      assert.ok(dateSpy.calledWith(oneTuesday, '%a'));
-      // formatTime method does not call localeFormat method when the formatted
-      // date is yesterday or today, in that case, uses location tags.
-      assert.ok(f.formatTime(today).contains('today'));
-      assert.ok(f.formatTime(yesterday).contains('yesterday, '));
-
-      dateSpy.reset();
-      f.formatTime(oneTuesday);
-      assert.ok(dateSpy.calledTwice);
-      assert.ok(dateSpy.calledWith(oneTuesday, '%a'));
-      assert.ok(dateSpy.calledWith(oneTuesday,  'shortTimeFormat'));
-
-      dateSpy.restore();
+      f.formatTime(oneTuesday, f.formatters.shortWeekday);
+      assert.ok(f.formatTime(today).includes('today'));
+      assert.ok(f.formatTime(yesterday).includes('yesterday, '));
     }
   );
 
@@ -181,23 +165,12 @@ suite('Formatting Test Suite >', function() {
       var now = new Date();
       var MINUTE = 60 * 1000;
       var HOUR = 60 * MINUTE;
-      var oneTuesday = Toolkit.toMidnight(new Date(2014, 1, 25));
       var aFewMinutesAgo = new Date(now.getTime() - 25 * MINUTE);
       var aFewHoursAgo = new Date(now.getTime() - 15 * HOUR);
 
       assert.equal(f.formatTimeSinceNow(now), 'just now');
       assert.equal(f.formatTimeSinceNow(aFewMinutesAgo), '25m ago');
       assert.equal(f.formatTimeSinceNow(aFewHoursAgo), '15h ago');
-      // As navigator.mozl10n.DateTimeFormat is a constructor, it is not
-      // possible to put an spy on its method localeFormat. For this reason,
-      // the spy must be placed into the Mock, instead of in the real method.
-      var dateSpy = this.sinon.spy(MockMozL10n.DateTimeFormat.prototype,
-                                   'localeFormat');
-      f.formatTimeSinceNow(oneTuesday);
-      assert.ok(dateSpy.calledTwice);
-      assert.ok(dateSpy.calledWith(oneTuesday, '%a'));
-      assert.ok(dateSpy.calledWith(oneTuesday,  'shortTimeFormat'));
-      dateSpy.restore();
     }
   );
 
@@ -230,13 +203,16 @@ suite('Formatting Test Suite >', function() {
 
       function assertformatTimeHTML(htmlId, initialDate, finalDate) {
         var fragment = document.getElementById(htmlId);
-        fragment.appendChild(Formatting.formatTimeHTML(initialDate, finalDate));
+        fragment.appendChild(
+          Formatting.formatTimeHTML(initialDate, finalDate));
         var timeElement = fragment.getElementsByTagName('time');
         if (finalDate && (initialDate !== finalDate)) {
           assert.equal(timeElement[1].innerHTML,
                        Formatting.formatTime(finalDate));
           assert.equal(timeElement[0].innerHTML,
-                       Formatting.formatTime(initialDate, 'short-date-format'));
+                       Formatting.formatTime(
+                         initialDate,Formatting.formatters.shortDate
+                       ));
         } else {
           assert.equal(timeElement[0].innerHTML,
                        Formatting.formatTime(initialDate));

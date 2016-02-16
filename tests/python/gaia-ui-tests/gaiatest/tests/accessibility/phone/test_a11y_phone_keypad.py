@@ -2,7 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from marionette.by import By
 from gaiatest import GaiaTestCase
 from gaiatest.mocks.mock_contact import MockContact
 from gaiatest.apps.phone.app import Phone
@@ -34,7 +33,7 @@ class TestAccessibilityPhoneKeypad(GaiaTestCase):
         # Check that the number was entered correctly.
         self.assertEqual(self.phone.keypad.phone_number, number_to_verify)
         # Delete is visible to the screen reader.
-        self.assertFalse(self.accessibility.is_hidden(self.marionette.find_element(
+        self.assertTrue(self.accessibility.is_visible(self.marionette.find_element(
             *self.phone.keypad._keypad_delete_locator)))
         # Call button is enabled for the screen reader.
         self.assertFalse(self.accessibility.is_disabled(self.marionette.find_element(

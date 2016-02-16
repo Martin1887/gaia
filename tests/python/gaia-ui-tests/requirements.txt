@@ -1,5 +1,3 @@
-marionette_client==0.7.7
-mozdevice>=0.34
-moztest>=0.3
-plivo==0.9.6
+marionette_driver==1.1.1
+marionette_client==2.0.0
 requests

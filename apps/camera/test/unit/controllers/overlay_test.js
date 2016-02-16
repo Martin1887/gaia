@@ -1,12 +1,10 @@
 /*jshint maxlen:false*/
-/*global req*/
 'use strict';
 
 suite('controllers/overlay', function() {
   suiteSetup(function(done) {
     var self = this;
-
-    req([
+    requirejs([
       'app',
       'controllers/overlay',
       'views/overlay'
@@ -24,45 +22,80 @@ suite('controllers/overlay', function() {
       pick: false,
       cancel: sinon.spy()
     };
+    this.app.require = sinon.stub();
+    this.app.require.callsArgWith(1, this.Overlay);
 
-    this.app.localize.withArgs('nocard2-title').returns('nocard title');
-    this.app.localize.withArgs('nocard3-text').returns('nocard body');
-    this.app.localize.withArgs('nospace2-title').returns('nospace title');
-    this.app.localize.withArgs('nospace2-text').returns('nospace body');
-    this.app.localize.withArgs('pluggedin-title').returns('pluggedin title');
-    this.app.localize.withArgs('pluggedin-text').returns('pluggedin body');
+    this.controller = new this.Controller(this.app);
   });
 
   suite('OverlayController()', function() {
-    test('Should bind to the storage state change event', function() {
-      this.controller = new this.Controller(this.app);
+    test('Should bind to events', function() {
       assert.ok(this.app.on.calledWith('storage:changed'));
+      assert.ok(this.app.on.calledWith('change:batteryStatus'));
+      assert.ok(this.app.on.calledWith('camera:requesting'));
+      assert.ok(this.app.on.calledWith('camera:error'));
     });
   });
 
   suite('OverlayController#onStorageChanged()', function() {
     setup(function() {
-      this.controller = new this.Controller(this.app);
-      sinon.stub(this.controller, 'createOverlay');
+      sinon.stub(this.controller, 'updateOverlay');
     });
 
     test('Should *not* insert a new overlay', function() {
       this.controller.onStorageChanged('available');
-      assert.isFalse(this.controller.createOverlay.called);
+      sinon.assert.calledWith(this.controller.updateOverlay, 'storage', false, 'available');
     });
 
-    test('Should call createOverlay whenever the value is not \'available\'', function() {
+    test('Should create overlay whenever the value is not \'available\'', function() {
       this.controller.onStorageChanged('foo');
-      assert.isTrue(this.controller.createOverlay.calledWith('foo'));
+      sinon.assert.calledWith(this.controller.updateOverlay, 'storage', true, 'foo');
     });
   });
 
-  suite('OverlayController#createOverlay()', function() {
+  suite('OverlayController#onBatteryChanged()', function() {
+    setup(function() {
+      sinon.stub(this.controller, 'updateOverlay');
+    });
+
+    test('Should create overlay if status is shutdown', function() {
+      this.controller.onBatteryChanged('shutdown');
+      sinon.assert.calledWith(this.controller.updateOverlay, 'battery', true, 'shutdown');
+    });
+
+    test('Should destroy overlay if previous is shutdown', function() {
+      this.controller.onBatteryChanged('foo');
+      sinon.assert.calledWith(this.controller.updateOverlay, 'battery', false, 'foo');
+    });
+  });
+
+  suite('OverlayController#onCameraRequesting()', function() {
+    setup(function() {
+      sinon.stub(this.controller, 'updateOverlay');
+    });
+
+    test('Should destroy overlay', function() {
+      this.controller.onCameraRequesting();
+      sinon.assert.calledWith(this.controller.updateOverlay, 'cameraError', false);
+    });
+  });
+
+  suite('OverlayController#onCameraError()', function() {
+    setup(function() {
+      sinon.stub(this.controller, 'updateOverlay');
+    });
+
+    test('Should create overlay', function() {
+      this.controller.onCameraError('foo');
+      sinon.assert.calledWith(this.controller.updateOverlay, 'cameraError', true, 'foo');
+    });
+  });
+
+  suite('OverlayController#updateOverlay()', function() {
     setup(function() {
       this.OverlayProto = this.Overlay.prototype;
-      sinon.stub(this.OverlayProto, 'initialize');
+      sinon.spy(this.OverlayProto, 'initialize');
       sinon.stub(this.OverlayProto, 'appendTo', function() { return this; });
-      this.controller = new this.Controller(this.app);
     });
 
     teardown(function() {
@@ -71,76 +104,38 @@ suite('controllers/overlay', function() {
     });
 
     test('Should not insert overlay when key is unknown', function() {
-      this.controller.createOverlay('foobar');
-      assert.isFalse(this.OverlayProto.initialize.called);
+      this.controller.updateOverlay('storage', true, 'foobar');
+      assert.isFalse(this.OverlayProto.appendTo.called);
     });
 
     test('Should insert overlay when key is known', function() {
-      this.controller.createOverlay('unavailable');
+      this.controller.updateOverlay('storage', true, 'unavailable');
       assert.isTrue(this.OverlayProto.appendTo.called);
     });
 
+    test('Should not be closable if type is \'request-fail\'', function() {
+      this.controller.updateOverlay('cameraError', true, 'request-fail');
+      assert.isFalse(this.OverlayProto.initialize.args[0][0].closable);
+
+      this.app.activity.pick = true;
+      this.controller.updateOverlay('cameraError', true, 'request-fail');
+      assert.isFalse(this.OverlayProto.initialize.args[0][0].closable);
+    });
+
     test('Should not be closable if activity not pending', function() {
-      this.controller.createOverlay('unavailable');
+      this.controller.updateOverlay('storage', true, 'unavailable');
       assert.isFalse(this.OverlayProto.initialize.args[0][0].closable);
     });
 
     test('Should be closable only if activity is pending', function() {
       this.app.activity.pick = true;
-      this.controller.createOverlay('unavailable');
+      this.controller.updateOverlay('storage', true, 'unavailable');
       assert.isTrue(this.OverlayProto.initialize.args[0][0].closable);
     });
 
     test('Should append the overlay to the body', function() {
-      this.controller.createOverlay('unavailable');
+      this.controller.updateOverlay('storage', true, 'unavailable');
       assert.isTrue(this.OverlayProto.appendTo.calledWith(document.body));
-    });
-  });
-
-  suite('OverlayController#getOverlayData()', function() {
-    setup(function() {
-      this.controller = new this.Controller(this.app);
-    });
-
-    test('Should return correct data for \'unavailable\'', function() {
-      var output = this.controller.getOverlayData('unavailable');
-      assert.equal(output.title, 'nocard title');
-      assert.equal(output.body, 'nocard body');
-    });
-
-    test('Should return correct data for \'nospace\'', function() {
-      var output = this.controller.getOverlayData('nospace');
-      assert.equal(output.title, 'nospace title');
-      assert.equal(output.body, 'nospace body');
-    });
-
-    test('Should return correct data for \'shared\'', function() {
-      var output = this.controller.getOverlayData('shared');
-      assert.equal(output.title, 'pluggedin title');
-      assert.equal(output.body, 'pluggedin body');
-    });
-
-    test('Should return false for unknown key', function() {
-      var output = this.controller.getOverlayData('something-not-known');
-      assert.equal(output, false);
-    });
-  });
-
-  suite('OverlayController#onBatteryChanged()', function() {
-    setup(function() {
-      this.controller = new this.Controller(this.app);
-      sinon.stub(this.controller, 'createOverlay');
-    });
-
-    test('Should call createOverlay if status is shutdown', function() {
-      this.controller.previousOverlay = 'foo';
-      this.controller.onBatteryChanged('shutdown');
-      assert.isTrue(this.controller.createOverlay.calledWith('shutdown'));
-    });
-
-    test('Should call destroyOverlays if previous is shutdown', function() {
-      this.controller.previousOverlay = 'shutdown';
-      this.controller.onBatteryChanged('foo');
     });
   });
 });

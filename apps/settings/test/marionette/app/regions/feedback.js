@@ -1,3 +1,5 @@
+'use strict';
+
 var Base = require('../base');
 
 /**
@@ -26,8 +28,7 @@ FeedbackPanel.Selectors = {
   'feedbackEmail': '#feedback-email',
   'feedbackEmailBar': '#feedback-emailbar',
   'sendFeedbackButton': '#feedback-send-btn',
-  'alertDialogMsg': '#feedback-alert-msg',
-  'alertDialogDoneBtn': '#feedback-done',
+  'alertDialogMsg': '#settings-alert-dialog.current .settings-dialog-message',
   'feedbackBackButton': '#feedback-back-button'
 };
 
@@ -72,8 +73,8 @@ FeedbackPanel.prototype = {
     var chooseFeedbackPanel =
       this.waitForElement('chooseFeedbackPanel');
     this.client.waitFor(function() {
-      return chooseFeedbackPanel.location()['x'] +
-        chooseFeedbackPanel.size()['width'] == 0;
+      return chooseFeedbackPanel.location().x +
+        chooseFeedbackPanel.size().width === 0;
     });
   },
 

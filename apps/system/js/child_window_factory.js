@@ -1,11 +1,16 @@
 'use strict';
-/* global AppWindow, PopupWindow, ActivityWindow */
+/* global AppWindow, PopupWindow, ActivityWindow, SettingsListener, Service,
+          AttentionWindow, MozActivity, GlobalOverlayWindow, TrustedWindow */
 
 (function(exports) {
+  var ENABLE_IN_APP_SHEET = false;
+  SettingsListener.observe('in-app-sheet.enabled', false, function(value) {
+    ENABLE_IN_APP_SHEET = value;
+  });
   /**
    * ChildWindowFactory is a submodule of AppWindow,
    * its responsbility is to:
-   * 
+   *
    * (1) deal with window.open request
    *     from mozbrowser iframe to open a proper new window.
    * (2) deal with launchactivity request to open activity window.
@@ -31,30 +36,88 @@
     this.app.element.addEventListener('mozbrowseropenwindow', this);
     this.app.element.addEventListener('_launchactivity',
       this.createActivityWindow.bind(this));
+    this.app.element.addEventListener('_launchtrusted',
+      this.createTrustedWindow.bind(this));
   };
 
   ChildWindowFactory.prototype.handleEvent =
     function cwf_handleEvent(evt) {
+      this.app.debug('[cwf] handling ' + evt.type);
+
+      // Prevent Gecko's default handler from opening the window.
+      evt.preventDefault();
+
+      // Handle event from child window.
+      if (evt.detail && evt.detail.instanceID &&
+          evt.detail.instanceID !== this.app.instanceID) {
+        if (this['_handle_child_' + evt.type]) {
+          this['_handle_child_' + evt.type](evt);
+        }
+        return;
+      }
       // Skip to wrapperWindowFactory.
       if (this.isHomescreen) {
         // XXX: Launch wrapper window here.
         return;
       }
+
+      // <a href="" target="_blank"> should never be part of the app
+      // except while FTU is running: windows must be closable & parented by FTU
+      if (evt.detail.name == '_blank' &&
+          !Service.query('isFtuRunning') &&
+          evt.detail.features !== 'attention' &&
+          evt.detail.features !== 'global-clickthrough-overlay') {
+        this.createNewWindow(evt);
+        evt.stopPropagation();
+        return;
+      }
+
+      // Check if this is a call to open the url in an known app.
+      if (evt.detail.isApp) {
+        this.app.publish('openwindow',
+          { manifestURL: evt.detail.name,
+            url: evt.detail.url,
+            timestamp: Date.now() });
+        evt.stopPropagation();
+        return;
+      }
+
       var caught = false;
       switch (evt.detail.features) {
         case 'dialog':
-          // Open PopupWindow
-          caught = this.createPopupWindow(evt);
+          // Only open popupWindow by app/http/https prefix
+          if (/^(app|http|https):\/\//i.test(evt.detail.url)) {
+            caught = this.createPopupWindow(evt);
+          } else {
+            caught = this.launchActivity(evt);
+          }
+          break;
+        case 'alwaysLowered':
+          if (this.app.hasPermission('open-hidden-window')) {
+            caught = this.createPopupWindow(evt);
+          }
           break;
         case 'attention':
           // Open attentionWindow
           if (!this.createAttentionWindow(evt)) {
-            this.createChildWindow();
+            this.createPopupWindow(evt);
           }
           break;
-        default:
+        case 'global-clickthrough-overlay':
+          // Open GlobalOverlayWindow.
+          this.createGlobalOverlayWindow(evt);
+          break;
+        case 'mozhaidasheet':
+          // This feature is for internal usage only
+          // before we have final API to open an inner sheet.
           caught = this.createChildWindow(evt);
-          // Open appWindow / browserWindow
+          break;
+        default:
+          if (ENABLE_IN_APP_SHEET) {
+            caught = this.createChildWindow(evt);
+          } else {
+            caught = this.createPopupWindow(evt);
+          }
           break;
       }
 
@@ -64,14 +127,25 @@
     };
 
   ChildWindowFactory.prototype.createPopupWindow = function(evt) {
+    if (this.app.frontWindow &&
+        (this.app.frontWindow.isTransitioning() ||
+          this.app.frontWindow.isActive())) {
+      return false;
+    }
+    var stayBackground = evt.detail.features.indexOf('alwaysLowered') >= 0;
     var configObject = {
       url: evt.detail.url,
       name: this.app.name,
       iframe: evt.detail.frameElement,
       origin: this.app.origin,
-      rearWindow: this.app
+      rearWindow: this.app,
+      stayBackground: stayBackground
     };
     var childWindow = new PopupWindow(configObject);
+    if (!stayBackground) {
+      childWindow.element.addEventListener('_opened', this);
+      childWindow.element.addEventListener('_closing', this);
+    }
     childWindow.open();
     return true;
   };
@@ -82,12 +156,42 @@
     return (a[0] === b[0] && a[2] === b[2]);
   };
 
+  ChildWindowFactory.prototype.createNewWindow = function(evt) {
+    if (!this.app.isActive() || this.app.isTransitioning()) {
+      return false;
+    }
+
+    var parentAllowFullscreenAttr =
+      evt.target.getAttribute('mozallowfullscreen');
+    var iframe = evt.detail.frameElement;
+
+    // This new window should be allowed to go full screen.
+    if (parentAllowFullscreenAttr) {
+      iframe.setAttribute('mozallowfullscreen', parentAllowFullscreenAttr);
+    }
+
+    var configObject = {
+      url: evt.detail.url,
+      name: evt.detail.name,
+      iframe: iframe,
+      isPrivate: this.app.isPrivateBrowser()
+    };
+    window.dispatchEvent(new CustomEvent('openwindow', {
+      detail: configObject
+    }));
+    return true;
+  };
+
   ChildWindowFactory.prototype.createChildWindow = function(evt) {
+    if (!this.app.isActive() || this.app.isTransitioning()) {
+      return false;
+    }
     var configObject = {
       url: evt.detail.url,
       name: this.app.name,
       iframe: evt.detail.frameElement,
-      origin: this.app.origin
+      origin: this.app.origin,
+      isPrivate: this.app.isPrivateBrowser()
     };
     if (this._sameOrigin(this.app.origin, evt.detail.url)) {
       configObject.manifestURL = this.app.manifestURL;
@@ -102,9 +206,82 @@
   };
 
   ChildWindowFactory.prototype.createAttentionWindow = function(evt) {
-    // XXX: AttentionWindow is not implemented yet.
-    // Now AttentionScreen catches this event.
-    return false;
+    if (!this.app || !this.app.hasPermission('attention')) {
+      console.error('Cannot create attention window. ' +
+                    'Invalid of underprivileged app');
+      return false;
+    }
+
+    // Canceling any full screen web content
+    if (document.mozFullScreen) {
+      document.mozCancelFullScreen();
+    }
+
+    var attentionFrame = evt.detail.frameElement;
+    var attention = new AttentionWindow({
+      iframe: attentionFrame,
+      url: evt.detail.url,
+      name: evt.detail.name,
+      manifestURL: this.app.manifestURL,
+      origin: this.app.origin,
+      parentWindow: this.app
+    });
+
+    this.app.attentionWindow = attention;
+    attention.requestOpen();
+    return true;
+  };
+
+  ChildWindowFactory.prototype.createGlobalOverlayWindow = function(evt) {
+    if (!this.app || !this.app.hasPermission('global-clickthrough-overlay')) {
+      console.error('Cannot create global overlay window. ' +
+                    'Invalid of underprivileged app');
+      return false;
+    }
+
+    var overlayFrame = evt.detail.frameElement;
+    var overlay = new GlobalOverlayWindow({
+      iframe: overlayFrame,
+      url: evt.detail.url,
+      name: evt.detail.name,
+      manifestURL: this.app.manifestURL,
+      origin: this.app.origin,
+      parentWindow: this.app
+    });
+
+    this.app.overlayWindow = overlay;
+    overlay.requestOpen();
+    return true;
+  };
+
+  ChildWindowFactory.prototype._handle_child__opened = function(evt) {
+    // Do nothing if we are not active or we are being killing.
+    if (!this.app.isVisible() || this.app._killed) {
+      return;
+    }
+
+    this.app.setVisible(false, true);
+  };
+
+  ChildWindowFactory.prototype._handle_child__closing = function(evt) {
+    // Do nothing if we are not active or we are being killing.
+    if (!this.app.isVisible() || this.app._killed) {
+      return;
+    }
+
+    this.app.setOrientation();
+    if (Service.query('getTopMostWindow').getBottomMostWindow() ===
+        this.app.getBottomMostWindow()) {
+      this.app.setVisible(true, true);
+    }
+
+    // An activity handled by ActivityWindow is always an inline activity.
+    // All window activities are handled by AppWindow. All inline
+    // activities have a rearWindow. Once this inline activity is killed,
+    // make rear window visible to screen reader and the focus should be
+    // transfered to its rear window.
+    evt.detail.rearWindow._setVisibleForScreenReader(true);
+    evt.detail.rearWindow.focus();
   };
 
   ChildWindowFactory.prototype.createActivityWindow = function(evt) {
@@ -116,9 +293,39 @@
         top.url == configuration.url) {
       return;
     }
-    console.log(top.url, top.manifestURL);
+    // We need to blur the opener before opening the new one.
+    top.setNFCFocus(false);
     var activity = new ActivityWindow(configuration, top);
+    activity.element.addEventListener('_closing', this);
+    activity.element.addEventListener('_opened', this);
     activity.open();
+    // Make topmost window browser element invisibile to screen reader.
+    top._setVisibleForScreenReader(false);
+  };
+
+  ChildWindowFactory.prototype.createTrustedWindow = function(evt) {
+    var configuration = evt.detail;
+    var top = this.app.getTopMostWindow();
+    var trusted = new TrustedWindow(configuration, top);
+    trusted.element.addEventListener('_opened', this);
+    trusted.element.addEventListener('_closing', this);
+    trusted.open();
+  };
+
+  ChildWindowFactory.prototype.launchActivity = function(evt) {
+    var activity = new MozActivity({
+      name: 'view',
+      data: {
+        type: 'url',
+        url: evt.detail.url
+      }
+    });
+    activity.onerror = function() {
+      this.app.debug(
+        'view activity error:' + activity.error.name + evt.detail.url);
+    };
+
+    return true;
   };
 
   exports.ChildWindowFactory = ChildWindowFactory;

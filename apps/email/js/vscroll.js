@@ -49,6 +49,7 @@ define(function(require, exports, module) {
     this.defaultData = defaultData;
 
     this._inited = false;
+
     // Because the FxOS keyboard works by resizing our window, we/our caller
     // need to be careful about when we sample things involving the screen size.
     // So, we want to only capture this once and do it separably from other
@@ -94,6 +95,11 @@ define(function(require, exports, module) {
      */
     this.visibleOffset = 0;
 
+    /**
+     * The old list size is used for display purposes, to know if new data would
+     * affect the scroll offset or if the total display height needs to be
+     * adjusted.
+     */
     this.oldListSize = 0;
 
     this._lastEventTime = 0;
@@ -108,7 +114,7 @@ define(function(require, exports, module) {
 
   /**
    * Given a node that is handled by VScroll, trim it down for use
-   * in a string cache, like email's cookie cache. Modifies the
+   * in a string cache, like email's html cache. Modifies the
    * node in place.
    * @param  {Node} node the containerNode that is bound to
    * a VScroll instance.
@@ -191,6 +197,15 @@ define(function(require, exports, module) {
      * so there's no overriding need to bias in either direction.
      */
     recalculatePaddingScreens: 1.5,
+
+    /**
+     * Track when the last time vscroll manually changed the scrollTop
+     * of the scrolling container. Useful for when knowing if a recent
+     * scroll event was triggered by this component or by user action.
+     * The value resets to 0 periodically to avoid interested code from
+     * doing too many timestamp checks on every scroll event.
+     */
+    lastScrollTopSetTime: 0,
 
     /**
      * The number of items to prerender (computed).
@@ -320,6 +335,18 @@ define(function(require, exports, module) {
       // Rate limit is now expired since doing actual work.
       this._limited = false;
 
+      if (!this._inited) {
+        return;
+      }
+
+      if (this.lastScrollTopSetTime) {
+        // Keep the last scroll time for about a second, which should
+        // be enough time for interested parties to check the value.
+        if (this.lastScrollTopSetTime + 1000 < Date.now()) {
+          this.lastScrollTopSetTime = 0;
+        }
+      }
+
       var startIndex,
           endIndex,
           scrollTop = this.scrollingContainer.scrollTop,
@@ -346,9 +373,30 @@ define(function(require, exports, module) {
     },
 
     /**
+     * Called when the vscroll becomes visible. In cases where the vscroll
+     * may have been intially created for an element that is not visible,
+     * the sizing information would not be correct and the vscroll instance
+     * would not be initialized correctly. So the instance needs to know
+     * when it should check again to properly initialize. Otherwise, there
+     * may not be any new data signals from the the list data that a display
+     * needs to be tried.
+     */
+    nowVisible: function() {
+      // Only do work if not initialized and have data.
+      if (!this._inited && this.list) {
+        this._init();
+        this.onChange();
+      }
+    },
+
+    /**
      * Renders the list at the current scroll position.
      */
     renderCurrentPosition: function() {
+      if (!this._inited) {
+        return;
+      }
+
       var scrollTop = this.scrollingContainer.scrollTop;
       this.scrollTop = scrollTop;
 
@@ -373,7 +421,7 @@ define(function(require, exports, module) {
       if (top < 0) {
         top = 0;
       }
-      return Math.floor(top / this.itemHeight);
+      return this.itemHeight ? Math.floor(top / this.itemHeight) : 0;
     },
 
     /**
@@ -402,8 +450,8 @@ define(function(require, exports, module) {
      * @param  {Number} index the list item index.
      */
     jumpToIndex: function(index) {
-      this.scrollingContainer.scrollTop = (index * this.itemHeight) +
-                                          this.visibleOffset;
+      this._setContainerScrollTop((index * this.itemHeight) +
+                                          this.visibleOffset);
     },
 
     /**
@@ -416,8 +464,14 @@ define(function(require, exports, module) {
     clearDisplay: function() {
       // Clear the HTML content.
       this.container.innerHTML = '';
-
       this.container.style.height = '0px';
+
+      // Also clear the oldListSize, since it used for height/scroll offset
+      // updates, and now that the container does not have any children, this
+      // property should be reset to zero. If this is not done, it is possible
+      // for an update that matches the same size as the previous data will not
+      // end up showing items. This happened for search in bug 1081403.
+      this.oldListSize = 0;
     },
 
     /**
@@ -430,6 +484,14 @@ define(function(require, exports, module) {
         clearTimeout(this._scrollTimeoutPoll);
         this._scrollTimeoutPoll = 0;
       }
+    },
+
+    _setContainerScrollTop: function(value) {
+      this.scrollingContainer.scrollTop = value;
+      // Opt for using a property set instead of an event emitter, since the
+      // timing of that event emit is not guaranteed to get to listeners before
+      // scroll events.
+      this.lastScrollTopSetTime = Date.now();
     },
 
     /**
@@ -524,8 +586,10 @@ define(function(require, exports, module) {
       if (this._capturedScreenMetrics) {
         return;
       }
-      this._capturedScreenMetrics = true;
       this.innerHeight = this.scrollingContainer.getBoundingClientRect().height;
+      if (this.innerHeight > 0) {
+        this._capturedScreenMetrics = true;
+      }
     },
 
     /**
@@ -545,8 +609,6 @@ define(function(require, exports, module) {
         return;
       }
 
-      this.scrollingContainer.addEventListener('scroll', this.onEvent);
-
       // Clear out any previous container contents. For example, a
       // cached HTML of a previous card may have been used to init
       // this VScroll instance.
@@ -560,6 +622,16 @@ define(function(require, exports, module) {
 
       // Set up all the bounds used in scroll calculations
       this.captureScreenMetrics();
+
+      // The instance is not visible yet, so cannot finish initialization.
+      // Wait for the next instance API call to see if initialization can
+      // complete.
+      if (!this.itemHeight || !this.innerHeight) {
+        return;
+      }
+
+      this.scrollingContainer.addEventListener('scroll', this.onEvent);
+
       this.itemsPerScreen = Math.ceil(this.innerHeight / this.itemHeight);
       this.prerenderItemCount =
         Math.ceil(this.itemsPerScreen * this.prerenderScreens);
@@ -635,6 +707,10 @@ define(function(require, exports, module) {
      * the absolute scroll position may need to change.
      */
     _recalculate: function(refIndex) {
+      if (!this._inited) {
+        return;
+      }
+
       var node,
           index = this.indexAtScrollPosition(this.scrollTop),
           remainder = this.scrollTop % this.itemHeight,
@@ -665,10 +741,10 @@ define(function(require, exports, module) {
       }
       this.waitingForRecalculate = false;
 
-      this.scrollingContainer.scrollTop = (this.itemHeight * index) + remainder;
+      this._setContainerScrollTop((this.itemHeight * index) + remainder);
       this.renderCurrentPosition();
 
-      this.emit('recalculated', index === 0);
+      this.emit('recalculated', index === 0, refIndex);
     },
 
     /**
@@ -735,69 +811,7 @@ define(function(require, exports, module) {
   // uncomment this section to use them. Useful for tracing how the
   // code is called.
   /*
-  var logQueue = [],
-      logTimeoutId = 0,
-      // 16 ms threshold for 60 fps, set to 0 to just log all calls,
-      // without timings. Unless set to 0, log calls are batched
-      // and written to the console later, so they will not appear
-      // in the correct order as compared to console logs done outside
-      // this module. Plus they will appear out of order since the log
-      // call does not complete until after the wrapped function
-      // completes. So if other function calls complete inside that
-      // function, they will be logged before the containing function
-      // is logged.
-      perfLogThreshold = 0;
-
-  function logPerf() {
-    logQueue.forEach(function(msg) {
-      console.log(msg);
-    });
-    logQueue = [];
-    logTimeoutId = 0;
-  }
-
-  function queueLog(prop, time, arg0) {
-    var arg0Type = typeof arg0;
-    logQueue.push(module.id + ': ' + prop +
-      (arg0Type === 'number' ||
-       arg0Type === 'boolean' ||
-       arg0Type === 'string' ?
-       ': (' + arg0 + ')' : '') +
-      (perfLogThreshold === 0 ? '' : ': ' + time));
-    if (perfLogThreshold === 0) {
-      logPerf();
-    } else {
-      if (!logTimeoutId) {
-        logTimeoutId = setTimeout(logPerf, 2000);
-      }
-    }
-  }
-
-  function perfWrap(prop, fn) {
-    return function() {
-      var start = performance.now();
-      if (perfLogThreshold === 0) {
-        queueLog(prop, 0, arguments[0]);
-      }
-      var result = fn.apply(this, arguments);
-      var end = performance.now();
-
-      var time = end - start;
-      if (perfLogThreshold > 0 && time > perfLogThreshold) {
-        queueLog(prop, end - start, arguments[0]);
-      }
-      return result;
-    };
-  }
-
-  if (perfLogThreshold > -1) {
-    Object.keys(VScroll.prototype).forEach(function (prop) {
-      var proto = VScroll.prototype;
-      if (typeof proto[prop] === 'function') {
-        proto[prop] = perfWrap(prop, proto[prop]);
-      }
-    });
-  }
+  require('debug_trace_methods')(VScroll.prototype, module.id);
   */
 
   return VScroll;

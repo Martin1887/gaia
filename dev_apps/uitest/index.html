@@ -8,8 +8,16 @@
   <link rel="stylesheet" type="text/css" href="style/uitest.css">
   <link rel="stylesheet" type="text/css" href="style/tabs.css" >
   <link rel="stylesheet" type="text/css" href="style/lists.css" >
-  <link rel="stylesheet" type="text/css" href="shared/style/headers.css">
   <link rel="stylesheet" type="text/css" href="shared/style/lists.css">
+
+  <!-- Gaia Components -->
+  <link rel="stylesheet" href="app://theme.gaiamobile.org/shared/elements/gaia-theme/style.css">
+  <link rel="stylesheet" href="shared/elements/gaia-icons/gaia-icons.css">
+
+  <!-- Gaia Components -->
+  <script src="shared/elements/config.js"></script>
+  <script src="shared/elements/gaia-header/dist/gaia-header.js"></script>
+
   <script type="text/javascript" src="js/uitest.js"></script>
   <!-- <script src="shared/js/mime_mapper.js"></script> -->
   <!-- <script src="shared/js/settings_listener.js"></script> -->
@@ -19,13 +27,13 @@
   <script defer src="shared/js/lazy_loader.js"></script>
   <script defer src="shared/js/accessibility_helper.js"></script>
 </head>
-<body>
+<body class="theme-productivity">
   <div class="panel list-panel">
     <div id="UI-tests" class="page">
       <section role="region">
-        <header>
+        <gaia-header>
           <h1>UI Tests</h1>
-        </header>
+        </gaia-header>
       </section>
       <section data-type="list">
         <ul class="sublist">
@@ -47,9 +55,9 @@
     </div>
     <div id="API-tests" class="page invisible">
       <section role="region">
-        <header>
+        <gaia-header>
           <h1>API Tests</h1>
-        </header>
+        </gaia-header>
       </section>
       <section data-type="list">
         <ul class="sublist">
@@ -57,6 +65,7 @@
           <li><a href="#test=API/browseractivities">Browser Activities</a></li>
           <li><a href="#test=API/composeemail">Compose Email</a></li>
           <li><a href="#test=API/contacts">Contacts</a></li>
+          <li><a href="#test=API/copypaste">Copy Paste</a></li>
           <li><a href="#test=API/csp">CSP Warning</a></li>
           <li><a href="#test=API/dialnumber">Dial Number</a></li>
           <li><a href="#test=API/downloads">Downloads</a></li>
@@ -75,19 +84,23 @@
           <li><a href="#test=API/pickphoto">Pick Photo</a></li>
           <li><a href="#test=API/picktype">Pick Photo/Video</a></li>
           <li><a href="#test=API/pickvideo">Pick Video</a></li>
+          <li><a href="#test=API/pickdownload">Pick Download</a></li>
+          <li><a href="#test=API/presentation_api">Presentation API</a></li>
           <li><a href="#test=API/savebookmark">Save bookmark</a></li>
           <li><a href="#test=API/sendsms">Send SMS</a></li>
           <li><a href="#test=API/shareimage">Share Image</a></li>
           <li><a href="#test=API/shareurl">Share URL</a></li>
           <li><a href="#test=API/viewphoto">View Photo</a></li>
+          <li><a href="#test=API/search">Search keyword</a></li>
+          <li><a href="#test=API/secure_element">Secure Element (Wallet)</a><li>
         </ul>
       </section>
-    </div>    
+    </div>
     <div id="HW-tests" class="page invisible">
       <section role="region">
-        <header>
+        <gaia-header>
           <h1 class="header-title">HW Tests</h1>
-        </header>
+        </gaia-header>
       </section>
       <section data-type="list">
         <ul class="sublist">
@@ -127,10 +140,9 @@
   </div>
   <div id="test-panel" class="panel test-panel">
     <section role="region">
-      <header>
-        <button id="test-panel-back"><span class="icon icon-back">back</span></button>
+      <gaia-header id="test-panel-header" action="back">
         <h1 id="test-panel-title" class="header-title"></h1>
-      </header>
+      </gaia-header>
     </section>
     <iframe id="test-iframe" mozallowfullscreen="true"></iframe>
   </div>

@@ -1,3 +1,10 @@
+/**
+ * BiDi note: because this stylesheet is 'scoped', instead of:
+ *     html[dir="rtl"] #volume { ... }
+ * we must use:
+ *     #volume:-moz-dir(rtl) { ... }
+ */
+
 #volume {
   text-align: center;
   position: absolute;
@@ -5,11 +12,10 @@
   left: 0;
   right: 0;
   height: 4rem;
-  padding-right: 2rem;
-  -moz-transition: opacity 0.5s ease;
-  pointer-events: none;
+  -moz-transition: opacity var(--transition-duration) ease;
   display: none;
   background-image: url("images/header_bg.png");
+  pointer-events: auto;
 }
 
 #volume.visible {
@@ -18,36 +24,40 @@
 
 #volume > span {
   height: 4rem;
-  float: left;
   background-repeat: no-repeat, no-repeat;
   background-position: center, center;
 }
+#volume:-moz-dir(ltr) > span { float: left; }
+#volume:-moz-dir(rtl) > span { float: right; }
 
 #volume section {
   overflow: hidden;
-  margin-top: 1.5rem;
+  margin: 1.5rem 1rem 0;
+  margin-inline-start: 0;
   height: 1rem;
 }
 
 /* Default shows 15 sound pieces */
 #volume section div {
-  width: 6.5%!important;
+  width: 6.6%!important;
   height: 100%;
-  float: left;
   background: #666;
-  -moz-box-sizing: border-box;
-  border-left: solid 0.2rem #3e3e3e;
+  box-sizing: border-box;
+  border-inline-start: solid 0.2rem #3e3e3e;
 }
+#volume:-moz-dir(ltr) section div { float: left; }
+#volume:-moz-dir(rtl) section div { float: right; }
 
 #volume section div:first-child {
-  border-radius: 0.6rem 0 0 0.6rem;
   border: none;
+  margin-inline-start: 1%;
 }
+#volume:-moz-dir(ltr) section div:first-child { border-radius: 0.6rem 0 0 0.6rem; }
+#volume:-moz-dir(rtl) section div:first-child { border-radius: 0 0.6rem 0.6rem 0; }
 
-#volume section div:nth-last-child(2) {
-  border-radius: 0 0.6rem 0.6rem 0;
-  /* Last visible bar */
-}
+/* Last visible bar */
+#volume:-moz-dir(ltr) section div:nth-last-child(2) { border-radius: 0 0.6rem 0.6rem 0; }
+#volume:-moz-dir(rtl) section div:nth-last-child(2) { border-radius: 0.6rem 0 0 0.6rem; }
 
 #volume section div:last-child {
   display: none;
@@ -63,45 +73,20 @@
 
 #volume span {
   display: inline-block;
-  width: 2.5rem;
-  float: left;
+  width: 3rem;
+  margin-inline-start: 0.8rem;
 }
+#volume:-moz-dir(ltr) span { float: left; }
+#volume:-moz-dir(rtl) span { float: right; }
 
 /* Icon states */
-#volume span.vibration {
-  visibility: hidden;
-  margin-left: 0.5rem;
-  background-image: url('images/vibration_disabled_icon.png');
-  background-size: 0.8rem auto;
-}
-
-#volume.vibration span.vibration {
-  background-image: url('images/vibration_enabled_icon.png');
-  background-size: 0.8rem auto;
-}
-
-#volume.mute span.mute-state {
-  background-image: url('images/speaker_mute_icon.png');
-  background-size: 2.2rem auto;
-}
-
-#volume[data-channel="telephony"] span.mute-state,
-#volume[data-channel="bt_sco"] span.mute-state,
-#volume span.mute-state {
-  background-image: url('images/speaker_regular_icon.png');
-  background-size: 2.2rem auto;
-}
-
-#volume span.volume {
-  margin-left: 0.5rem;
-  background-image: url('images/speaker_loud_icon.png');
-  background-size: 2.2rem auto;
-  float: right;
+#volume span.channel-type {
+  background-size: 3rem auto;
 }
 
 /* Telephony channel, just shows 6 progress pieces */
 #volume[data-channel="telephony"] section div {
-  width: 16.6%!important;
+  width: 16.5%!important;
 }
 
 /* First always keep active */
@@ -109,13 +94,16 @@
   background: #00abcc;
 }
 
-#volume[data-channel="telephony"] section div:nth-child(n+6) {
-  border-radius: 0 0.6rem 0.6rem 0;
-  /* Last visible bar */
-}
+/* Last visible bar */
+#volume[data-channel="telephony"]:-moz-dir(ltr) section div:nth-child(n+6) { border-radius: 0 0.6rem 0.6rem 0; }
+#volume[data-channel="telephony"]:-moz-dir(rtl) section div:nth-child(n+6) { border-radius: 0.6rem 0 0 0.6rem; }
 
 #volume[data-channel="telephony"] section div:nth-child(n+7) {
   display: none;
+}
+
+#volume[data-channel="telephony"] span.channel-type {
+  background-image: url('images/telephony_normal.png');
 }
 
 /* bt_sco channel, shows 16 (all of them) progress pieces */
@@ -125,6 +113,7 @@
 
 /* First always keep active */
 #volume[data-channel="bt_sco"] section div:first-child {
+  margin-inline-start: 0;
   background: #00abcc;
 }
 
@@ -132,13 +121,45 @@
   border-radius: 0;
 }
 
+/* Last visible bar */
 #volume[data-channel="bt_sco"] section div:last-child {
-  border-radius: 0 0.6rem 0.6rem 0;
   display: block;
-  /* Last visible bar */
+}
+#volume[data-channel="bt_sco"]:-moz-dir(ltr) section div:last-child { border-radius: 0 0.6rem 0.6rem 0; }
+#volume[data-channel="bt_sco"]:-moz-dir(rtl) section div:last-child { border-radius: 0.6rem 0 0 0.6rem; }
+
+#volume[data-channel="bt_sco"] span.channel-type {
+  background-image: url('images/telephony_normal.png');
 }
 
 /* Notification channel */
-#volume[data-channel="notification"] span.vibration {
-  visibility: visible;
+#volume[data-channel="notification"] span.channel-type {
+  background-image: url('images/ringer-notifications_normal.png');
+}
+
+#volume[data-channel="notification"].mute span.channel-type {
+  /* Use the same image as the content channel to sync with the status bar */
+  background-image: url('images/media_silent.png');
+}
+
+#volume[data-channel="notification"].mute.vibration span.channel-type {
+  background-image: url('images/ringer-notifications_vibrate.png');
+}
+
+/* Alarm channel */
+#volume[data-channel="alarm"] span.channel-type {
+  background-image: url('images/alarm_normal.png');
+}
+
+#volume[data-channel="alarm"].mute span.channel-type {
+  background-image: url('images/alarm_silent.png');
+}
+
+/* Content channel */
+#volume[data-channel="content"] span.channel-type {
+  background-image: url('images/media_normal.png');
+}
+
+#volume[data-channel="content"].mute span.channel-type {
+  background-image: url('images/media_silent.png');
 }

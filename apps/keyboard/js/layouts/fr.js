@@ -1,9 +1,12 @@
 Keyboards.fr = {
   label: 'French',
+  shortLabel: 'Fr',
   menuLabel: 'Français',
   imEngine: 'latin',
-  types: ['text', 'url', 'email'],
+  types: ['text', 'url', 'email', 'password'],
   autoCorrectLanguage: 'fr',
+  autoCorrectPunctuation: false,
+  lang: 'fr',
   alt: {
     a: 'àâæáãäåā',
     c: 'çćč',
@@ -14,7 +17,7 @@ Keyboards.fr = {
     s: 'śšşß',
     S: 'ŚŠŞ',
     n: 'ńñň',
-    '.': ',?!-;:'
+    '.': ',?!-;:…'
   },
   keys: [
     [

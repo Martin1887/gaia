@@ -3,7 +3,7 @@ suite('controllers/storage', function() {
 
   suiteSetup(function(done) {
     var self = this;
-    req([
+    requirejs([
       'controllers/storage',
       'lib/setting',
       'lib/storage',
@@ -83,7 +83,7 @@ suite('controllers/storage', function() {
 
   suite('StorageController#storePicture()', function() {
     setup(function() {
-      this.storage.addPicture.callsArgWith(1, '<filepath>', '<abspath>', '<file-blob>');
+      this.storage.addPicture.callsArgWith(1, null, '<filepath>', '<abspath>', '<file-blob>');
 
       this.picture = { blob: '<memory-blob>' };
       this.controller.storePicture(this.picture);
@@ -108,7 +108,7 @@ suite('controllers/storage', function() {
 
   suite('StorageController#storeVideo()', function() {
     setup(function() {
-      this.storage.addPicture.callsArgWith(2, '<filepath>', '<abspath>', '<file-blob>');
+      this.storage.addPicture.callsArgWith(2, null, '<filepath>', '<abspath>', '<file-blob>');
 
       this.video = {
         blob: '<file-blob>',
@@ -137,7 +137,7 @@ suite('controllers/storage', function() {
 
     test('Should switch the <poster-memory-blob> with the <file-blob>', function() {
       assert.equal(this.video.poster.blob, '<file-blob>');
-    });
+    })
 
     test('Should flag it as `isVideo`', function() {
       assert.equal(this.video.isVideo, true);
@@ -154,8 +154,7 @@ suite('controllers/storage', function() {
       this.settings.pictureSizes.selected.withArgs('data').returns({ width: 400, height: 300 });
       this.controller.updateMaxFileSize();
 
-      var exif = 4096;
-      var expected = ((400 * 300) * 3) + exif;
+      var expected = (400 * 300 / 2) + 25000;
       var bytes = this.storage.setMaxFileSize.args[0][0];
 
       assert.equal(this.storage.setMaxFileSize.callCount, 1);

@@ -13,9 +13,15 @@
     this.closeAnimatin = 'fade-out';
     this.instanceID = 'fakeapp-id';
   };
+  MockSecureWindow.prototype.isActive =
+  MockSecureWindow.prototype.focus =
+  MockSecureWindow.prototype.setVisibleForScreenReader =
   MockSecureWindow.prototype.open =
   MockSecureWindow.prototype.close =
   MockSecureWindow.prototype.kill =
+  MockSecureWindow.prototype.softKill =
+  MockSecureWindow.prototype.cancelSoftKill =
+  MockSecureWindow.prototype.isSoftKillPending =
   MockSecureWindow.prototype.setVisible =
   function() {};
 

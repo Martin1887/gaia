@@ -1,9 +1,15 @@
-suiteGroup('Views.CreateAccount', function() {
-  'use strict';
+define(function(require) {
+'use strict';
 
+var AccountTemplate = require('templates/account');
+var CreateAccount = require('views/create_account');
+var Presets = require('common/presets');
+var core = require('core');
+
+suite('Views.CreateAccount', function() {
   var subject;
   var template;
-  var app;
+  var storeFactory;
 
   teardown(function() {
     var el = document.getElementById('test');
@@ -15,29 +21,28 @@ suiteGroup('Views.CreateAccount', function() {
     div.id = 'test';
     div.innerHTML = [
       '<div id="create-account-view">',
-        '<button class="cancel">cancel</button>',
+        '<gaia-header id="create-account-header" action="back">',
+          '<h1>Add an account</h1>',
+        '</gaia-header>',
         '<ul id="create-account-presets"></ul>',
       '</div>'
     ].join('');
 
     document.body.appendChild(div);
 
-    app = testSupport.calendar.app();
-
-    template = Calendar.Templates.Account;
-    subject = new Calendar.Views.CreateAccount({
-      app: app
-    });
-
-    app.db.open(done);
+    storeFactory = core.storeFactory;
+    template = AccountTemplate;
+    subject = new CreateAccount();
+    core.db.open(done);
   });
 
   teardown(function(done) {
+    subject.destroy();
     testSupport.calendar.clearStore(
-      app.db,
+      core.db,
       ['accounts'],
       function() {
-        app.db.close();
+        core.db.close();
         done();
       }
     );
@@ -58,32 +63,22 @@ suiteGroup('Views.CreateAccount', function() {
   });
 
   suite('#_initEvents', function() {
+    setup(function(done) {
+      subject.render = done;
+      subject._initEvents();
+    });
 
-    test('when an account is added', function() {
-      var store = app.store('Account');
-      var renderCalled = false;
-      subject.render = function() {
-        renderCalled = true;
-      };
-
+    test('when an account is added', function(done) {
+      var store = storeFactory.get('Account');
+      subject.render = done;
       store.emit('add');
-
-      assert.equal(renderCalled, true);
     });
 
-    test('when an account is removed', function() {
-      var store = app.store('Account');
-      var renderCalled = false;
-      subject.render = function() {
-        renderCalled = true;
-      };
-
+    test('when an account is removed', function(done) {
+      var store = storeFactory.get('Account');
+      subject.render = done;
       store.emit('remove');
-
-      assert.equal(renderCalled, true);
     });
-
-
   });
 
   suite('#render', function() {
@@ -95,9 +90,8 @@ suiteGroup('Views.CreateAccount', function() {
       var presets;
 
       setup(function(done) {
-        presets = Object.keys(Calendar.Presets);
-        subject.render();
-        subject.onrender = done;
+        presets = Object.keys(Presets);
+        subject.render().then(done).catch(done);
       });
 
       test('each preset is displayed', function() {
@@ -108,7 +102,7 @@ suiteGroup('Views.CreateAccount', function() {
         presets.forEach(function(val) {
           assert.include(
             html,
-            template.provider.render({ name: val })
+            val
           );
         });
       });
@@ -127,11 +121,10 @@ suiteGroup('Views.CreateAccount', function() {
           }
         };
 
-        var accountStore = app.store('Account');
+        var accountStore = storeFactory.get('Account');
 
         accountStore.persist({ preset: 'one' }, function() {
-          subject.render();
-          subject.onrender = done;
+          subject.render().then(done).catch(done);
         });
       });
 
@@ -150,7 +143,7 @@ suiteGroup('Views.CreateAccount', function() {
         );
       });
     });
-
   });
+});
 
 });

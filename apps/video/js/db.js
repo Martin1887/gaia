@@ -1,3 +1,9 @@
+/* global videodb:true,storageState:true,firstScanEnded:true,
+  MediaDB,updateDialog,playerShowing,hidePlayer,updateLoadingSpinner,
+  addToMetadataQueue,thumbnailList,currentVideo,resetCurrentVideo,
+  hideSelectView,thumbnailClickHandler,startParsingMetadata */
+/* exported initDB */
+'use strict';
 //
 // This file is part of the Gaia Video app.  It uses the MediaDB libarary
 // and the code in metadata.js to ensure that the videos[] array is up to date.
@@ -28,18 +34,19 @@ function initDB() {
   // when the user pulls the sdcard out. If we're playing a video when that
   // happens, we need to stop or risk a crash.
   videodb.oncardremoved = function() {
-    if (playerShowing)
+    if (playerShowing) {
       hidePlayer(true);
-  };
-
-  videodb.onready = function() {
-    storageState = false;
-    updateDialog();
-    enumerateDB();
+    }
   };
 
   videodb.onscanend = function() {
-    firstScanEnded = true;
+    // If this was the first scan after startup, then tell
+    // performance monitors that the app is finally fully loaded and stable.
+    if (!firstScanEnded) {
+      firstScanEnded = true;
+      window.performance.mark('fullyLoaded');
+    }
+
     updateDialog();
     updateLoadingSpinner();
   };
@@ -50,6 +57,26 @@ function initDB() {
   videodb.ondeleted = function(event) {
     event.detail.forEach(videoDeleted);
   };
+
+  videodb.onenumerable = function() {
+    storageState = false;
+    updateDialog();
+    enumerateDB();
+  };
+
+  // The video app is relying on the mediadb auto-scanning to scan the db
+  // when it becomes ready or when the SD card has been mounted or remounted.
+  // This 'ready' handler is responsible for removing the 'unplug your ...'
+  // overlay (displayed when USB storage is enabled when the device is connected
+  // via USB cable), when the USB cable is unplugged.
+  videodb.onready = function() {
+    storageState = false;
+    updateDialog();
+    // It is possible during startup to queue metadata to parse before
+    // the MediaDB is ready to be able to parse it. So now that we are
+    // ready, we should try again and parse metadata for any queued videos.
+    startParsingMetadata();
+  };
 }
 
 // Remember whether we've already run the enumeration step
@@ -58,9 +85,11 @@ var enumerated = false;
 // This function runs once when the app starts up. It gets all known videos
 // from the MediaDB and handles the appropriately
 function enumerateDB() {
-  if (enumerated)
+  if (enumerated) {
     return;
+  }
   enumerated = true;
+  var firstBatchDisplayed = false;
 
   var batch = [];
   var batchSize = 4;
@@ -100,6 +129,24 @@ function enumerateDB() {
   function flush() {
     batch.forEach(addVideo);
     batch.length = 0;
+
+    if (!firstBatchDisplayed) {
+      firstBatchDisplayed = true;
+      // Tell performance monitors that "above the fold" content is displayed
+      // and is ready to interact with.
+      window.performance.mark('visuallyLoaded');
+      window.performance.mark('contentInteractive');
+
+      // Remove the attribute to trigger gaia header font-fit logic, defer it
+      // until now to postpone the overhead. Also, do this asynchronously to
+      // avoid interrupting the enumerating of the db.
+      setTimeout(function() {
+        var headers = document.querySelectorAll('gaia-header');
+        for (var i = 0; i < headers.length; ++i) {
+          headers[i].removeAttribute('no-font-fit');
+        }
+      });
+    }
   }
 }
 

@@ -1,39 +1,56 @@
 (function() {
 
   'use strict';
-  /* global Search, UrlHelper */
+  /* global asyncStorage */
+  /* global Contextmenu */
+  /* global Search */
+  /* global SearchDedupe */
+  /* global SettingsListener */
+  /* global UrlHelper */
+  /* global SearchProvider */
+  /* global MetricsHelper */
+  /* global MozActivity */
 
   // timeout before notifying providers
-  var SEARCH_DELAY = 600;
+  var SEARCH_DELAY = 500;
+  var MAX_GRID_SIZE = 4;
 
   window.Search = {
+
     _port: null,
-
-    /**
-     * A mapping of search results to be de-duplicated via manifesURL.
-     */
-    exactResults: {},
-
-    /**
-     * A mapping of search results to be de-duplicated by other than
-     * manifestURL. This is our strategy of de-duplicating results from
-     * Everything.me and locally installed apps.
-     */
-    fuzzyResults: {},
-
-    /**
-     * A list of common words that we ignore when de-duping
-     */
-    dedupeNullList: [
-      'mobile', 'touch'
-    ],
 
     providers: {},
 
+    gridCount: 0,
+
     searchResults: document.getElementById('search-results'),
-    newTabPage: document.getElementById('newtab-page'),
+
+    offlineMessage: document.getElementById('offline-message'),
+    suggestionsWrapper: document.getElementById('suggestions-wrapper'),
+    grid: document.getElementById('icons'),
+    gridWrapper: document.getElementById('icons-wrapper'),
+
+    suggestionsEnabled: false,
+
+    /**
+     * Used to display a notice on how to configure the search provider
+     * on first use
+     */
+    suggestionNotice: document.getElementById('suggestions-notice-wrapper'),
+    get settingsLink() {
+      return document.getElementById('settings-link');
+    },
+
+    toShowNotice: null,
+    NOTICE_KEY: 'notice-shown',
 
     init: function() {
+
+      this.dedupe = new SearchDedupe();
+
+      this.metrics = new MetricsHelper();
+      this.metrics.init();
+
       // Initialize the parent port connection
       var self = this;
       navigator.mozApps.getSelf().onsuccess = function() {
@@ -66,13 +83,44 @@
           self.providers[i].init(self);
         }
       }
+
+      var enabledKey = 'search.suggestions.enabled';
+      SettingsListener.observe(enabledKey, true, function(enabled) {
+        this.suggestionsEnabled = enabled;
+      }.bind(this));
+
+      this.initNotice();
+      this.initConnectivityCheck();
+
+      this.contextmenu = new Contextmenu();
+      window.addEventListener('resize', this.resize);
+      window.addEventListener('scroll', this.onScroll);
+      navigator.mozSetMessageHandler('activity',
+        this.handleActivityEvents.bind(this));
+    },
+
+    resize: function() {
+      if (this.grid && this.grid.render) {
+        this.grid.render({
+          rerender: true,
+          skipDivider: true
+        });
+      }
+    },
+
+    // Typically an input keeps focus when the user scrolls, here we
+    // want to grab focus and manually dismiss the keyboard.
+    onScroll: function() {
+      window.focus();
     },
 
     /**
      * Adds a search provider
      */
     provider: function(provider) {
-      this.providers[provider.name] = provider;
+      if (!(provider.name in this.providers)) {
+        this.providers[provider.name] = provider;
+      }
     },
 
     /**
@@ -88,6 +136,7 @@
      * Called when the user changes the search query
      */
     change: function(msg) {
+
       clearTimeout(this.changeTimeout);
 
       this.showSearchResults();
@@ -95,15 +144,81 @@
       var input = msg.data.input;
       var providers = this.providers;
 
-      this.changeTimeout = setTimeout(function doSearch() {
-        this.exactResults = {};
-        this.fuzzyResults = {};
+      this.changeTimeout = setTimeout(() => {
+        this.clear();
+        this.dedupe.reset();
 
-        for (var i in providers) {
-          var provider = providers[i];
-          provider.search(input, this.collect.bind(this, provider));
+        Object.keys(providers).forEach((providerKey) => {
+          var provider = providers[providerKey];
+
+          var preventRemoteFetch =
+            UrlHelper.isURL(input) ||
+            msg.data.isPrivateBrowser ||
+            !this.suggestionsEnabled;
+
+          if (provider.remote && preventRemoteFetch) {
+            return;
+          }
+
+          if (provider.name === 'Suggestions') {
+            var toShow = input.length > 2 &&
+              this.toShowNotice &&
+              this.suggestionsEnabled &&
+              this.suggestionNotice.hidden &&
+              navigator.onLine;
+            if (toShow) {
+              this.suggestionNotice.hidden = false;
+            }
+          }
+
+          provider.search(input, preventRemoteFetch).then((results) => {
+            this.collect(provider, results);
+          });
+        });
+      }, SEARCH_DELAY);
+    },
+
+    /**
+     * Show a notice to the user informaing them of how to configure
+     * search providers, should only be shown once.
+     */
+    initNotice: function() {
+
+      var confirm = document.getElementById('suggestions-notice-confirm');
+      confirm.addEventListener('click', this.discardNotice.bind(this, true));
+
+      var settingsLink = this.settingsLink;
+      if (settingsLink) {
+        settingsLink
+          .addEventListener('click', this.openSettings.bind(this));
+      }
+
+      asyncStorage.getItem(this.NOTICE_KEY, function(value) {
+        if (this.toShowNotice === null) {
+          this.toShowNotice = !value;
         }
-      }.bind(this), SEARCH_DELAY);
+      }.bind(this));
+    },
+
+    openSettings: function() {
+      this.discardNotice();
+      /* jshint nonew: false */
+      new MozActivity({
+        name: 'configure',
+        data: {
+          target: 'device',
+          section: 'search'
+        }
+      });
+    },
+
+    discardNotice: function(focus) {
+      this.suggestionNotice.hidden = true;
+      this.toShowNotice = false;
+      asyncStorage.setItem(this.NOTICE_KEY, true);
+      if (focus) {
+        this._port.postMessage({'action': 'focus'});
+      }
     },
 
     /**
@@ -113,7 +228,6 @@
     expandSearch: function(query) {
       this.clear();
       this.providers.WebResults.fullscreen(query);
-      this.providers.BGImage.fetchImage(query);
     },
 
     /**
@@ -123,94 +237,57 @@
      * @param {Array} results The results of the provider search.
      */
     collect: function(provider, results) {
-      if (!provider.dedupes) {
-        provider.render(results);
-        return;
+
+      if (provider.dedupes) {
+        results = this.dedupe.reduce(results, provider.dedupeStrategy);
       }
 
-      var validResults = [];
-
-      // Cache the matched dedupe IDs.
-      // Providers should not attempt to deduplicate against themselves.
-      // This should perform better and lead to less misses.
-      var exactDedupeIdCache = [];
-      var fuzzyDedupeIdCache = [];
-
-      results.forEach(function eachResult(result) {
-        var found = false;
-        var dedupeId = result.dedupeId.toLowerCase();
-
-        // Get the host of the dedupeId for the fuzzy result case
-        var host;
-        try {
-          host = new URL(dedupeId).host;
-        } catch (e) {
-          host = dedupeId;
+      if (provider.isGridProvider &&
+        (results.length + this.gridCount) > MAX_GRID_SIZE) {
+        var spaces = MAX_GRID_SIZE - this.gridCount;
+        if (spaces < 1) {
+          this.abort();
+          return;
         }
-        var fuzzyDedupeIds = [host, dedupeId];
+        results.splice(spaces, (results.length - spaces));
+      }
 
-        // Try to use some simple domain heuristics to find duplicates
-        // E.g, we would want to de-dupe between:
-        // m.site.org and touch.site.org, sub.m.site.org and m.site.org
-        // We also try to avoid deduping on second level domains by
-        // checking the length of the segment.
-        // For each part of the host, we add it to the fuzzy lookup table
-        // if it is more than three characters. This algorithm is far
-        // from perfect, but it will likely catch 99% of our usecases.
-        var hostParts = host.split('.');
-        for (var i in hostParts) {
-          var part = hostParts[i];
-          if (part.length > 3 && this.dedupeNullList.indexOf(part) === -1) {
-            fuzzyDedupeIds.push(part);
-          }
-        }
+      if (provider.isGridProvider) {
+        this.gridCount += results.length;
+      }
 
-        // Check if we have already rendered the result
-        if (provider.dedupeStrategy == 'exact') {
-          if (this.exactResults[dedupeId]) {
-            found = true;
-          }
-        } else {
-          // Handle the fuzzy matching case
-          // Try to match against either host or subdomain
-          fuzzyDedupeIds.forEach(function eachFuzzy(eachId) {
-            for (var i in this.fuzzyResults) {
-              if (i.indexOf(eachId) !== -1) {
-                found = true;
-              }
-            }
-          }, this);
-        }
+      this.gridWrapper.classList.toggle('hidden', !this.gridCount);
+      provider.render(results);
+    },
 
-        // At the end of each iteration, cache the dedupe keys.
-        exactDedupeIdCache.push(dedupeId);
-        fuzzyDedupeIdCache = fuzzyDedupeIdCache.concat(fuzzyDedupeIds);
-
-        if (!found) {
-          validResults.push(result);
-        }
-      }, this);
-
-      exactDedupeIdCache.forEach(function eachFuzzy(eachId) {
-        this.exactResults[eachId] = true;
-      }, this);
-
-      fuzzyDedupeIdCache.forEach(function eachFuzzy(eachId) {
-        this.fuzzyResults[eachId] = true;
-      }, this);
-
-      provider.render(validResults);
+    /**
+     * Called when the user trigger a search activity
+     */
+    handleActivityEvents: function(activity) {
+      var activityName = activity.source.name;
+      if (activityName === 'search') {
+        this.submit({data: {
+          input: activity.source.data.keyword
+        }});
+      }
     },
 
     /**
      * Called when the user submits the search form
      */
     submit: function(msg) {
+
+      this.discardNotice();
+
       var input = msg.data.input;
 
       // Not a valid URL, could be a search term
       if (UrlHelper.isNotURL(input)) {
-        this.expandSearch(input);
+        this.metrics.report('websearch', SearchProvider('title'));
+
+        var url = SearchProvider('searchUrl')
+          .replace('{searchTerms}', encodeURIComponent(input));
+        this.navigate(url);
         return;
       }
 
@@ -225,39 +302,21 @@
     },
 
     /**
-     * Called when the user submits the search form
+     * Clear results from each provider.
      */
     clear: function(msg) {
       this.abort();
       for (var i in this.providers) {
         this.providers[i].clear();
       }
-    },
-
-    showBlank: function() {
-      if (this.searchResults) {
-        this.newTabPage.classList.add('hidden');
-        this.searchResults.classList.add('hidden');
-      }
-    },
-
-    /**
-     * Called when the user displays the task manager
-     */
-    showTaskManager: function() {
-      this.showBlank();
+      this.gridCount = 0;
+      this.suggestionNotice.hidden = true;
     },
 
     showSearchResults: function() {
       if (this.searchResults) {
         this.searchResults.classList.remove('hidden');
-        this.newTabPage.classList.add('hidden');
       }
-    },
-
-    showNewTabPage: function() {
-      this.searchResults.classList.add('hidden');
-      this.newTabPage.classList.remove('hidden');
     },
 
     /**
@@ -281,32 +340,9 @@
     /**
      * Opens a browser to a URL
      * @param {String} url The url to navigate to
-     * @param {Object} config Optional configuration.
      */
-    navigate: function(url, config) {
-      var features = {
-        remote: true,
-        useAsyncPanZoom: true
-      };
-
-      config = config || {};
-      for (var i in config) {
-        features[i] = config[i];
-      }
-
-      var featureStr = Object.keys(features)
-        .map(function(key) {
-          return encodeURIComponent(key) + '=' +
-            encodeURIComponent(features[key]);
-        }).join(',');
-      window.open(url, '_blank', featureStr);
-    },
-
-    requestScreenshot: function(url) {
-      this._port.postMessage({
-        'action': 'request-screenshot',
-        'url': url
-      });
+    navigate: function(url) {
+      window.open(url, '_blank', 'remote=true');
     },
 
     /**
@@ -318,6 +354,42 @@
         'input': input
       });
       this.expandSearch(input);
+    },
+
+    initConnectivityCheck: function() {
+      var self = this;
+      function onConnectivityChange() {
+        if (navigator.onLine) {
+          self.searchResults.classList.remove('offline');
+        } else {
+          self.searchResults.classList.add('offline');
+        }
+      }
+
+      this.offlineMessage.addEventListener(
+        'click', function() {
+          var activity = new window.MozActivity({
+            name: 'configure',
+            data: {
+              target: 'device',
+              section: 'root',
+              filterBy: 'connectivity'
+            }
+          });
+          activity.onsuccess = function() {
+            /*
+            XXX: Since this activity inmediately returns
+            success, we cannot go back to the search bar.
+            Keeping a reference of the activity once this
+            is fixed.
+            */
+          };
+        }
+      );
+
+      window.addEventListener('offline', onConnectivityChange);
+      window.addEventListener('online', onConnectivityChange);
+      onConnectivityChange();
     }
   };
 

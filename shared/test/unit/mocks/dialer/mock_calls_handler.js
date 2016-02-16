@@ -3,15 +3,19 @@
 
 var MockCallsHandler = {
   mActiveCall: null,
-  mUpdateKeypadEnabledCalled: true,
-
-  updateKeypadEnabled: function() {
-    this.mUpdateKeypadEnabledCalled =
-      !this.mUpdateKeypadEnabledCalled;
-  },
+  mActiveCallForContactImage: null,
+  mIsFirstCallOnCdmaNetwork: false,
 
   get activeCall() {
     return this.mActiveCall;
+  },
+
+  get activeCallForContactImage() {
+    return this.mActiveCallForContactImage;
+  },
+
+  isFirstCallOnCdmaNetwork: function() {
+    return this.mIsFirstCallOnCdmaNetwork;
   },
 
   toggleCalls: function() {},
@@ -22,14 +26,19 @@ var MockCallsHandler = {
   switchToDefaultOut: function() {},
   switchToReceiver: function() {},
   checkCalls: function() {},
-  mergeActiveCallWith: function() {},
-  mergeConferenceGroupWithActiveCall: function() {},
   end: function() {},
   answer: function() {},
   updateAllPhoneNumberDisplays: function() {},
+  updatePlaceNewCall: function() {},
+  mergeCalls: function() {},
+  holdOrResumeSingleCall: function() {},
+  updateMergeAndOnHoldStatus: function() {},
+  updateMuteAndSpeakerStatus: function() {},
+  setup: function () {},
 
   mTeardown: function() {
     this.mActiveCall = null;
-    this.mUpdateKeypadEnabledCalled = true;
+    this.mActiveCallForContactImage = null;
+    this.mIsFirstCallOnCdmaNetwork = false;
   }
 };

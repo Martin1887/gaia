@@ -25,11 +25,18 @@ define(function() {
      * @param {Function} callback
      */
     oneColumn: function pt_one_column(oldPanel, newPanel, callback) {
+      if (oldPanel === newPanel) {
+        callback();
+        return;
+      }
+
       // switch previous/current classes
       if (oldPanel) {
         oldPanel.className = newPanel.className ? '' : 'previous';
       }
       if (newPanel.className === 'current') {
+        _sendPanelReady(oldPanel && '#' + oldPanel.id, '#' + newPanel.id);
+
         if (callback) {
           callback();
         }
@@ -52,26 +59,19 @@ define(function() {
 
       newPanel.addEventListener('transitionend', function paintWait() {
         newPanel.removeEventListener('transitionend', paintWait);
+        if (oldPanel) {
+          _sendPanelReady('#' + oldPanel.id, '#' + newPanel.id);
 
-        // We need to wait for the next tick otherwise gecko gets confused
-        setTimeout(function nextTick() {
-          if (oldPanel) {
-            _sendPanelReady('#' + oldPanel.id, '#' + newPanel.id);
-
-            // Bug 818056 - When multiple visible panels are present,
-            // they are not painted correctly. This appears to fix the issue.
-            // Only do this after the first load
-            if (oldPanel.className === 'current') {
-              return;
-            }
-          } else {
-            _sendPanelReady(null, '#' + newPanel.id);
+          if (oldPanel.className === 'current') {
+            return;
           }
+        } else {
+          _sendPanelReady(null, '#' + newPanel.id);
+        }
 
-          if (callback) {
-            callback();
-          }
-        });
+        if (callback) {
+          callback();
+        }
       });
     },
 
@@ -84,6 +84,11 @@ define(function() {
      * @param {Function} callback
      */
     twoColumn: function pt_two_column(oldPanel, newPanel, callback) {
+      if (oldPanel === newPanel) {
+        callback();
+        return;
+      }
+
       if (oldPanel) {
         oldPanel.className = newPanel.className ? '' : 'previous';
         newPanel.className = 'current';

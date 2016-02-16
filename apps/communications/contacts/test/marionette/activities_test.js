@@ -5,9 +5,13 @@ var Contacts = require('./lib/contacts');
 var Dialer = require('../../../dialer/test/marionette/lib/dialer');
 var Sms = require('./lib/sms');
 var assert = require('assert');
+var fs = require('fs');
 
 marionette('Contacts > Activities', function() {
-  var client = marionette.client(Contacts.config);
+  var client = marionette.client({
+    profile: Contacts.config,
+    desiredCapabilities: { raisesAccessibilityExceptions: false }
+  });
 
   var dialerSubject;
 
@@ -27,8 +31,71 @@ marionette('Contacts > Activities', function() {
     smsSelectors = Sms.Selectors;
   });
 
+  suite('open text/vcard activity', function() {
+
+    setup(function() {
+      smsSubject.launch(); // We open some app to start a Marionette session.
+    });
+
+    function getListItems() {
+      return client.executeScript(function() {
+        return document.querySelectorAll('#multiple-select-container li');
+      });
+    }
+
+    test('> with only one contact', function() {
+      client.executeScript(function(vCardFile) {
+        new MozActivity({
+          name: 'open',
+          data: {
+            type: 'text/vcard',
+            filename: 'vcard_4.vcf',
+            blob: new Blob([vCardFile], {type: 'text/vcard'})
+          }
+        });
+      }, [fs.readFileSync(__dirname + '/data/vcard_4.vcf', 'utf8')]);
+
+      var iframe = 'iframe[src="' + Contacts.URL +
+        '/contacts/views/vcard_load/vcard_load.html"]';
+      client.switchToFrame();
+      client.switchToFrame(client.findElement(iframe), {'focus': true});
+      client.helper.waitForElement(selectors.multipleSelectSave);
+
+      assert.ok(getListItems().length === 1); // vcard has one element
+    });
+
+    test('> with multiple contacts', function() {
+      client.executeScript(function(vCardFile) {
+        new MozActivity({
+          name: 'open',
+          data: {
+            type: 'text/vcard',
+            filename: 'vcard_21_multiple.vcf',
+            blob: new Blob([vCardFile], {type: 'text/vcard'})
+          }
+        });
+      }, [fs.readFileSync(__dirname + '/data/vcard_21_multiple.vcf', 'utf8')]);
+
+      var iframe = 'iframe[src="' + Contacts.URL +
+        '/contacts/views/vcard_load/vcard_load.html"]';
+      client.switchToFrame();
+      client.switchToFrame(client.findElement(iframe), {'focus': true});
+      client.helper.waitForElement(selectors.multipleSelectSave);
+
+      assert.ok(getListItems().length === 2); // vcard has one element
+    });
+  });
+
   suite('webcontacts/contact activity', function() {
-    test('a contact with duplicate number shows merge page', function() {
+
+    // Disabling these tests by now due to we need a way to switch to an
+    // activity instead of switching to an app, due to paths can differ.
+    // More info in [1].
+    // These test must be recovered once this bug will be landed.
+
+    // [1] https://bugzilla.mozilla.org/show_bug.cgi?id=1140344#c9
+
+    test.skip('a contact with duplicate number shows merge page', function() {
 
       subject.launch();
 
@@ -60,14 +127,15 @@ marionette('Contacts > Activities', function() {
 
       subject.enterContactDetails({
         givenName: 'From Dialer Activity'
-      }, true);
+      });
+      this.waitForFormTransition();
 
       client.switchToFrame(client.findElement(selectors.duplicateFrame));
 
       var duplicateHeader = client.helper.
         waitForElement(selectors.duplicateHeader);
       var expectedResult = subject.l10n(
-        '/locales-obj/en-US.json',
+        '/locales-obj/contacts.matching_contacts.en-US.json',
         'duplicatesFoundTitle');
 
       assert.equal(duplicateHeader.text(), expectedResult);
@@ -75,7 +143,13 @@ marionette('Contacts > Activities', function() {
   });
 
   suite('webcontacts/tel activity', function() {
-    test('Error message when no contacts', function() {
+    // Disabling these tests by now due to we need a way to switch to an
+    // activity instead of switching to an app, due to paths can differ.
+    // More info in [1].
+    // These test must be recovered once this bug will be landed.
+
+    // [1] https://bugzilla.mozilla.org/show_bug.cgi?id=1140344#c9
+    test.skip('Error message when no contacts', function() {
 
       smsSubject.launch();
 
@@ -95,8 +169,8 @@ marionette('Contacts > Activities', function() {
 
       var confirmMsg = client.findElement(selectors.confirmBody);
       var expectedResult = subject.l10n(
-        '/locales-obj/en-US.json',
-        'noContactsActivity');
+        '/locales-obj/contacts.index.en-US.json',
+        'noContactsActivity2');
       assert.equal(confirmMsg.text(), expectedResult);
     });
 
@@ -132,9 +206,48 @@ marionette('Contacts > Activities', function() {
         .text();
 
       var expectedResult = subject.l10n(
-        '/locales-obj/en-US.json',
+        '/locales-obj/contacts.index.en-US.json',
         'no_contact_phones');
       assert.equal(confirmText, expectedResult);
+    });
+  });
+
+  suite('webcontacts/email activity', function() {
+    test('Creates only one instance of action menu', function() {
+      subject.launch();
+
+      subject.addContactMultipleEmails({
+        givenName: 'From Contacts App',
+        emailFirst: 'first@personal.com',
+        emailSecond: 'second@personal.com'
+      });
+
+      client.apps.close(Contacts.URL, 'contacts');
+
+      smsSubject.launch();
+
+      client.executeScript(function() {
+        new MozActivity({
+          name: 'pick',
+          data: {
+            type: 'webcontacts/email'
+          }
+        });
+      });
+
+      client.switchToFrame();
+      client.apps.switchToApp(Contacts.URL, 'contacts');
+      client.helper.waitForElement(selectors.bodyReady);
+
+      var contact = client.helper.waitForElement(selectors.listContactFirst);
+
+      // Simulate two clicks
+      contact.click();
+      contact.click();
+
+      var emailList = client.helper.waitForElement(selectors.actionMenuList);
+      var emailChildren = emailList.findElements('button');
+      assert.equal(emailChildren.length, 3);
     });
   });
 });

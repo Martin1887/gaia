@@ -1,10 +1,13 @@
+/* global FxaModuleErrorOverlay, FxaModuleOverlay, FxaModuleUI,
+          FxaModuleSetPassword, FxModuleServerRequest, FxaModuleStates,
+          HtmlImports, LoadElementHelper, MocksHelper, MockL10n */
 'use strict';
 
 // Helper for loading the elements
 requireApp('/system/test/unit/fxa_test/load_element_helper.js');
 
 // Real code
-requireApp('system/fxa/js/utils.js');
+require('/shared/js/utilities.js');
 requireApp('system/fxa/js/fxam_module.js');
 requireApp('system/fxa/js/fxam_states.js');
 requireApp('system/fxa/js/fxam_manager.js');
@@ -12,7 +15,7 @@ requireApp('system/fxa/js/fxam_overlay.js');
 requireApp('system/fxa/js/fxam_error_overlay.js');
 
 // Mockuped code
-requireApp('/system/test/unit/mock_l10n.js');
+require('/shared/test/unit/mocks/mock_l20n.js');
 
 requireApp('system/fxa/js/fxam_ui.js');
 requireApp('/system/test/unit/fxa_test/mock_fxam_ui.js');
@@ -39,13 +42,11 @@ var mocksHelperForSetPasswordModule = new MocksHelper([
   'FxaModuleErrors'
 ]);
 
-mocha.globals(['FxModuleServerRequest']);
-
 suite('Screen: Set password', function() {
   var realL10n;
   suiteSetup(function(done) {
-    realL10n = navigator.mozL10n;
-    navigator.mozL10n = MockL10n;
+    realL10n = document.l10n;
+    document.l10n = MockL10n;
 
     mocksHelperForSetPasswordModule.suiteSetup();
     // Load real HTML
@@ -60,7 +61,7 @@ suite('Screen: Set password', function() {
   });
 
   suiteTeardown(function() {
-    navigator.mozL10n = realL10n;
+    document.l10n = realL10n;
     document.body.innerHTML = '';
     mocksHelperForSetPasswordModule.suiteTeardown();
   });
@@ -129,6 +130,8 @@ suite('Screen: Set password', function() {
       showOverlaySpy = this.sinon.spy(FxaModuleOverlay, 'show');
       hideOverlaySpy = this.sinon.spy(FxaModuleOverlay, 'hide');
       mocksHelperForSetPasswordModule.setup();
+
+      this.sinon.useFakeTimers();
     });
 
     teardown(function() {
@@ -145,30 +148,30 @@ suite('Screen: Set password', function() {
       assert.ok(showOverlaySpy.calledOnce);
     });
 
-    test(' > Sign up called', function(done) {
-      this.sinon.stub(FxModuleServerRequest, 'signUp', function() {
-        done();
-      });
+    test(' > Sign up called', function() {
+      this.sinon.stub(FxModuleServerRequest, 'signUp');
       FxaModuleSetPassword.onNext();
+      sinon.assert.called(FxModuleServerRequest.signUp);
     });
 
     test(' > Sign up error', function() {
       FxModuleServerRequest.error = true;
-      FxaModuleSetPassword.onNext(function() {});
+      FxaModuleSetPassword.onNext();
 
       assert.ok(hideOverlaySpy.calledOnce);
       assert.ok(showErrorOverlaySpy.calledOnce);
     });
 
-    test(' > Sign up working', function(done) {
+    test(' > Sign up working', function() {
       FxModuleServerRequest.error = false;
       FxModuleServerRequest.accountCreated = true;
-      FxaModuleSetPassword.onNext(function(params) {
-        assert.equal(params, FxaModuleStates.SIGNUP_SUCCESS);
-        assert.ok(hideOverlaySpy.calledOnce);
-        assert.isFalse(showErrorOverlaySpy.calledOnce);
-        done();
-      });
+      var nextStep = sinon.stub();
+      FxaModuleSetPassword.onNext(nextStep);
+      this.sinon.clock.tick(); // FxModuleServerRequest mock uses setTimeout
+
+      sinon.assert.calledWith(nextStep, FxaModuleStates.SIGNUP_SUCCESS);
+      sinon.assert.calledOnce(hideOverlaySpy);
+      sinon.assert.notCalled(showErrorOverlaySpy);
     });
   });
 });

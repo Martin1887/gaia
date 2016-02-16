@@ -1,5 +1,5 @@
 'use strict';
-/*global applications, AppWindowManager, AppWindow, rocketbar */
+/*global applications, Service, AppWindow, Browser */
 
 (function(window) {
   /**
@@ -8,11 +8,37 @@
    * @module WrapperFactory
    */
   var WrapperFactory = {
-    init: function wf_init() {
+    name: 'WrapperFactory',
+    start: function() {
       window.addEventListener('mozbrowseropenwindow', this, true);
+      Service.registerState('isLaunchingWindow', this);
+    },
+    stop: function() {
+      window.removeEventListener('mozbrowseropenwindow', this, true);
+    },
+
+    isLaunchingWindow: function() {
+      return !!this._launchingApp;
+    },
+
+    forgetLastLaunchingWindow: function() {
+      if (this._launchingApp && this._launchingApp.element) {
+        this._launchingApp.element.removeEventListener('_opened', this);
+        this._launchingApp.element.removeEventListener('_terminated', this);
+      }
+      this._launchingApp = null;
     },
 
     handleEvent: function wf_handleEvent(evt) {
+      // Prevent Gecko's default handler from opening the window.
+      evt.preventDefault();
+
+      if (evt.type === '_opened' || evt.type === '_terminated') {
+        if (this._launchingApp === evt.detail) {
+          this.forgetLastLaunchingWindow();
+        }
+        return;
+      }
       var detail = evt.detail;
 
       // If it's a normal window.open request, ignore.
@@ -35,12 +61,6 @@
           return acc;
         }, {});
 
-      if (features.features === 'rocketbarstartpage') {
-        evt.stopImmediatePropagation();
-        rocketbar.showNewTabPage();
-        return;
-      }
-
       // Handles only call to window.open with `remote=true` feature.
       if (!('remote' in features) || features.remote !== 'true') {
         return;
@@ -56,7 +76,8 @@
         var manifestURL = callerIframe.getAttribute('mozapp');
 
         var callerApp = applications.getByManifestURL(manifestURL);
-        if (!this.hasPermission(callerApp, 'open-remote-window')) {
+        if (!this.hasPermission(callerApp, 'open-remote-window') &&
+            !this.hasPermission(callerApp, 'homescreen-webapps-manage')) {
           return;
         }
 
@@ -75,27 +96,57 @@
       // Use fake origin for named windows in order to be able to reuse them,
       // otherwise always open a new window for '_blank'.
       var origin = null;
-      if (name == '_blank') {
-        origin = url;
-        app = AppWindowManager.getApp(origin);
-        // Just bring on top if a wrapper window is
-        // already running with this url.
-        if (app && app.windowName == '_blank') {
-          this.publish('launchapp', { origin: origin });
-        }
-      } else {
-        origin = 'window:' + name + ',source:' + callerOrigin;
-        app = AppWindowManager.getApp(origin);
-        if (app && app.windowName === name) {
-          if (app.iframe.src === url) {
-            // If the url is already loaded, just display the app
+      switch (name) {
+        case '_samescope':
+          var scope = features.scope || false;
+          var appName = features.name;
+          var inScopeMethod = 'AppWindowManager.getAppInScope';
+
+          origin = new URL(url).origin;
+          features.pinned = true;
+          app = Service.query(inScopeMethod, scope, origin, appName);
+          if (app) {
+            app.requestOpen();
+            return;
+          }
+        /* falls through */
+        case '_blank':
+          // If we already have a browser and we receive an open request,
+          // display it in the current browser frame.
+          var activeApp = Service.query('AppWindowManager.getActiveWindow');
+          var isManuallyRegular = activeApp && activeApp.url &&
+            activeApp.url.includes('private=0');
+          if (activeApp && (activeApp.isBrowser() || activeApp.isSearch())) {
+            activeApp.isPrivate = activeApp.hasOwnProperty('isPrivate') ?
+              activeApp.isPrivate :
+              (Browser.privateByDefault && !isManuallyRegular);
+            activeApp.navigate(url);
+            return;
+          }
+
+          origin = url;
+          app = Service.query('AppWindowManager.getApp', origin);
+          // Just bring on top if a wrapper window is
+          // already running with this url.
+          if (app && app.windowName == '_blank') {
             this.publish('launchapp', { origin: origin });
             return;
-          } else {
-            // Wrapper context shouldn't be shared between two apps -> killing
-            this.publish('killapp', { origin: origin });
           }
-        }
+          break;
+
+        default:
+          origin = 'window:' + name + ',source:' + callerOrigin;
+          app = Service.query('AppWindowManager.getApp', origin);
+          if (app && app.windowName === name) {
+            if (app.iframe.src === url) {
+              // If the url is already loaded, just display the app
+              this.publish('launchapp', { origin: origin });
+              return;
+            } else {
+              // Wrapper context shouldn't be shared between two apps -> killing
+              this.publish('killapp', { origin: origin });
+            }
+          }
       }
 
       // TODO: Put this into browser_config_helper.
@@ -105,26 +156,34 @@
       browser_config.url = url;
       browser_config.origin = origin;
       browser_config.windowName = name;
+      browser_config.isPrivate = Browser.privateByDefault;
       if (!browser_config.title) {
         browser_config.title = url;
       }
 
-      this.launchWrapper(browser_config);
+      if (Service.query('MultiScreenController.enabled')) {
+        Service.request('chooseDisplay', browser_config)
+          .catch(this.launchWrapper.bind(this, browser_config));
+      } else {
+        this.launchWrapper(browser_config);
+      }
     },
 
     launchWrapper: function wf_launchWrapper(config) {
-      var app = AppWindowManager.getApp(config.origin);
+      var app = Service.query('AppWindowManager.getApp', config.origin);
       if (!app) {
-        config.chrome = {
-          navigation: true,
-          rocketbar: false
-        };
-        app = new AppWindow(config);
-      } else {
-        app.updateName(config.title);
+        config.chrome.scrollable = true;
+        this.forgetLastLaunchingWindow();
+        this.trackLauchingWindow(config);
       }
 
       this.publish('launchapp', { origin: config.origin });
+    },
+
+    trackLauchingWindow: function(config) {
+      this._launchingApp = new AppWindow(config);
+      this._launchingApp.element.addEventListener('_opened', this);
+      this._launchingApp.element.addEventListener('_terminated', this);
     },
 
     hasPermission: function wf_hasPermission(app, permission) {
@@ -140,8 +199,10 @@
 
     generateBrowserConfig: function wf_generateBrowserConfig(features) {
       var config = {};
+      config.chrome = {};
       config.title = features.name;
       config.icon = features.icon || '';
+      config.chrome.pinned = features.pinned || false;
 
       if ('originName' in features) {
         config.originName = features.originName;
@@ -151,13 +212,6 @@
       if ('searchName' in features) {
         config.searchName = features.searchName;
         config.searchURL = features.searchUrl;
-      }
-
-      if ('useAsyncPanZoom' in features &&
-          features.useAsyncPanZoom === 'true') {
-        config.useAsyncPanZoom = true;
-      } else {
-        config.useAsyncPanZoom = false;
       }
 
       if ('remote' in features) {
@@ -173,5 +227,4 @@
     }
   };
   window.WrapperFactory = WrapperFactory;
-  WrapperFactory.init();
 }(window));

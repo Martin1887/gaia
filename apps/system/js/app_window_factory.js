@@ -1,6 +1,5 @@
 'use strict';
-/* global applications, BrowserConfigHelper, AppWindowManager,
-          homescreenLauncher, AppWindow */
+/* global applications, BrowserConfigHelper, AppWindow, Service */
 /* jshint nonew: false */
 
 (function(exports) {
@@ -24,9 +23,11 @@
    * @class AppWindowFactory
    */
   function AppWindowFactory() {
+    this.preHandleEvent = this.preHandleEvent.bind(this);
   }
 
   AppWindowFactory.prototype = {
+    name: 'AppWindowFactory',
     /**
      * Indicate whether this class is started or not.
      * @access private
@@ -45,24 +46,16 @@
       }
       this._started = true;
 
-      /**
-       * Wait for applicationready event to do the following work.
-       *
-       * @listens webapps-launch
-       */
-      if (applications.ready) {
-        window.addEventListener('webapps-launch', this);
-        window.addEventListener('webapps-close', this);
-        window.addEventListener('open-app', this);
-      } else {
-        var self = this;
-        window.addEventListener('applicationready', function appReady(e) {
-          window.removeEventListener('applicationready', appReady);
-          window.addEventListener('webapps-launch', self);
-          window.addEventListener('webapps-close', self);
-          window.addEventListener('open-app', self);
-        });
-      }
+      window.addEventListener('webapps-launch', this.preHandleEvent);
+      window.addEventListener('webapps-close', this.preHandleEvent);
+      window.addEventListener('open-app', this.preHandleEvent);
+      window.addEventListener('openwindow', this.preHandleEvent);
+      window.addEventListener('appopenwindow', this.preHandleEvent);
+      window.addEventListener('applicationready', (function appReady(e) {
+        window.removeEventListener('applicationready', appReady);
+        this._handlePendingEvents();
+      }).bind(this));
+      Service.registerState('isLaunchingWindow', this);
     },
 
     /**
@@ -75,26 +68,58 @@
       }
       this._started = false;
 
-      window.removeEventListener('webapps-launch', this);
-      window.removeEventListener('webapps-close', this);
-      window.removeEventListener('open-app', this);
+      window.removeEventListener('webapps-launch', this.preHandleEvent);
+      window.removeEventListener('webapps-close', this.preHandleEvent);
+      window.removeEventListener('open-app', this.preHandleEvent);
+      window.removeEventListener('openwindow', this.preHandleEvent);
+      window.removeEventListener('appopenwindow', this.preHandleEvent);
+    },
+
+    /**
+     * Queue events until AppWindowFactory is ready to handle them.
+     */
+    _queueEvents: [],
+
+    _queuePendingEvent: function(evt) {
+      this._queueEvents.push(evt);
+    },
+
+    _handlePendingEvents: function() {
+      this._queueEvents.forEach((function(evt) {
+        this.handleEvent(evt);
+      }).bind(this));
+      this._queueEvents = [];
+    },
+
+    preHandleEvent: function(evt) {
+      if (applications.ready) {
+        this.handleEvent(evt);
+      } else {
+        this._queuePendingEvent(evt);
+      }
     },
 
     handleEvent: function awf_handleEvent(evt) {
       var detail = evt.detail;
-      var manifestURL = detail.manifestURL;
-      if (!manifestURL) {
+      if (evt.type === '_opened' || evt.type === '_terminated') {
+        if (this._launchingApp === detail) {
+          this.forgetLastLaunchingWindow();
+        }
+        return;
+      }
+      if (!detail.url && !detail.manifestURL) {
         return;
       }
 
-      var config = new BrowserConfigHelper(detail.url, detail.manifestURL);
+      var config = new BrowserConfigHelper(detail);
 
-      if (!config.manifest) {
-        return;
-      }
+      config.evtType = evt.type;
 
       switch (evt.type) {
+        case 'openwindow':
+        case 'appopenwindow':
         case 'webapps-launch':
+          config.timestamp = detail.timestamp;
           // TODO: Look up current opened window list,
           // and then create a new instance here.
           this.launch(config);
@@ -157,20 +182,102 @@
         return;
       }
 
-      // The rocketbar currently handles the management of
-      // the search app
-      if (config.manifest.role === 'search') {
+      // The rocketbar currently handles the management of normal search app
+      // launches. Requests for the 'newtab' page will continue to filter
+      // through and publish the launchapp event.
+      if (this._isSearch(config)) {
+        if (config.url.indexOf('newtab.html') === -1) {
+          return;
+        }
+
+        // In case of the Browser, oppen an already open
+        // instance instead of creating a new one
+        var openInstance = this._findBrowserInstance(config);
+        if (openInstance) {
+          openInstance.requestOpen();
+          return;
+        }
+      }
+
+      var app = Service.query('getApp', config.origin, config.manifestURL);
+      if (app) {
+        if (config.evtType == 'appopenwindow') {
+          app.browser.element.src = config.url;
+        }
+        app.reviveBrowser();
+
+        // Always relaunch background app locally
+        this.publish('launchapp', config);
+      } else {
+        var launchApp = () => {
+          // homescreenWindowManager already listens webapps-launch and
+          // open-app. We don't need to check if the launched app is homescreen.
+          this.forgetLastLaunchingWindow();
+          this.trackLauchingWindow(config);
+
+          this.publish('launchapp', config);
+        };
+
+        if (Service.query('MultiScreenController.enabled')) {
+          Service.request('chooseDisplay', config).catch(launchApp);
+        } else {
+          launchApp();
+        }
+      }
+    },
+
+    trackLauchingWindow: function(config) {
+      var app = new AppWindow(config);
+      if (config.stayBackground) {
         return;
       }
-      var app = AppWindowManager.getApp(config.origin);
-      if (app) {
-        app.reviveBrowser();
-      } else if (config.origin !== homescreenLauncher.origin) {
-        new AppWindow(config);
-      } else if (config.origin == homescreenLauncher.origin) {
-        homescreenLauncher.getHomescreen(true);
+      this._launchingApp = app;
+      this._launchingApp.element.addEventListener('_opened', this);
+      this._launchingApp.element.addEventListener('_terminated', this);
+    },
+
+    forgetLastLaunchingWindow: function() {
+      if (this._launchingApp && this._launchingApp.element) {
+        this._launchingApp.element.removeEventListener('_opened', this);
+        this._launchingApp.element.removeEventListener('_terminated', this);
       }
-      this.publish('launchapp', config);
+      this._launchingApp = null;
+    },
+
+    isLaunchingWindow: function() {
+      return !!this._launchingApp;
+    },
+
+    /**
+     * Returns an appWindow instace that matches
+     * the criteria given by the config
+     * @param  {Object} detail The data passed when initializing the event.
+     * @memberof AppWindowFactory.prototype
+     */
+    _findBrowserInstance: function(config) {
+      // Special case for the browser. Openning the last instance
+      // of any unpinned window, if it exists.
+      var activeApp = Service.query('AppWindowManager.getActiveApp');
+      if (!this._isSearch(config) || activeApp.isBrowser()) {
+        return;
+      }
+
+      var unpinned = Service.query('AppWindowManager.getUnpinnedWindows');
+      if (unpinned.length) {
+        return unpinned.sort(function(app1, app2) {
+          return app2.launchTime - app1.launchTime;
+        })[0];
+      }
+    },
+
+    /**
+     * Determines if the current app to be opened
+     * is the Browser app
+     * @param  {Object} detail The data passed when initializing the event.
+     * @memberof AppWindowFactory.prototype
+     */
+    _isSearch: function(config) {
+      return (config.manifest && config.manifest.role === 'search');
     },
 
     /**
@@ -179,10 +286,11 @@
      * @param  {Object} detail The data passed when initializing the event.
      * @memberof AppWindowFactory.prototype
      */
-    publish: function awf_publish(event, detail) {
+    publish: function awf_publish(event, detail, scope) {
+      scope = scope || window;
       var evt = document.createEvent('CustomEvent');
       evt.initCustomEvent(event, true, false, detail);
-      window.dispatchEvent(evt);
+      scope.dispatchEvent(evt);
     }
   };
 

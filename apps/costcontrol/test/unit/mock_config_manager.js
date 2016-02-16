@@ -69,11 +69,18 @@ var MockConfigManager = function(config) {
     get configuration() { return config; },
     mTriggerCallback: function(name, value, settings) {
       if (typeof mCallbacks[name] === 'function') {
+        if (settings === undefined) {
+          settings = fakeSettings;
+        }
         mCallbacks[name](value, null, name, settings);
       }
     },
     mRemoveObservers: function() {
       mCallbacks = {};
-    }
+    },
+    setConfig: function(newConfig) {
+      config = newConfig;
+    },
+    supportCustomizeMode: false
   };
 };

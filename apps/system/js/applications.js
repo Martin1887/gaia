@@ -41,6 +41,16 @@
       navigator.mozApps.mgmt.onuninstall = null;
     },
 
+    waitForReady: function() {
+      return new Promise((resolve) => {
+        if (this.ready) {
+          resolve();
+        } else {
+          this.waitingResolve = resolve;
+        }
+      });
+    },
+
     /**
      * Start the Applications to get all installed Apps and
      * register apps.mgmt.oninstall and apps.mgmt.uninstall handler.
@@ -60,6 +70,7 @@
 
           self.ready = true;
           self.fireApplicationReadyEvent();
+          self.waitingResolve && self.waitingResolve();
         };
       };
 
@@ -94,6 +105,15 @@
         delete self.installedApps[deletedapp.manifestURL];
 
         self.fireApplicationUninstallEvent(deletedapp);
+      };
+
+      apps.mgmt.onenabledstatechange = function a_enabledstatechange(evt) {
+        var app = evt.application;
+        if (app.enabled) {
+          self.fireApplicationEnabledEvent(app);
+        } else {
+          self.fireApplicationDisabledEvent(app);
+        }
       };
     },
 
@@ -146,6 +166,36 @@
     fireApplicationUninstallEvent:
                                 function a_fireApplicationUninstallEvent(app) {
       var evt = new CustomEvent('applicationuninstall',
+                               { bubbles: true,
+                                 cancelable: false,
+                                 detail: { application: app } });
+      window.dispatchEvent(evt);
+    },
+
+    /**
+     * Broadcast ApplicationEnabledEvent when apps.mgmt.onenabledstatechange
+     * occured when the application was enabled.
+     * @memberof Applications.prototype
+     */
+
+    fireApplicationEnabledEvent:
+                                function a_fireApplicationEnabledEvent(app) {
+      var evt = new CustomEvent('applicationenabled',
+                               { bubbles: true,
+                                 cancelable: false,
+                                 detail: { application: app } });
+      window.dispatchEvent(evt);
+    },
+
+    /**
+     * Broadcast ApplicationDisabledEvent when apps.mgmt.onenabledstatechange
+     * occured when the application was enabled.
+     * @memberof Applications.prototype
+     */
+
+    fireApplicationDisabledEvent:
+                                function a_fireApplicationDisabledEvent(app) {
+      var evt = new CustomEvent('applicationdisabled',
                                { bubbles: true,
                                  cancelable: false,
                                  detail: { application: app } });

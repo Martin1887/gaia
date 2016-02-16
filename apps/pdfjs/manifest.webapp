@@ -20,6 +20,14 @@
   },
   "orientation": "default",
   "activities": {
+    "open" : {
+      "filters": {
+        "type": "application/pdf"
+      },
+      "disposition": "inline",
+      "href": "/content/web/viewer.html",
+      "returnValue": true
+    },
     "view" : {
       "filters": {
         "type": "application/pdf"
@@ -31,6 +39,6 @@
   },
   "permissions": {
     "systemXHR":{},
-    "settings":{ "access": "readonly" }
+    "moz-extremely-unstable-and-will-change-webcomponents":{}
   }
 }

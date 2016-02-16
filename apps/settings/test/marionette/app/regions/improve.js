@@ -1,3 +1,4 @@
+'use strict';
 var Base = require('../base');
 
 /**
@@ -18,32 +19,22 @@ ImprovePanel.Selectors = {
   'feedbackEntryButton':
     '#improveBrowserOS-chooseFeedback',
 
-  'submitPerfData':
-    '#menuItem-sharePerformanceData span',
-  'submitPerfDataCheckbox':
-    '#menuItem-sharePerformanceData input',
-
   'alwaysSendReport':
-    '#menuItem-alwaysSendReport span',
+    '#menuItem-alwaysSendReport gaia-radio',
 
   'neverSendReport':
-    '#menuItem-neverSendReport span',
+    '#menuItem-neverSendReport gaia-radio',
 
   'askEachTime':
-    '#menuItem-askToSendReport2 span',
+    '#menuItem-askToSendReport2 gaia-radio',
 
   'reportCrashes':
-    'input[name="app.reportCrashes"]'
+    'gaia-radio[name="app.reportCrashes"]'
 };
 
 ImprovePanel.prototype = {
 
   __proto__: Base.prototype,
-
-  get isSubmitPerfData() {
-    return this.findElement('submitPerfDataCheckbox')
-      .getAttribute('checked');
-  },
 
   selectedReport: function(type) {
     this.client.waitFor(function() {
@@ -55,15 +46,6 @@ ImprovePanel.prototype = {
           return true;
         }
       }
-    }.bind(this));
-  },
-
-  enableSubmitPerfData: function() {
-    var initialState = this.isSubmitPerfData;
-    this.waitForElement('submitPerfData').tap();
-    this.client.waitFor(function() {
-      // Ensure tapping the element changed its state
-      return this.isSubmitPerfData !== initialState;
     }.bind(this));
   },
 

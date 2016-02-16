@@ -1,57 +1,45 @@
 'use strict';
 /* global ActivityHandler */
-/* global ConfirmDialog */
+/* global Cache */
 /* global contacts */
-/* global ContactsTag */
-/* global DatastoreMigration */
+/* global DeferredActions */
 /* global fb */
 /* global fbLoader */
 /* global LazyLoader */
-/* global MozActivity */
-/* global navigationStack */
-/* global PerformanceTestingHelper */
-/* global SmsIntegration */
+/* global MainNavigation */
+/* global Loader */
+/* global TAG_OPTIONS */
 /* global utils */
+/* global HeaderUI */
+/* global Search */
+/* global ContactsService */
+
 /* exported COMMS_APP_ORIGIN */
 /* exported SCALE_RATIO */
+
 /* jshint nonew: false */
 
-var _;
-var TAG_OPTIONS;
 var COMMS_APP_ORIGIN = location.origin;
 
 // Scale ratio for different devices
-var SCALE_RATIO = window.innerWidth / 320;
+var SCALE_RATIO = window.devicePixelRatio || 1;
 
 var Contacts = (function() {
-  var SHARED = 'shared';
-  var SHARED_PATH = '/' + SHARED + '/' + 'js';
-
-  var SHARED_UTILS = 'sharedUtilities';
-  var SHARED_UTILS_PATH = SHARED_PATH + '/contacts/import/utilities';
-
-  var SHARED_CONTACTS = 'sharedContacts';
-  var SHARED_CONTACTS_PATH = SHARED_PATH + '/' + 'contacts';
-
-  var navigation = new navigationStack('view-contacts-list');
 
   var goToForm = function edit() {
-    navigation.go('view-contact-form', 'popup');
+    var transition = ActivityHandler.currentlyHandling ? 'activity-popup'
+                                                       : 'fade-in';
+    MainNavigation.go('view-contact-form', transition);
   };
 
-  var contactTag,
-      settings,
-      settingsButton,
-      cancelButton,
-      addButton,
-      appTitleElement,
-      editModeTitleElement,
-      asyncScriptsLoaded = false;
+  var loadAsyncScriptsDeferred = {};
+  loadAsyncScriptsDeferred.promise = new Promise((resolve) => {
+    loadAsyncScriptsDeferred.resolve = resolve;
+  });
 
   var settingsReady = false;
   var detailsReady = false;
   var formReady = false;
-  var displayed = false;
 
   var currentContact = {},
       currentFbContact;
@@ -60,61 +48,69 @@ var Contacts = (function() {
   var contactsDetails;
   var contactsForm;
 
-  var customTag, customTagReset, tagDone, tagCancel, lazyLoadedTagsDom = false;
-
   // Shows the edit form for the current contact being in an update activity
   // It receives an array of two elements with the facebook data && values
   function showEditForm(facebookData, params) {
     contactsForm.render(currentContact, goToForm,
-                                    facebookData, params.fromUpdateActivity);
-    showApp();
+                        facebookData, params.fromUpdateActivity);
   }
 
   var checkUrl = function checkUrl() {
     var hasParams = window.location.hash.split('?');
     var hash = hasParams[0];
     var sectionId = hash.substr(1, hash.length) || '';
-    var cList = contacts.List;
     var params = hasParams.length > 1 ?
       utils.extractParams(hasParams[1]) : -1;
 
     switch (sectionId) {
+      case 'view-contact-list':
+        initContactsList();
+        break;
       case 'view-contact-details':
         initContactsList();
         initDetails(function onInitDetails() {
-          if (params == -1 || !('id' in params)) {
-            console.log('Param missing');
+          // At this point, a parameter is required
+          if (params == -1) {
+            console.error('Param missing');
             return;
           }
-          var id = params.id;
-          cList.getContactById(id, function onSuccess(savedContact) {
-            currentContact = savedContact;
-            contactsDetails.render(currentContact, TAG_OPTIONS);
-            if (params.tel) {
 
-              contactsDetails.reMark(
-                'tel',
-                params.tel,
-                JSON.parse(params.isMissedCall) ? 'remark-missed' : 'remark'
-              );
-            }
-            navigation.go(sectionId, 'right-left');
-            showApp();
-          }, function onError() {
-            console.error('Error retrieving contact');
-          });
+          // If the parameter is an id, the corresponding contact is loaded
+          // from the device.
+          if ('id' in params) {
+            var id = params.id;
+            ContactsService.get(id, function onSuccess(savedContact) {
+              currentContact = savedContact;
+
+              contactsDetails.render(currentContact);
+
+              MainNavigation.go(sectionId, 'right-left');
+            }, function onError() {
+              console.error('Error retrieving contact');
+            });
+          // If mozContactParam is true, we know there is a mozContact
+          // attached to the activity, so we render it using contacts details'
+          // read only mode. This is used when we receive an activity to open
+          // a given contact with allowSave set to false.
+          } else if (params.mozContactParam) {
+            var contact = ActivityHandler.mozContactParam;
+            contactsDetails.render(contact, null, true);
+            MainNavigation.go(sectionId, 'activity-popup');
+          }
         });
         break;
       case 'view-contact-form':
         initForm(function onInitForm() {
-          if (params == -1 || !('id' in params)) {
+          if (params.mozContactParam) {
+            contactsForm.render(ActivityHandler.mozContactParam, goToForm);
+            ActivityHandler.mozContactParam = null;
+          } else if (params == -1 || !(params.id)) {
             contactsForm.render(params, goToForm);
-            showApp();
           } else {
             // Editing existing contact
-            if ('id' in params) {
+            if (params.id) {
               var id = params.id;
-              cList.getContactById(id, function onSuccess(savedContact) {
+              ContactsService.get(id, function onSuccess(savedContact) {
                 currentContact = savedContact;
                 // Check if we have extra parameters to render
                 if ('extras' in params) {
@@ -137,7 +133,6 @@ var Contacts = (function() {
               }, function onError() {
                 console.error('Error retrieving contact to be edited');
                 contactsForm.render(null, goToForm);
-                showApp();
               });
             }
           }
@@ -146,29 +141,22 @@ var Contacts = (function() {
       case 'add-parameters':
         initContactsList();
         initForm(function onInitForm() {
-          navigation.home();
+          MainNavigation.home();
           if (ActivityHandler.currentlyHandling) {
             selectList(params, true);
           }
-          showApp();
+        });
+        break;
+      case 'multiple-select-view':
+        Loader.view('multiple_select', () => {
+          MainNavigation.go('multiple-select-view', 'activity-popup');
         });
         break;
       case 'home':
-        navigation.home();
-        showApp();
+        MainNavigation.home();
         break;
-      default:
-        showApp();
     }
 
-  };
-
-  var showApp = function showApp() {
-    if (displayed) {
-      return;
-    }
-    document.body.classList.remove('hide');
-    displayed = true;
   };
 
   var addExtrasToContact = function addExtrasToContact(extrasString) {
@@ -193,76 +181,46 @@ var Contacts = (function() {
     }
   };
 
-  var initContainers = function initContainers() {
-    settings = document.getElementById('view-settings');
-    settingsButton = document.getElementById('settings-button');
-    cancelButton = document.getElementById('cancel_activity');
-    addButton = document.getElementById('add-contact-button');
-    editModeTitleElement = document.getElementById('edit-title');
-    appTitleElement = document.getElementById('app-title');
-
-    TAG_OPTIONS = {
-      'phone-type' : [
-        {type: 'mobile', value: _('mobile')},
-        {type: 'home', value: _('home')},
-        {type: 'work', value: _('work')},
-        {type: 'personal', value: _('personal')},
-        {type: 'faxHome', value: _('faxHome')},
-        {type: 'faxOffice', value: _('faxOffice')},
-        {type: 'faxOther', value: _('faxOther')},
-        {type: 'other', value: _('other')}
-      ],
-      'email-type' : [
-        {type: 'personal', value: _('personal')},
-        {type: 'home', value: _('home')},
-        {type: 'work', value: _('work')},
-        {type: 'other', value: _('other')}
-      ],
-      'address-type' : [
-        {type: 'current', value: _('current')},
-        {type: 'home', value: _('home')},
-        {type: 'work', value: _('work')}
-      ],
-      'date-type': [
-        {type: 'birthday', value: _('birthday')},
-        {type: 'anniversary', value: _('anniversary')}
-      ]
-    };
-  };
-
   var onLocalized = function onLocalized() {
     init();
 
-    addAsyncScripts();
-    window.addEventListener('asyncScriptsLoaded', function onAsyncLoad() {
-      asyncScriptsLoaded = true;
-      window.removeEventListener('asyncScriptsLoaded', onAsyncLoad);
+    // We need to return the promise here for testing purposes
+    return addAsyncScripts().then(() => {
+      checkUrl();
+      if (!ActivityHandler.currentlyHandling ||
+          ActivityHandler.currentActivityIs(['pick', 'update'])) {
+        initContactsList();
+      } else {
+        // Unregister here to avoid un-necessary list operations.
+        ContactsService.removeListener('contactchange', oncontactchange);
+      }
+
       if (contactsList) {
         contactsList.initAlphaScroll();
       }
-      checkUrl();
+    });
+  };
 
-      PerformanceTestingHelper.dispatch('init-finished');
-
-      asyncScriptsLoaded = true;
+  var loadDeferredActions = function loadDeferredActions() {
+    window.removeEventListener('listRendered', loadDeferredActions);
+    LazyLoader.load([
+      'js/deferred_actions.js',
+      '/contacts/js/fb_loader.js',
+      '/contacts/js/fb/fb_init.js'
+    ], function() {
+      DeferredActions.execute();
     });
   };
 
   var init = function init() {
-    _ = navigator.mozL10n.get;
-    initContainers();
-    initEventListeners();
     window.addEventListener('hashchange', checkUrl);
 
-    // If the migration is not complete
-    var config = utils.cookie.load();
-    if (!config || !config.fbMigrated) {
-      LazyLoader.load('js/fb/datastore_migrator.js', function() {
-        new DatastoreMigration().start();
-      });
-    }
-    else {
-      window.console.info('FB Already migrated!!!');
+    window.addEventListener('listRendered', loadDeferredActions);
+
+    /* Tell the audio channel manager that we want to adjust the "notification"
+     * channel when the user presses the volumeup/volumedown buttons. */
+    if (navigator.mozAudioChannelManager) {
+      navigator.mozAudioChannelManager.volumeControlChannel = 'notification';
     }
   };
 
@@ -276,72 +234,44 @@ var Contacts = (function() {
     getFirstContacts();
     contactsList.initAlphaScroll();
     contactsList.handleClick(contactListClickHandler);
-    checkCancelableActivity();
+    ActivityHandler.isCancelable().then(isCancelable => {
+      HeaderUI.updateHeader(isCancelable);
+    });
   };
-
-  var checkCancelableActivity = function cancelableActivity() {
-    // NOTE: Only set textContent below if necessary to avoid repaints at
-    //       load time.  For more info see bug 725221.
-
-    var text;
-    if (ActivityHandler.currentlyHandling) {
-      cancelButton.classList.remove('hide');
-      addButton.classList.add('hide');
-      settingsButton.classList.add('hide');
-
-      text = _('selectContact');
-      if (appTitleElement.textContent !== text) {
-        appTitleElement.textContent = text;
-      }
-    } else if (contactsList && !contactsList.isSelecting) {
-      cancelButton.classList.add('hide');
-      addButton.classList.remove('hide');
-      settingsButton.classList.remove('hide');
-
-      text = _('contacts');
-      if (appTitleElement.textContent !== text) {
-        appTitleElement.textContent = text;
-      }
-    }
-  };
-
 
   var contactListClickHandler = function originalHandler(id) {
     initDetails(function onDetailsReady() {
-      contactsList.getContactById(id, function findCb(contact, fbContact) {
-
-        // Enable NFC listening is available
-        if ('mozNfc' in navigator) {
-          contacts.NFC.startListening(contact);
-        }
+      ContactsService.get(id, function findCb(contact, fbContact) {
 
         currentContact = contact;
         currentFbContact = fbContact;
-        if (ActivityHandler.currentlyHandling) {
-          if (ActivityHandler.activityName == 'pick') {
+
+        if (ActivityHandler.currentActivityIsNot(['import'])) {
+          if (ActivityHandler.currentActivityIs(['pick'])) {
             ActivityHandler.dataPickHandler(currentFbContact || currentContact);
           }
           return;
         }
-        contactsDetails.render(currentContact, TAG_OPTIONS, currentFbContact);
-        if (contacts.Search && contacts.Search.isInSearchMode()) {
-          navigation.go('view-contact-details', 'go-deeper-search');
+
+        contactsDetails.render(currentContact, currentFbContact);
+        if (window.Search && Search.isInSearchMode()) {
+          MainNavigation.go('view-contact-details', 'go-deeper-search');
         } else {
-          navigation.go('view-contact-details', 'go-deeper');
+          MainNavigation.go('view-contact-details', 'go-deeper');
         }
       });
     });
   };
 
   var updateContactDetail = function updateContactDetail(id) {
-    contactsList.getContactById(id, function findCallback(contact) {
+    ContactsService.get(id, function findCallback(contact) {
       currentContact = contact;
-      contactsDetails.render(currentContact, TAG_OPTIONS);
+      contactsDetails.render(currentContact);
     });
   };
 
   var selectList = function selectList(params, fromUpdateActivity) {
-    addButton.classList.add('hide');
+    HeaderUI.hideAddButton();
     contactsList.clearClickHandlers();
     contactsList.handleClick(function addToContactHandler(id) {
       var data = {};
@@ -369,173 +299,23 @@ var Contacts = (function() {
     });
   };
 
-  var getLength = function getLength(prop) {
-    if (!prop || !prop.length) {
-      return 0;
-    }
-    return prop.length;
-  };
-
-  var updatePhoto = function updatePhoto(photo, dest) {
-    var background = '';
-    if (photo != null) {
-      background = 'url(' + URL.createObjectURL(photo) + ')';
-    }
-    dest.style.backgroundImage = background;
-    // Only for testing purposes
-    dest.dataset.photoReady = 'true';
-  };
-
-  // Checks if an object fields are empty, by empty means
-  // field is null and if it's an array it's length is 0
-  var isEmpty = function isEmpty(obj, fields) {
-    if (obj == null || typeof(obj) != 'object' ||
-        !fields || !fields.length) {
-      return true;
-    }
-    var attr;
-    for (var i = 0; i < fields.length; i++) {
-      attr = fields[i];
-      if (obj[attr]) {
-        if (Array.isArray(obj[attr])) {
-          if (obj[attr].length > 0) {
-            return false;
-          }
-        } else {
-          return false;
-        }
-      }
-    }
-    return true;
-  };
-
-  function showSelectTag() {
-    var tagsList = document.getElementById('tags-list');
-    var selectedTagType = contactTag.dataset.taglist;
-    var options = TAG_OPTIONS[selectedTagType];
-
-    var type = selectedTagType.split('-')[0];
-    var isCustomTagVisible = (document.querySelector(
-      '[data-template]' + '.' + type + '-' +
-      'template').dataset.custom != 'false');
-
-    options = ContactsTag.filterTags(type, contactTag, options);
-
-    if (!customTag) {
-      customTag = document.querySelector('#custom-tag');
-      customTag.addEventListener('keydown', handleCustomTag);
-      customTag.addEventListener('touchend', handleCustomTag);
-    }
-    if (!customTagReset) {
-      customTagReset = document.getElementById('custom-tag-reset');
-      customTagReset.addEventListener('touchstart', handleCustomTagReset);
-    }
-    if (!tagDone) {
-      tagDone = document.querySelector('#settings-done');
-      tagDone.addEventListener('click', handleSelectTagDone);
-    }
-    if (!tagCancel) {
-      tagCancel = document.querySelector('#settings-cancel');
-      tagCancel.addEventListener('click', handleBack);
-    }
-
-    for (var i in options) {
-      options[i].value = _(options[i].type);
-    }
-
-    ContactsTag.setCustomTag(customTag);
-    // Set whether the custom tag is visible or not
-    // This is needed for dates as we only support bday and anniversary
-    // and not custom dates
-    ContactsTag.setCustomTagVisibility(isCustomTagVisible);
-
-    ContactsTag.fillTagOptions(tagsList, contactTag, options);
-
-    navigation.go('view-select-tag', 'right-left');
-    if (document.activeElement) {
-      document.activeElement.blur();
-    }
-  }
-
-  var goToSelectTag = function goToSelectTag(event) {
-    contactTag = event.currentTarget.children[0];
-
-    var tagViewElement = document.getElementById('view-select-tag');
-    if (!lazyLoadedTagsDom) {
-      LazyLoader.load(tagViewElement, function() {
-        navigator.mozL10n.translate(tagViewElement);
-        showSelectTag();
-        lazyLoadedTagsDom = true;
-       });
-    }
-    else {
-      showSelectTag();
-    }
-  };
-
-  var sendSms = function sendSms(number) {
-    if (!ActivityHandler.currentlyHandling ||
-        ActivityHandler.activityName === 'open') {
-      SmsIntegration.sendSms(number);
-    }
-  };
-
   var handleBack = function handleBack(cb) {
-    navigation.back(cb);
+    MainNavigation.back(cb);
   };
 
   var handleCancel = function handleCancel() {
     //If in an activity, cancel it
     if (ActivityHandler.currentlyHandling) {
       ActivityHandler.postCancel();
-      navigation.home();
+      MainNavigation.home();
     } else {
-      handleBack();
-    }
-  };
-
-  var handleSelectTagDone = function handleSelectTagDone() {
-    var prevValue = contactTag.textContent;
-    ContactsTag.clickDone(function() {
-      var valueModifiedEvent = new CustomEvent('ValueModified', {
-        bubbles: true,
-        detail: {
-          prevValue: prevValue,
-          newValue: contactTag.textContent
+      handleBack(function() {
+        // TODO: remove all interaction with detail.js when it works
+        // as an independent view
+        if (MainNavigation.currentView() === 'view-contact-details') {
+          contactsDetails.startNFC(currentContact);
         }
       });
-      contactTag.dispatchEvent(valueModifiedEvent);
-      handleBack();
-    });
-  };
-
-  var handleCustomTag = function handleCustomTag(ev) {
-    if (ev.keyCode === 13) {
-      ev.preventDefault();
-    }
-    ContactsTag.touchCustomTag();
-  };
-
-  var handleCustomTagReset = function handleCustomTagReset(ev) {
-    ev.preventDefault();
-    if (customTag) {
-      customTag.value = '';
-    }
-  };
-
-  var sendEmailOrPick = function sendEmailOrPick(address) {
-    try {
-      // We don't check the email format, lets the email
-      // app do that
-      new MozActivity({
-        name: 'new',
-        data: {
-          type: 'mail',
-          URI: 'mailto:' + address
-        }
-      });
-    } catch (e) {
-      console.log('WebActivities unavailable? : ' + e);
     }
   };
 
@@ -544,17 +324,22 @@ var Contacts = (function() {
   };
 
   var loadFacebook = function loadFacebook(callback) {
-    if (!fbLoader.loaded) {
-      fb.init(function onInitFb() {
-        window.addEventListener('facebookLoaded', function onFbLoaded() {
-          window.removeEventListener('facebookLoaded', onFbLoaded);
-          callback();
+    LazyLoader.load([
+      '/contacts/js/fb_loader.js',
+      '/contacts/js/fb/fb_init.js'
+    ], () => {
+      if (!fbLoader.loaded) {
+        fb.init(function onInitFb() {
+          window.addEventListener('facebookLoaded', function onFbLoaded() {
+            window.removeEventListener('facebookLoaded', onFbLoaded);
+            callback();
+          });
+          fbLoader.load();
         });
-        fbLoader.load();
-      });
-    } else {
-      callback();
-    }
+      } else {
+        callback();
+      }
+    });
   };
 
   var initForm = function c_initForm(callback) {
@@ -563,9 +348,11 @@ var Contacts = (function() {
     } else {
       initDetails(function onDetails() {
         LazyLoader.load([
-          '/shared/js/contacts/utilities/image_thumbnail.js'],
+          '/shared/js/contacts/import/utilities/misc.js',
+          '/shared/js/contacts/utilities/image_thumbnail.js',
+          '/contacts/js/match_service.js'],
         function() {
-          Contacts.view('Form', function viewLoaded() {
+          Loader.view('Form', function viewLoaded() {
             formReady = true;
             contactsForm = contacts.Form;
             contactsForm.init(TAG_OPTIONS);
@@ -580,9 +367,17 @@ var Contacts = (function() {
     if (settingsReady) {
       callback();
     } else {
-      Contacts.view('Settings', function viewLoaded() {
+      Loader.view('Settings', function viewLoaded() {
         LazyLoader.load(['/contacts/js/utilities/sim_dom_generator.js',
-          '/contacts/js/utilities/icc_handler.js'], function() {
+          '/contacts/js/utilities/normalizer.js',
+          '/shared/js/contacts/import/utilities/misc.js',
+          '/shared/js/mime_mapper.js',
+          '/shared/js/contacts/import/utilities/vcard_parser.js',
+          '/contacts/js/utilities/icc_handler.js',
+          '/shared/js/contacts/import/utilities/sdcard.js',
+          '/shared/elements/gaia_switch/script.js',
+          '/shared/js/date_time_helper.js',
+          '/shared/js/contacts/import/import_status_data.js'], function() {
           settingsReady = true;
           contacts.Settings.init();
           callback();
@@ -595,10 +390,15 @@ var Contacts = (function() {
     if (detailsReady) {
       callback();
     } else {
-      Contacts.view('Details', function viewLoaded() {
-        var simPickerNode = document.getElementById('sim-picker');
-        LazyLoader.load([simPickerNode], function() {
-          navigator.mozL10n.translate(simPickerNode);
+      Loader.view('Details', function viewLoaded() {
+        LazyLoader.load(
+          ['/shared/js/contacts/import/utilities/misc.js',
+           '/dialer/js/telephony_helper.js',
+           '/shared/js/contacts/sms_integration.js',
+           '/shared/js/contacts/contacts_buttons.js',
+           '/contacts/js/match_service.js',
+           '/contacts/js/utilities/mozContact.js'],
+        function() {
           detailsReady = true;
           contactsDetails = contacts.Details;
           contactsDetails.init();
@@ -637,10 +437,14 @@ var Contacts = (function() {
 
   var setCurrent = function c_setCurrent(contact) {
     currentContact = contact;
+
+    if (contacts.Details) {
+      contacts.Details.setContact(contact);
+    }
   };
 
-  var showOverlay = function c_showOverlay(message, progressClass, textId) {
-    var out = utils.overlay.show(message, progressClass, textId);
+  var showOverlay = function c_showOverlay(messageId, progressClass, textId) {
+    var out = utils.overlay.show(messageId, progressClass, textId);
     // When we are showing the overlay we are often performing other
     // significant work, such as importing.  While performing this work
     // it would be nice to avoid the overhead of any accidental reflows
@@ -653,21 +457,17 @@ var Contacts = (function() {
   };
 
   var hideOverlay = function c_hideOverlay() {
-    Contacts.utility('Overlay', function _loaded() {
+    Loader.utility('Overlay', function _loaded() {
       contacts.List.show();
       utils.overlay.hide();
-    }, SHARED_UTILS);
-  };
-
-  var showStatus = function c_showStatus(message) {
-    utils.status.show(message);
+    });
   };
 
   var showSettings = function showSettings() {
     initSettings(function onSettingsReady() {
       // The number of FB Friends has to be recalculated
       contacts.Settings.refresh();
-      navigation.go('view-settings', 'popup');
+      MainNavigation.go('view-settings', 'fade-in');
     });
   };
 
@@ -676,17 +476,16 @@ var Contacts = (function() {
   };
 
   var enterSearchMode = function enterSearchMode(evt) {
-    Contacts.view('Search', function viewLoaded() {
+    Loader.view('Search', function viewLoaded() {
       contacts.List.initSearch(function onInit() {
-        contacts.Search.enterSearchMode(evt);
+        Search.enterSearchMode(evt);
       });
-    }, SHARED_CONTACTS);
+    });
   };
 
   var initEventListeners = function initEventListener() {
     // Definition of elements and handlers
     utils.listeners.add({
-      '#cancel_activity': handleCancel, // Activity (any) cancellation
       '#add-contact-button': showAddContact,
       '#settings-button': showSettings, // Settings related
       '#search-start': [
@@ -695,16 +494,14 @@ var Contacts = (function() {
           handler: enterSearchMode
         }
       ],
+      // For screen reader users
+      '#search-start > input': [
+        {
+          event: 'focus',
+          handler: enterSearchMode
+        }
+      ],
       'button[type="reset"]': stopPropagation
-    });
-  };
-
-  var onLineChanged = function() {
-    Contacts.view('Settings', function viewLoaded() {
-      contacts.Settings.onLineChanged();
-    });
-    Contacts.view('Details', function viewLoaded() {
-      contacts.Details.onLineChanged();
     });
   };
 
@@ -718,38 +515,24 @@ var Contacts = (function() {
   };
 
   var addAsyncScripts = function addAsyncScripts() {
+
     var lazyLoadFiles = [
       '/shared/js/contacts/utilities/templates.js',
       '/shared/js/contacts/contacts_shortcuts.js',
       '/contacts/js/contacts_tag.js',
-      SHARED_UTILS_PATH + '/' + 'misc.js',
-      '/contacts/js/utilities/normalizer.js',
+      '/contacts/js/tag_options.js',
+      '/contacts/js/loader.js',
       '/shared/js/text_normalizer.js',
-      '/dialer/js/telephony_helper.js',
-      '/contacts/js/sms_integration.js',
-      SHARED_UTILS_PATH + '/' + 'sdcard.js',
-      SHARED_UTILS_PATH + '/' + 'vcard_parser.js',
-      SHARED_UTILS_PATH + '/' + 'status.js',
-      '/shared/js/contacts/utilities/dom.js'
+      '/shared/js/contacts/import/utilities/status.js',
+      '/shared/js/contacts/utilities/dom.js',
+      '/shared/js/confirm.js',
+      document.getElementById('confirmation-message')
     ];
 
-    // Lazyload nfc.js if NFC is available
-    if ('mozNfc' in navigator) {
-      lazyLoadFiles.push('/contacts/js/nfc.js');
-    }
-
     LazyLoader.load(lazyLoadFiles, function() {
-      var handling = ActivityHandler.currentlyHandling;
-      if (!handling || ActivityHandler.activityName === 'pick' ||
-                       ActivityHandler.activityName === 'update') {
-        initContactsList();
-        checkUrl();
-      } else {
-        // Unregister here to avoid un-necessary list operations.
-        navigator.mozContacts.oncontactchange = null;
-      }
-      window.dispatchEvent(new CustomEvent('asyncScriptsLoaded'));
+      loadAsyncScriptsDeferred.resolve();
     });
+    return loadAsyncScriptsDeferred.promise;
   };
 
   var pendingChanges = {};
@@ -771,7 +554,7 @@ var Contacts = (function() {
     }
   };
 
-  navigator.mozContacts.oncontactchange = function oncontactchange(event) {
+  var oncontactchange = function oncontactchange(event) {
     if (typeof pendingChanges[event.contactID] !== 'undefined') {
       pendingChanges[event.contactID].push({
         contactID: event.contactID,
@@ -793,214 +576,133 @@ var Contacts = (function() {
     performOnContactChange(event);
   };
 
+
+  ContactsService.addListener('contactchange', oncontactchange);
+
   var performOnContactChange = function performOnContactChange(event) {
+    // To be on the safe side for now we evict the cache everytime a
+    // contact change event is received. In the future, we may want to check
+    // if the change affects the cache or not, so we avoid evicting it when
+    // is not needed.
+    Cache.evict();
     initContactsList();
-    var currView = navigation.currentView();
+    var currView = MainNavigation.currentView();
     switch (event.reason) {
       case 'update':
         if (currView == 'view-contact-details' && currentContact != null &&
           currentContact.id == event.contactID) {
-          contactsList.getContactById(event.contactID,
+          ContactsService.get(event.contactID,
             function success(contact, enrichedContact) {
               currentContact = contact;
               if (contactsDetails) {
-                contactsDetails.render(currentContact, null, enrichedContact);
+                contactsDetails.render(currentContact, enrichedContact);
               }
               if (contactsList) {
-                contactsList.refresh(currentContact, checkPendingChanges,
-                                   event.reason);
+                contactsList.refresh(enrichedContact || currentContact,
+                                     checkPendingChanges, event.reason);
               }
+              notifyContactChanged(event.contactID, event.reason);
           });
         } else {
-          contactsList.refresh(event.contactID, checkPendingChanges,
-            event.reason);
+          refreshContactInList(event.contactID);
         }
         break;
       case 'create':
-        contactsList.refresh(event.contactID, checkPendingChanges,
-          event.reason);
+        refreshContactInList(event.contactID);
         break;
       case 'remove':
         if (currentContact != null && currentContact.id == event.contactID &&
           (currView == 'view-contact-details' ||
           currView == 'view-contact-form')) {
-          navigation.home();
+          MainNavigation.home();
         }
         contactsList.remove(event.contactID, event.reason);
         currentContact = {};
         checkPendingChanges(event.contactID);
+        notifyContactChanged(event.contactID, event.reason);
         break;
     }
   };
+
+  // Refresh a contact in the list, and notifies of contact
+  // changed to possible listeners.
+  function refreshContactInList(id) {
+    contactsList.refresh(id, function() {
+      notifyContactChanged(id);
+      checkPendingChanges(id);
+    });
+  }
+
+  // Send a custom event when we know that a contact changed and
+  // the contact list was updated.
+  // Used internally in places where the contact list is a reference
+  function notifyContactChanged(id, reason) {
+    document.dispatchEvent(new CustomEvent('contactChanged', {
+      detail: {
+        contactID: id,
+        reason: reason
+      }
+    }));
+  }
 
   var close = function close() {
     window.removeEventListener('localized', initContacts);
   };
 
   var initContacts = function initContacts(evt) {
-    window.setTimeout(Contacts.onLocalized);
+    initEventListeners();
+    HeaderUI.setNormalHeader();
+    utils.PerformanceHelper.contentInteractive();
+    utils.PerformanceHelper.chromeInteractive();
+    window.setTimeout(Contacts && Contacts.onLocalized);
     if (window.navigator.mozSetMessageHandler && window.self == window.top) {
-      var actHandler = ActivityHandler.handle.bind(ActivityHandler);
-      window.navigator.mozSetMessageHandler('activity', actHandler);
+      LazyLoader.load(['/shared/js/contacts/import/utilities/misc.js',
+        '/shared/js/contacts/import/utilities/vcard_reader.js',
+        '/shared/js/contacts/import/utilities/vcard_parser.js'],
+       function() {
+        var actHandler = ActivityHandler.handle.bind(ActivityHandler);
+        window.navigator.mozSetMessageHandler('activity', actHandler);
+      });
     }
-    window.addEventListener('online', Contacts.onLineChanged);
-    window.addEventListener('offline', Contacts.onLineChanged);
 
     document.addEventListener('visibilitychange', function visibility(e) {
-      if (ActivityHandler.currentlyHandling && document.hidden) {
-        ActivityHandler.postCancel();
-        return;
-      }
-      Contacts.checkCancelableActivity();
       if (document.hidden === false &&
-                                navigation.currentView() === 'view-settings') {
-        Contacts.view('Settings', function viewLoaded() {
+          MainNavigation.currentView() === 'view-settings') {
+        Loader.view('Settings', function viewLoaded() {
           contacts.Settings.updateTimestamps();
         });
       }
     });
   };
 
-  navigator.mozL10n.once(initContacts);
+  LazyLoader.load('/shared/js/l10n.js', () => {
+    navigator.mozL10n.once(() => {
+      initContacts();
+    });
+    navigator.mozL10n.ready(() => {
+      Cache.maybeEvict();
+    });
+  });
 
-  function loadConfirmDialog() {
-    var args = Array.slice(arguments);
-    Contacts.utility('Confirm', function viewLoaded() {
-      ConfirmDialog.show.apply(ConfirmDialog, args);
-    }, SHARED);
-  }
-
-  /**
-   * Specifies dependencies for resources
-   * E.g., mapping Facebook as a dependency of views
-   */
-  var dependencies = {
-    views: {
-      Settings: loadFacebook,
-      Details: loadFacebook,
-      Form: loadFacebook
-    },
-    utilities: {},
-    sharedUtilities: {}
-  };
-
-  // Mapping of view names to element IDs
-  // TODO: Having a more standardized way of specifying this would be nice.
-  // Then we could get rid of this mapping entirely
-  // E.g., #details-view, #list-view, #form-view
-  var elementMapping = {
-    details: 'view-contact-details',
-    form: 'view-contact-form',
-    settings: 'settings-wrapper',
-    search: 'search-view',
-    overlay: 'loading-overlay',
-    confirm: 'confirmation-message'
-  };
-
-  function load(type, file, callback, path) {
-    /**
-     * Performs the actual lazy loading
-     * Called once all dependencies are met
-     */
-    function doLoad() {
-      var name = file.toLowerCase();
-      var finalPath = 'js' + '/' + type;
-
-      switch (path) {
-        case SHARED:
-          finalPath = SHARED_PATH;
-          break;
-        case SHARED_UTILS:
-          finalPath = SHARED_UTILS_PATH;
-          break;
-        case SHARED_CONTACTS:
-          finalPath = SHARED_CONTACTS_PATH;
-          break;
-        default:
-          finalPath = 'js' + '/' + type;
-      }
-
-      var toLoad = [finalPath + '/' + name + '.js'];
-      var node = document.getElementById(elementMapping[name]);
-      if (node) {
-        toLoad.unshift(node);
-      }
-
-      LazyLoader.load(toLoad, function() {
-          if (node) {
-            navigator.mozL10n.translate(node);
-          }
-          if (callback) {
-            callback();
-          }
-        });
-    }
-
-    if (dependencies[type][file]) {
-      return dependencies[type][file](doLoad);
-    }
-
-    doLoad();
-  }
-
-  /**
-   * Loads a view from the views/ folder
-   * @param {String} view name.
-   * @param {Function} callback.
-   */
-  function loadView(view, callback, type) {
-    load('views', view, callback, type);
-  }
-
-  /**
-   * Loads a utility from the utilities/ folder
-   * @param {String} utility name.
-   * @param {Function} callback.
-   */
-  function loadUtility(utility, callback, type) {
-    load('utilities', utility, callback, type);
-  }
-
-  var updateSelectCountTitle = function updateSelectCountTitle(count) {
-    editModeTitleElement.textContent = _('SelectedTxt', {n: count});
-  };
+  window.addEventListener('DOMContentLoaded', function onLoad() {
+    window.removeEventListener('DOMContentLoaded', onLoad);
+  });
 
   return {
     'goBack' : handleBack,
     'cancel': handleCancel,
-    'goToSelectTag': goToSelectTag,
-    'sendSms': sendSms,
-    'navigation': navigation,
-    'sendEmailOrPick': sendEmailOrPick,
-    'updatePhoto': updatePhoto,
-    'checkCancelableActivity': checkCancelableActivity,
-    'isEmpty': isEmpty,
-    'getLength': getLength,
     'showForm': showForm,
     'setCurrent': setCurrent,
-    'getTags': TAG_OPTIONS,
     'onLocalized': onLocalized,
     'init': init,
     'showOverlay': showOverlay,
     'hideOverlay': hideOverlay,
     'showContactDetail': contactListClickHandler,
     'updateContactDetail': updateContactDetail,
-    'onLineChanged': onLineChanged,
-    'showStatus': showStatus,
     'loadFacebook': loadFacebook,
-    'confirmDialog': loadConfirmDialog,
     'close': close,
-    'view': loadView,
-    'utility': loadUtility,
-    'updateSelectCountTitle': updateSelectCountTitle,
     get asyncScriptsLoaded() {
-      return asyncScriptsLoaded;
-    },
-    get SHARED_UTILITIES() {
-      return SHARED_UTILS;
-    },
-    get SHARED_CONTACTS() {
-      return SHARED_CONTACTS;
+      return loadAsyncScriptsDeferred.promise;
     }
   };
 })();

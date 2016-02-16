@@ -1,10 +1,10 @@
 suite('lib/storage', function() {
+  /*jshint maxlen:false*/
   'use strict';
-  var require = window.req;
 
   suiteSetup(function(done) {
     var self = this;
-    require([
+    requirejs([
       'lib/storage'
     ], function(Storage) {
       self.Storage = Storage;
@@ -14,6 +14,7 @@ suite('lib/storage', function() {
 
   setup(function() {
     this.clock = sinon.useFakeTimers();
+    this.sandbox = sinon.sandbox.create();
 
     this.video = {};
     this.video.addEventListener = sinon.spy();
@@ -21,11 +22,12 @@ suite('lib/storage', function() {
 
     this.picture = {};
     this.picture.addEventListener = sinon.spy();
+    this.picture.removeEventListener = sinon.spy();
     this.picture.delete = sinon.stub().returns(this.picture);
 
     // Stub getDeviceStorage
     if (!navigator.getDeviceStorage) { navigator.getDeviceStorage = function() {}; }
-    sinon.stub(navigator, 'getDeviceStorage');
+    this.sandbox.stub(navigator, 'getDeviceStorage');
 
     navigator.getDeviceStorage
       .withArgs('pictures')
@@ -35,32 +37,85 @@ suite('lib/storage', function() {
       .withArgs('videos')
       .returns(this.video);
 
+    // Stub getDeviceStorages
+    if (!navigator.getDeviceStorages) { navigator.getDeviceStorages = function() {}; }
+    this.sandbox.stub(navigator, 'getDeviceStorages')
+      .withArgs('pictures').returns([this.picture])
+      .withArgs('videos').returns([this.video]);
+
+    // Stub mozSettings
+    navigator.mozSettings = {
+      addObserver: sinon.stub()
+    };
+
     var options = {
-      createFilename: sinon.stub().callsArgWith(2, 'filename.file')
+      dcf: {
+        init: sinon.spy(),
+        createDCFFilename: sinon.stub().callsArgWith(2, 'filename.file')
+      },
+      require: sinon.stub().callsArg(1)
     };
 
     // The test instance
     this.storage = new this.Storage(options);
-
-    // For convenience
-    this.createFilename = options.createFilename;
+    // Storage is a singleton. This forces reconfiguration for each suite
+    this.storage.configure();
   });
 
   teardown(function() {
-    navigator.getDeviceStorage.restore();
     this.clock.restore();
+    this.sandbox.restore();
   });
 
   suite('Storage()', function() {
     test('Should listen for change events', function() {
       assert.isTrue(this.picture.addEventListener.calledWith('change'));
+      assert.isTrue(navigator.mozSettings.addObserver.called);
+    });
+
+    test('Should set state when receiving change events with available reason', function() {
+      this.sandbox.stub(this.storage, 'setState');
+      this.sandbox.stub(this.storage, 'check');
+      this.storage.onStorageChange({
+        reason: 'available'
+      });
+      assert.isTrue(this.storage.setState.called);
+      assert.isTrue(this.storage.check.called);
+    });
+
+    test('Should set state when receiving change events with unavailable reason', function() {
+      this.sandbox.stub(this.storage, 'setState');
+      this.sandbox.stub(this.storage, 'check');
+      this.storage.onStorageChange({
+        reason: 'unavailable'
+      });
+      assert.isTrue(this.storage.setState.called);
+      assert.isTrue(this.storage.check.called);
+    });
+
+    test('Should set state when receiving change events with shared reason', function() {
+      this.sandbox.stub(this.storage, 'setState');
+      this.sandbox.stub(this.storage, 'check');
+      this.storage.onStorageChange({
+        reason: 'shared'
+      });
+      assert.isTrue(this.storage.setState.called);
+      assert.isTrue(this.storage.check.called);
+    });
+
+    test('Should not set state when receiving change events with unexpected reason', function() {
+      this.sandbox.stub(this.storage, 'setState');
+      this.sandbox.stub(this.storage, 'check');
+      this.storage.onStorageChange({
+        reason: 'foo'
+      });
+      assert.isFalse(this.storage.setState.called);
+      assert.isTrue(this.storage.check.called);
     });
   });
 
   suite('Storage#addPicture()', function() {
     setup(function() {
-      var self = this;
-
       this.picture.addNamed = sinon.spy(function() { return this.addNamed.req; });
       this.picture.addNamed.req = { result: '/path/to/picture.jpg' };
 
@@ -76,7 +131,7 @@ suite('lib/storage', function() {
     });
 
     test('Should create a filename if one not given', function() {
-      assert.isTrue(this.createFilename.calledWith(this.picture, 'image'));
+      assert.isTrue(this.storage.dcf.createDCFFilename.calledWith(this.picture, 'image'));
     });
 
     test('Should add the given blob to picture storage', function() {
@@ -89,6 +144,7 @@ suite('lib/storage', function() {
 
     test('Should callback passing the relative path, absolute path and memory-backed-blob', function() {
       assert.isTrue(this.callback.calledWith(
+        null,
         'filename.file',
         '/path/to/picture.jpg',
         'memory-backed-blob'));

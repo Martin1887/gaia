@@ -1,315 +1,210 @@
 'use strict';
 
-requireApp('system/shared/test/unit/mocks/mock_lazy_loader.js');
-mocha.globals(['UtilityTray', 'lockScreen']);
+requireApp('system/js/utility_tray_motion.js');
+requireApp('system/js/utility_tray.js');
 
-requireApp('system/test/unit/mock_lock_screen.js');
+/* global UtilityTray */
 
-var mocksHelperForUtilityTray = new MocksHelper([
-  'LazyLoader'
-]);
-mocksHelperForUtilityTray.init();
+/**
+ * This unit test suite only sanity-checks the basic mechanics of the tray.
+ * Integration tests check tray motion and state more thoroughly, as well as
+ * proper event handling and dispatching.
+ */
+suite('UtilityTrayMotion', function() {
+  var SCROLL_TOP_MAX = 100;
 
-suite('system/UtilityTray', function() {
-  var stubById;
-  var fakeEvt;
-  var fakeElement;
-  var originalLocked;
-  mocksHelperForUtilityTray.attachTestHelpers();
-
-  function createEvent(type, bubbles, cancelable, detail) {
-    var evt = new CustomEvent(type, {
-      bubbles: bubbles || false,
-      cancelable: cancelable || false,
-      detail: detail
-    });
-
-    return evt;
-  }
-
-  function fakeTouches(start, end) {
-    UtilityTray.onTouchStart({ pageY: start });
-    UtilityTray.screenHeight = 480;
-
-    var y = start;
-    while (y != end) {
-      UtilityTray.onTouchMove({ pageY: y });
-
-      if (y < end) {
-        y++;
-      } else {
-        y--;
-      }
+  var motion, el;
+  window.Service = {
+    locked: false,
+    isFtuRunning: false,
+    getTopMostWindow: null,
+    query(value) {
+      return this[value];
     }
-    UtilityTray.onTouchEnd();
+  };
+
+  setup(() => {
+    el = document.createElement('div');
+    var child = document.createElement('div');
+    child.style.cssText = `height: ${SCROLL_TOP_MAX * 2}px;`;
+    el.appendChild(child);
+    el.style.cssText = `height: ${SCROLL_TOP_MAX}px; overflow-y: scroll`;
+    document.body.appendChild(el);
+    motion = new window.UtilityTrayMotion(el);
+  });
+
+  function openTray(done) {
+    motion.open();
+    var listener = () => {
+      assert.notEqual(motion.state, 'closing');
+      assert.notEqual(motion.state, 'closed');
+      if (motion.state === 'open') {
+        el.removeEventListener('tray-motion-state', listener);
+        assert.equal(el.scrollTop, 0);
+        done();
+      }
+    };
+    el.addEventListener('tray-motion-state', listener);
   }
 
-  setup(function(done) {
-    window.lockScreen = window.MockLockScreen;
-    originalLocked = window.lockScreen.locked;
-    window.lockScreen.locked = false;
-
-    var statusbar = document.createElement('div');
-    statusbar.style.cssText = 'height: 100px; display: block;';
-
-    var statusbarIcons = document.createElement('div');
-    statusbarIcons.style.cssText = 'height: 100px; display: block;';
-
-    var grippy = document.createElement('div');
-    grippy.style.cssText = 'height: 100px; display: block;';
-
-    var overlay = document.createElement('div');
-    overlay.style.cssText = 'height: 100px; display: block;';
-
-    var screen = document.createElement('div');
-    screen.style.cssText = 'height: 100px; display: block;';
-
-    stubById = this.sinon.stub(document, 'getElementById', function(id) {
-      switch (id) {
-        case 'statusbar':
-          return statusbar;
-        case 'statusbar-icons':
-          return statusbarIcons;
-        case 'utility-tray-grippy':
-          return grippy;
-        case 'utility-tray':
-          return overlay;
-        case 'screen':
-          return screen;
-        default:
-          return null;
-      }
-    });
-    requireApp('system/js/utility_tray.js', done);
+  test('open', function(done) {
+    assert.equal(el.scrollTop, SCROLL_TOP_MAX);
+    openTray(done);
   });
 
-  teardown(function() {
-    stubById.restore();
-    window.lockScreen.locked = originalLocked;
-  });
-
-
-  suite('show', function() {
-    setup(function() {
-      UtilityTray.show();
-    });
-
-    test('shown should be true', function() {
-      assert.equal(UtilityTray.shown, true);
-    });
-
-    test("Test screen element's class list", function() {
-      assert.equal(UtilityTray.screen.classList.contains('utility-tray'), true);
-    });
-  });
-
-
-  suite('hide', function() {
-    setup(function() {
-      UtilityTray.hide();
-    });
-
-    test('shown should be false', function() {
-      assert.equal(UtilityTray.shown, false);
-    });
-
-    test('lastY and startY should be undefined', function() {
-      assert.equal(UtilityTray.lastY, undefined);
-      assert.equal(UtilityTray.startY, undefined);
-    });
-
-    test("Test screen element's class list", function() {
-      assert.equal(UtilityTray.screen.
-        classList.contains('utility-tray'), false);
-    });
-  });
-
-
-  suite('onTouch', function() {
-    suite('showing', function() {
-      test('should not be shown by a tap', function() {
-        fakeTouches(0, 5);
-        assert.equal(UtilityTray.shown, false);
-      });
-
-      test('should be shown by a drag from the top', function() {
-        fakeTouches(0, 100);
-        assert.equal(UtilityTray.shown, true);
-      });
-    });
-
-    suite('hiding', function() {
-      setup(function() {
-        UtilityTray.show();
-      });
-
-      test('should not be hidden by a tap', function() {
-        fakeTouches(480, 475);
-        assert.equal(UtilityTray.shown, true);
-      });
-
-      test('should be hidden by a drag from the bottom', function() {
-        fakeTouches(480, 380);
-        assert.equal(UtilityTray.shown, false);
-      });
-    });
-  });
-
-
-  // handleEvent
-  suite('handleEvent: attentionscreenshow', function() {
-    setup(function() {
-      fakeEvt = createEvent('attentionscreenshow');
-      UtilityTray.show();
-      UtilityTray.handleEvent(fakeEvt);
-    });
-
-    test('should be hidden', function() {
-      assert.equal(UtilityTray.shown, false);
-    });
-  });
-
-
-  suite('handleEvent: home', function() {
-    setup(function() {
-      fakeEvt = createEvent('home', true);
-
-      // Since nsIDOMEvent::StopImmediatePropagation does not set
-      // any property on the event, and there is no way to add a
-      // global event listeners, let's just overidde the method
-      // to set our own property.
-      fakeEvt.stopImmediatePropagation = function() {
-        this._stopped = true;
+  test('open and close: check state and motion events', function(done) {
+    openTray(() => {
+      assert.equal(el.scrollTop, 0);
+      motion.close();
+      var fn = () => {
+        assert.notEqual(motion.state, 'opening');
+        assert.notEqual(motion.state, 'open');
+        if (motion.state === 'closed') {
+          assert.equal(el.scrollTop, SCROLL_TOP_MAX);
+          el.removeEventListener('tray-motion-state', fn);
+          done();
+        }
       };
-
-      UtilityTray.show();
-      window.dispatchEvent(fakeEvt);
-    });
-
-    test('should be hidden', function() {
-      assert.equal(UtilityTray.shown, false);
-    });
-
-    test('home should have been stopped', function() {
-      assert.equal(fakeEvt._stopped, true);
+      el.addEventListener('tray-motion-state', fn);
     });
   });
 
-
-  suite('handleEvent: screenchange', function() {
-    setup(function() {
-      fakeEvt = createEvent('screenchange', false, false,
-                            { screenEnabled: false });
-      UtilityTray.show();
-      UtilityTray.handleEvent(fakeEvt);
-    });
-
-    test('should be hidden', function() {
-      assert.equal(UtilityTray.shown, false);
+  test('handling timeout event received while open', function(done) {
+    // If the tray is already open, another 'timeout' event should leave
+    // the tray open as-is, not attempt to close it.
+    openTray(() => {
+      assert.equal(el.scrollTop, 0);
+      motion.markPosition('timeout');
+      assert.equal(motion.state, 'open');
+      done();
     });
   });
 
+  test('Closes in response to window resize when closed', function() {
+    var stub = sinon.stub(motion, 'markPosition');
+    window.dispatchEvent(new CustomEvent('resize'));
+    assert.isTrue(stub.called);
+    assert.equal(stub.firstCall.args[0], 'resize');
+  });
 
-  suite('handleEvent: emergencyalert', function() {
-    setup(function() {
-      fakeEvt = createEvent('emergencyalert');
-      UtilityTray.show();
-      UtilityTray.handleEvent(fakeEvt);
-    });
-
-    test('should be hidden', function() {
-      assert.equal(UtilityTray.shown, false);
+  test('Opens in response to window resize when open', function(done) {
+    openTray(() => {
+      var stub = sinon.stub(motion, 'markPosition');
+      window.dispatchEvent(new CustomEvent('resize'));
+      assert.isTrue(stub.called);
+      assert.equal(stub.firstCall.args[0], 'resize');
+      done();
     });
   });
 
-  suite('handleEvent: launchapp', function() {
-    setup(function() {
-      fakeEvt = createEvent('launchapp');
-      UtilityTray.show();
-      UtilityTray.handleEvent(fakeEvt);
+  test('reliablyScrollTo', function() {
+    var stub = sinon.stub(motion.el, 'scrollTo');
+
+    motion.reliablyScrollTo(0);
+    motion.reliablyScrollTo(10);
+    motion.reliablyScrollTo(10);
+
+    assert.isTrue(stub.calledThrice);
+    assert.deepEqual(stub.firstCall.args[0].top, 0);
+    assert.deepEqual(stub.secondCall.args[0].top, 10);
+    assert.deepEqual(stub.thirdCall.args[0].top, 10);
+    assert.deepEqual(stub.firstCall.args[0].behavior, 'smooth');
+    assert.deepEqual(stub.secondCall.args[0].behavior, 'smooth');
+    assert.deepEqual(stub.thirdCall.args[0].behavior, 'auto');
+  });
+});
+
+suite('UtilityTray', function() {
+
+  test('Hides when responding to certain events', function() {
+
+    [
+      'emergencyalert',
+      'displayapp',
+      'keyboardchanged',
+      'keyboardchangecanceled',
+      'simlockshow',
+      'appopening',
+      'activityopening',
+      'sheets-gesture-begin',
+      'attentionopened',
+      'attentionwill-become-active',
+      'imemenushow'
+    ].forEach(function(eventType) {
+      var hideFn = sinon.stub(window.UtilityTray, 'hide');
+      window.UtilityTray.handleEvent(new CustomEvent(eventType));
+      assert.isTrue(hideFn.calledOnce, eventType + ' causes hide');
+      hideFn.restore();
     });
 
-    test('should be hidden', function() {
-      assert.equal(UtilityTray.shown, false);
+  });
+
+  suite('Hiearchy events support', function() {
+    test('should have a name', function() {
+      assert.equal(UtilityTray.name, 'UtilityTray');
+    });
+
+    test('should expose |isActive|', function() {
+      UtilityTray.shown = true;
+      assert.isTrue(UtilityTray.isActive());
+      UtilityTray.shown = false;
+      assert.isFalse(UtilityTray.isActive());
+    });
+
+    test('should consume home to close when opened', function() {
+      UtilityTray.shown = true;
+      this.sinon.stub(UtilityTray, 'hide');
+
+      var result = UtilityTray.respondToHierarchyEvent(new CustomEvent('home'));
+      assert.isFalse(result);
+      sinon.assert.calledOnce(UtilityTray.hide);
+    });
+
+    test('should ignore home when closed', function() {
+      UtilityTray.shown = false;
+      this.sinon.stub(UtilityTray, 'hide');
+      var result = UtilityTray.respondToHierarchyEvent(new CustomEvent('home'));
+      assert.isTrue(result);
+      sinon.assert.notCalled(UtilityTray.hide);
     });
   });
 
-  suite('handleEvent: touchstart', function() {
-    mocksHelperForUtilityTray.attachTestHelpers();
-    setup(function() {
-      fakeEvt = createEvent('touchstart', false, true);
-      fakeEvt.touches = [0];
-    });
+});
 
-    test('onTouchStart is not called if LockScreen is locked', function() {
-      window.lockScreen.locked = true;
-      var stub = this.sinon.stub(UtilityTray, 'onTouchStart');
-      UtilityTray.statusbarIcons.dispatchEvent(fakeEvt);
-      assert.ok(stub.notCalled);
-    });
+suite('Notification Scroll Handling: ', function() {
 
-    test('onTouchStart is called if LockScreen is not locked', function() {
-      window.lockScreen.locked = false;
-      var stub = this.sinon.stub(UtilityTray, 'onTouchStart');
-      UtilityTray.statusbarIcons.dispatchEvent(fakeEvt);
-      assert.ok(stub.calledOnce);
-    });
+  var tray;
 
-    test('Dont preventDefault if the target is the overlay', function() {
-      assert.isTrue(UtilityTray.overlay.dispatchEvent(fakeEvt));
-    });
-
-    test('preventDefault if the target is the statusbar', function() {
-      assert.isFalse(UtilityTray.statusbarIcons.dispatchEvent(fakeEvt));
-    });
-
-    test('preventDefault if the target is the grippy', function() {
-      assert.isFalse(UtilityTray.grippy.dispatchEvent(fakeEvt));
-    });
-
-    test('Test UtilityTray.active, should be true', function() {
-      /* XXX: This is to test UtilityTray.active,
-              it works in local test but breaks in travis. */
-      // assert.equal(UtilityTray.active, true);
-    });
+  setup(function() {
+    tray = window.UtilityTray;
+    // Using fake elements here to make it easy to set `offsetTop`.
+    tray.notificationsContainer = {
+      style: document.createElement('div').style,
+    };
+    tray.footerContainer = {
+      style: document.createElement('div').style,
+    };
+    tray.nestedScrollInterceptor = document.createElement('div');
   });
 
-  suite('handleEvent: touchend', function() {
-    setup(function() {
-      fakeEvt = createEvent('touchend', false, true);
-      fakeEvt.changedTouches = [0];
-
-      UtilityTray.active = true;
-    });
-
-    test('Dont preventDefault if the target is the overlay', function() {
-      assert.isTrue(UtilityTray.overlay.dispatchEvent(fakeEvt));
-    });
-
-    test('preventDefault if the target is the statusbar', function() {
-      assert.isFalse(UtilityTray.statusbarIcons.dispatchEvent(fakeEvt));
-    });
-
-    test('preventDefault if the target is the grippy', function() {
-      assert.isFalse(UtilityTray.grippy.dispatchEvent(fakeEvt));
-    });
-
-    test('Test UtilityTray.active, should be false', function() {
-      UtilityTray.statusbarIcons.dispatchEvent(fakeEvt);
-      assert.equal(UtilityTray.active, false);
-    });
+  test('Notifications max-height adjusts to fit above footer', function() {
+    tray.notificationsContainer.offsetTop = 100;
+    tray.footerContainer.offsetTop = 400;
+    tray.recalculateNotificationsContainerHeight();
+    assert.equal(tray.notificationsContainer.style.maxHeight, '300px');
   });
 
-  suite('handleEvent: transitionend', function() {
-    setup(function() {
-      fakeEvt = createEvent('transitionend');
-      UtilityTray.hide();
-      UtilityTray.overlay.dispatchEvent(fakeEvt);
-    });
+  test('Scroll interceptor => overflow:scroll when notifications can scroll',
+  function() {
+    tray.notificationsContainer.scrollTopMax = 100;
+    tray.recalculateNotificationsContainerHeight();
+    assert.equal(tray.nestedScrollInterceptor.style.overflowY, 'scroll');
+  });
 
-    test('Test utilitytrayhide is correcly dispatched', function() {
-      assert.equal(UtilityTray.screen.
-        classList.contains('utility-tray'), false);
-    });
+  test('Scroll interceptor => overflow:hidden when notifications do not scroll',
+  function() {
+    tray.notificationsContainer.scrollTopMax = 0;
+    tray.recalculateNotificationsContainerHeight();
+    assert.equal(tray.nestedScrollInterceptor.style.overflowY, 'hidden');
   });
 });

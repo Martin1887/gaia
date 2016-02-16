@@ -16,7 +16,7 @@ var AutoSettings = (function() {
           parent.insertBefore(span, parent.firstChild);
         }
       }
-      guiWidget.addEventListener('change', function _onSelectChange() {
+      guiWidget.addEventListener('blur', function _onSelectChange() {
         debug('Value:', guiWidget.value);
         settings.option(optionName, guiWidget.value);
       });
@@ -121,7 +121,7 @@ var AutoSettings = (function() {
       );
 
       // Add an event listener to switch the option
-      guiWidget.addEventListener('click', function ccapp_onSwitchChange() {
+      guiWidget.addEventListener('change', function ccapp_onSwitchChange() {
         settings.option(optionName, guiWidget.checked);
       });
     },
@@ -209,7 +209,8 @@ var AutoSettings = (function() {
         return 'customselect';
       }
 
-      if (widget.type === 'checkbox') {
+      if (widget.type === 'checkbox' ||
+          widget.nodeName.toLowerCase() === 'gaia-switch') {
         return 'switch';
       }
 
@@ -248,7 +249,7 @@ var AutoSettings = (function() {
       var entry = getEntryParent(guiWidget);
       var configurer = OPTION_CONFIGURERS[type];
       if (configurer) {
-        configurer(guiWidget, settings, vmanager);
+        configurer(guiWidget, settings, vmanager, root);
       }
 
       // Simple dependency resolution:
@@ -268,9 +269,9 @@ var AutoSettings = (function() {
       var hideOn = guiWidget.dataset.hideOn;
       if (hideOn) {
         installDependency(hideOn, function _hide(passed) {
-          guiWidget.setAttribute('aria-hidden', passed + '');
+          guiWidget.hidden = passed;
           if (entry) {
-            entry.setAttribute('aria-hidden', passed + '');
+            entry.hidden = passed;
           }
         });
       }

@@ -1,104 +1,299 @@
 'use strict';
 
-mocha.globals(['ValueSelector']);
+/* global loadBodyHTML, MocksHelper, MockL10n, AppWindow, ValueSelector,
+ Sanitizer */
 
-require('/shared/js/input_parser.js');
 require('/shared/test/unit/load_body_html_helper.js');
-require('/apps/system/js/value_selector/value_picker.js');
-require('/apps/system/js/value_selector/value_selector.js');
-require('/shared/test/unit/mocks/mock_settings_listener.js');
-require('/apps/system/test/unit/mock_l10n.js');
+require('/shared/test/unit/mocks/mock_l20n.js');
+require('/shared/test/unit/mocks/mock_lazy_loader.js');
+requireApp('system/shared/js/sanitizer.js');
+requireApp('system/test/unit/mock_app_window.js');
+
+var mocksForValueSelector = new MocksHelper([
+  'AppWindow',
+  'LazyLoader'
+]).init();
 
 suite('value selector/value selector', function() {
-  var realL10n;
-  var realKeyboard;
-  var realSettings;
-  var stubMozl10nGet;
-  var element;
-  var timePickerContainer;
-  var timeSeparator;
+  var realL10n, realKeyboard, stubMozl10n, app, fragment, vs, rafStub;
 
-  suiteSetup(function() {
-    realSettings = navigator.mozSettings;
-    navigator.mozSettings = MockNavigatorSettings;
+  var fakeAppConfig = {
+    url: 'app://www.fake/index.html',
+    manifest: {},
+    manifestURL: 'app://wwww.fake/ManifestURL',
+    origin: 'app://www.fake',
+    name: 'Fake Application'
+  };
+  var fakeTimeInputMethodContextChangeEvent = {
+    type: '_inputfocus',
+    detail: {
+      inputType: 'time'
+    }
+  };
+  var fakeDateInputMethodContextChangeEvent = {
+    type: '_inputfocus',
+    detail: {
+      inputType: 'date'
+    }
+  };
+  var fakeBlurInputMethodContextChangeEvent = {
+    type: '_inputblur',
+    detail: {
+      inputType: 'blur'
+    }
+  };
+  var fakeClosing = { type: '_closing' };
+  var fakeClosed = { type: '_closed' };
+  var fakeOpening = { type: '_opening' };
+  var fakeLocalizedEvent = { type: '_localized' };
+  var fakeTimeFormatChangeEvent = { type: 'timeformatchange' };
 
-    realL10n = navigator.mozL10n;
-    navigator.mozL10n = MockL10n;
+  mocksForValueSelector.attachTestHelpers();
 
-    loadBodyHTML('/index.html');
+  setup(function(done) {
 
-    timePickerContainer =
-      document.querySelector('#time-picker .picker-container');
-    timeSeparator = document.getElementById('hours-minutes-separator');
+    realL10n = document.l10n;
+    document.l10n = MockL10n;
 
     realKeyboard = window.navigator.mozInputMethod;
     window.navigator.mozInputMethod = sinon.stub();
+
+    rafStub = sinon.stub(window, 'requestAnimationFrame',
+                         function(callback) { callback(); });
+
+    loadBodyHTML('/index.html');
+
+    requireApp('system/js/service.js');
+    requireApp('system/js/base_ui.js');
+    requireApp('system/js/value_selector/value_picker.js');
+    requireApp('system/js/value_selector/spin_date_picker.js');
+    requireApp('system/js/value_selector/value_selector.js', function() {
+      app = new AppWindow(fakeAppConfig);
+      vs = new ValueSelector(app);
+
+      fragment = document.createElement('div');
+      fragment.innerHTML = Sanitizer.unwrapSafeHTML(vs.view());
+      document.body.appendChild(fragment);
+
+      done();
+    });
   });
 
-  suiteTeardown(function() {
-    navigator.mozSettings = realSettings;
-    navigator.mozL10n = realL10n;
+  teardown(function() {
+    document.l10n = realL10n;
     window.navigator.mozInputMethod = realKeyboard;
+    rafStub.restore();
     document.body.innerHTML = '';
+    fragment = null;
+    vs = null;
+    app = null;
   });
 
-  setup(function() {
-    ValueSelector.init();
-    element = document.getElementById('value-selector');
+  test('New', function() {
+    assert.isDefined(vs.instanceID);
   });
 
-  test('show', function() {
-    ValueSelector.show();
-    assert.isFalse(element.hidden);
+  test('prevent blur race', function() {
+    rafStub.restore();
+    this.sinon.stub(window, 'requestAnimationFrame');
+
+    vs.handleEvent(fakeDateInputMethodContextChangeEvent);
+
+    window.requestAnimationFrame.yield();
+
+    vs.handleEvent(fakeBlurInputMethodContextChangeEvent);
+
+    window.requestAnimationFrame.yield();
+
+    assert.isTrue(vs.element.hidden, 'Should not show after blur event.');
   });
 
-  test('hide', function() {
-    ValueSelector.hide();
-    assert.isTrue(element.hidden);
+  test('Time Picker (en-US)', function(done) {
+    var stubPublish = this.sinon.stub(vs, 'publish');
+    stubMozl10n =
+      this.sinon.stub(document.l10n,
+          'formatValue').returns(Promise.resolve('%I:%M %p'));
+    navigator.mozHour12 = true;
+
+    assert.isNull(vs._timePicker);
+
+    vs.handleEvent(fakeTimeInputMethodContextChangeEvent);
+
+    assert.isTrue(stubPublish.calledWith('shown'));
+    assert.isFalse(vs.element.hidden);
+    assert.isFalse(vs.elements.timePickerPopup.hidden);
+    assert.isTrue(vs._timePicker.is12hFormat);
+    assert.equal('time', vs._currentPickerType);
+    assert.equal(vs._timePicker.elements.hoursMinutesSeparator.
+      getAttribute('data-l10n-id'), 'hourMinutesSeparator');
+    Promise.resolve().then(() => {
+      assert.ok(
+        vs.elements.timePickerContainer.classList.contains('format12h'));
+    }).then(done, done);
   });
 
-  test('Time Picker (en-US)', function() {
-    stubMozl10nGet =
-      this.sinon.stub(navigator.mozL10n, 'get').returns('%I:%M %p');
-    ValueSelector.showTimePicker();
-    assert.isTrue(TimePicker.timePicker.is12hFormat);
-    assert.equal('time', ValueSelector._currentPickerType);
-    assert.equal(':', timeSeparator.textContent);
-    assert.ok(timePickerContainer.classList.contains('format12h'));
+  test('Time Picker (pt-BR)', function(done) {
+    navigator.mozHour12 = false;
+
+    vs.handleEvent(fakeTimeInputMethodContextChangeEvent);
+
+    assert.isFalse(vs._timePicker.is12hFormat);
+    assert.equal(vs._timePicker.elements.hoursMinutesSeparator.
+      getAttribute('data-l10n-id'), 'hourMinutesSeparator');
+    Promise.resolve().then(() => {
+      assert.ok(
+        vs.elements.timePickerContainer.classList.contains('format24h'));
+    }).then(done, done);
   });
 
-  test('Time Picker (pt-BR)', function() {
-    stubMozl10nGet =
-      this.sinon.stub(navigator.mozL10n, 'get').returns('%Hh%M');
-    TimePicker.initTimePicker();
-    assert.isFalse(TimePicker.timePicker.is12hFormat);
-    assert.equal('h', timeSeparator.textContent);
-    assert.ok(timePickerContainer.classList.contains('format24h'));
+  test('Time Picker (zh-CN)', function(done) {
+    stubMozl10n =
+      this.sinon.stub(document.l10n,
+          'formatValue').returns(Promise.resolve('%p %I:%M'));
+    navigator.mozHour12 = true;
+
+    vs.handleEvent(fakeTimeInputMethodContextChangeEvent);
+
+    assert.isTrue(vs._timePicker.is12hFormat);
+    assert.equal(vs._timePicker.elements.hoursMinutesSeparator.
+      getAttribute('data-l10n-id'), 'hourMinutesSeparator');
+    Promise.resolve().then(() => {
+      assert.ok(vs.elements.timePickerContainer.classList.contains(
+        'format12hrev'));
+    }).then(done, done);
   });
 
-  test('Time Picker (zh-CN)', function() {
-    stubMozl10nGet =
-      this.sinon.stub(navigator.mozL10n, 'get').returns('%p %I:%M');
-    TimePicker.initTimePicker();
-    assert.isTrue(TimePicker.timePicker.is12hFormat);
-    assert.equal(':', timeSeparator.textContent);
-    assert.ok(timePickerContainer.classList.contains('format12hrev'));
-  });
-
-  test('Time Picker reset at language change', function() {
+  test('Time Picker reset at language change', function(done) {
     // start with 12h format
-    stubMozl10nGet =
-      this.sinon.stub(navigator.mozL10n, 'get').returns('%I:%M %p');
-    TimePicker.initTimePicker();
-    assert.ok(timePickerContainer.classList.contains('format12h'));
-    stubMozl10nGet.restore();
+    var sinon = this.sinon;
+    stubMozl10n = sinon.stub(document.l10n,
+        'formatValue').returns(Promise.resolve('%I:%M %p'));
+    navigator.mozHour12 = true;
 
-    // change to 24h format
-    ValueSelector._timePickerInitialized = false;
-    TimePicker.uninitTimePicker();
-    stubMozl10nGet =
-      this.sinon.stub(navigator.mozL10n, 'get').returns('%H:%M');
-    TimePicker.initTimePicker();
-    assert.ok(timePickerContainer.classList.contains('format24h'));
+    vs.handleEvent(fakeTimeInputMethodContextChangeEvent);
+    Promise.resolve().then(() => {
+      assert.ok(
+        vs.elements.timePickerContainer.classList.contains('format12h'));
+      assert.ok(!vs.elements.timePickerContainer.classList.contains(
+        'format24h'));
+      stubMozl10n.restore();
+
+      // change to 24h format
+      vs.handleEvent(fakeLocalizedEvent);
+    }).then(() => {
+      assert.isNull(vs._timePicker);
+      stubMozl10n = sinon.stub(document.l10n,
+          'formatValue').returns(Promise.resolve('%H:%M'));
+      navigator.mozHour12 = false;
+      vs.handleEvent(fakeTimeInputMethodContextChangeEvent);
+    }).then(() => {
+      assert.ok(vs.elements.timePickerContainer.classList.contains(
+        'format24h'));
+      assert.ok(!vs.elements.timePickerContainer.classList.contains(
+        'format12h'));
+    }).then(done, done);
+  });
+
+  test('Time Picker reset at timeformat change', function(done) {
+    // start with 12h format
+    var sinon = this.sinon;
+    stubMozl10n = sinon.stub(document.l10n,
+        'formatValue').returns(Promise.resolve('%I:%M %p'));
+    navigator.mozHour12 = true;
+
+    vs.handleEvent(fakeTimeInputMethodContextChangeEvent);
+
+    Promise.resolve().then(() => {
+      assert.ok(
+        vs.elements.timePickerContainer.classList.contains('format12h'));
+      assert.ok(!vs.elements.timePickerContainer.classList.contains(
+        'format24h'));
+      stubMozl10n.restore();
+
+      // change to 24h format
+      vs.handleEvent(fakeTimeFormatChangeEvent);
+    }).then(() => {
+      assert.isNull(vs._timePicker);
+      stubMozl10n = sinon.stub(document.l10n,
+          'formatValue').returns(Promise.resolve('%H:%M'));
+      navigator.mozHour12 = false;
+      vs.handleEvent(fakeTimeInputMethodContextChangeEvent);
+    }).then(() => {
+      assert.ok(vs.elements.timePickerContainer.classList.contains(
+        'format24h'));
+      assert.ok(!vs.elements.timePickerContainer.classList.contains(
+        'format12h'));
+    }).then(done, done);
+  });
+
+  test('Destroy removes timeformat listener', function() {
+    this.sinon.stub(window, 'removeEventListener');
+    vs.destroy();
+    assert.isTrue(window.removeEventListener
+      .withArgs('timeformatchange', vs).calledOnce);
+  });
+
+  test('Date Picker (en-US)', function() {
+    assert.isNull(vs._datePicker);
+
+    vs.handleEvent(fakeDateInputMethodContextChangeEvent);
+
+    assert.isFalse(vs.element.hidden);
+    assert.isFalse(vs.elements.spinDatePickerPopup.hidden);
+    assert.equal('date', vs._currentPickerType);
+  });
+
+  suite('hiding', function() {
+    var isActive = true;
+
+    setup(function() {
+      this.sinon.stub(vs, 'publish');
+      this.sinon.stub(app, 'isActive').returns(isActive);
+      this.sinon.stub(app, '_setVisibleForScreenReader');
+      this.sinon.stub(app, 'focus');
+
+      vs.handleEvent(fakeTimeInputMethodContextChangeEvent);
+    });
+
+    function assertHiddenAndFocus(focus) {
+      assert.isTrue(vs.element.hidden);
+      sinon.assert.calledWith(app._setVisibleForScreenReader, true);
+      sinon.assert.calledWith(vs.publish, 'hidden');
+      if (focus) {
+        sinon.assert.calledOnce(app.focus);
+      }
+    }
+
+    test('hide', function() {
+      sinon.assert.calledWith(app._setVisibleForScreenReader, false);
+      vs.hide();
+      assertHiddenAndFocus(true);
+    });
+
+    test('hide on "_closing" event', function() {
+      vs.handleEvent(fakeClosing);
+      assertHiddenAndFocus(true);
+    });
+
+    test('hide on "_closed" event', function() {
+      vs.handleEvent(fakeClosed);
+      assertHiddenAndFocus(true);
+    });
+
+    test('hide on "_opening" event', function() {
+      vs.handleEvent(fakeOpening);
+      assertHiddenAndFocus(true);
+    });
+
+    test('hide on blur event', function() {
+      vs.handleEvent(fakeBlurInputMethodContextChangeEvent);
+      assertHiddenAndFocus(true);
+    });
+
+    test('blur should not focus if the app is not active', function() {
+      isActive = false;
+      vs.handleEvent(fakeBlurInputMethodContextChangeEvent);
+      assertHiddenAndFocus(false);
+    });
   });
 });

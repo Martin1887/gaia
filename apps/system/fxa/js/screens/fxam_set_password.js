@@ -13,8 +13,6 @@
  */
 var FxaModuleSetPassword = (function() {
 
-  var _ = null;
-
   function _isPasswordValid(passwordEl) {
     var passwordValue = passwordEl.value;
     return passwordValue && passwordEl.validity.valid;
@@ -35,7 +33,7 @@ var FxaModuleSetPassword = (function() {
   }
 
   function _showRegistering() {
-    FxaModuleOverlay.show(_('fxa-registering'));
+    FxaModuleOverlay.show('fxa-connecting');
   }
 
   function _hideRegistering() {
@@ -59,13 +57,11 @@ var FxaModuleSetPassword = (function() {
   Module.init = function init(options) {
 
     if (!this.initialized) {
-      // l10n manager
-      _ = navigator.mozL10n.get;
       // Cache DOM elements
       this.importElements(
-        'fxa-user-set-email',
         'fxa-pw-set-input',
-        'fxa-show-pw-set'
+        'fxa-show-pw-set',
+        'fxa-hello-user'
       );
       // Add Listeners
       this.fxaPwSetInput.addEventListener(
@@ -85,7 +81,10 @@ var FxaModuleSetPassword = (function() {
     options = options || {};
 
     this.email = options.email;
-    this.fxaUserSetEmail.textContent = options.email;
+
+    document.l10n.setAttributes(this.fxaHelloUser, 'fxa-hello-user2', {
+      email: this.email
+    });
 
     _cleanForm(
       this.fxaPwSetInput,

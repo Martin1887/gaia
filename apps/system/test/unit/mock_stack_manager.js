@@ -1,6 +1,10 @@
+'use strict';
+/* exported MockStackManager */
+
 var MockStackManager = {
   mCurrent: 0,
   mStack: [],
+  mOutOfstack: false,
 
   init: function sm_init() {
   },
@@ -11,6 +15,10 @@ var MockStackManager = {
   getPrev: function sm_getPrev() {
   },
   getNext: function sm_getNext() {
+  },
+
+  outOfStack: function sm_outOfStack() {
+    return this.mOutOfStack;
   },
 
   goPrev: function sm_goPrev() {

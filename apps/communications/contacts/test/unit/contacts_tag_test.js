@@ -44,22 +44,22 @@ suite('Fill tag options', function() {
       subject.fillTagOptions(container, originalTag,
                              testTagOptions['test-type']);
       assert.equal(container.querySelector('button[data-index="0"]')
-                   .textContent, 'value1');
+                   .getAttribute('data-l10n-id'), 'value1');
       assert.equal(container.querySelector('button[data-index="1"]')
-                   .textContent, 'value2');
+                   .getAttribute('data-l10n-id'), 'value2');
     });
 
     test('choose a tag', function() {
       var tag = container.querySelector('button[data-index="0"]');
       triggerEvent(tag, 'click');
-      assert.isTrue(tag.className.contains('icon-selected'));
+      assert.isTrue(tag.className.includes('icon-selected'));
     });
 
     test('choose custom tag', function() {
       var tags = container.querySelectorAll('button');
       triggerEvent(customTag, 'touchend');
       for (var i = 0; i < tags.length; i++) {
-        assert.lengthOf(tags[i].classList, 0);
+        assert.isFalse(tags[i].classList.contains('icon-selected'));
       }
     });
 

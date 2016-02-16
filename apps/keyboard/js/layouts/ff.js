@@ -1,8 +1,11 @@
 Keyboards.ff = {
   label: 'Fulah',
+  shortLabel: 'Ff',
   menuLabel: 'Pulaar-Fulfulde',
   imEngine: 'latin',
-  types: ['text', 'url', 'email'],
+  autoCorrectLanguage: 'ff',
+  types: ['text', 'url', 'email', 'password'],
+  lang: 'ff',
   alt: {
     a: 'àâæáãäåā',
     c: 'çćč',

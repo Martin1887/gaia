@@ -1,20 +1,25 @@
 /* global MockMatcher, MockMozContacts, MocksHelper,
 mozContact, VCFReader, require, assert, b64Photo,
-suite, setup, suiteSetup, suiteTeardown, test, MockRest */
+suite, setup, suiteSetup, suiteTeardown, test, MockRest,
+MockAdaptAndMerge, MockThumbnailImage, utils */
 
 'use strict';
 
 require('/shared/js/mime_mapper.js');
 require('/shared/test/unit/mocks/mock_lazy_loader.js');
 require('/shared/test/unit/mocks/mock_moz_contact.js');
+requireApp('communications/contacts/test/unit/mock_image_thumbnail.js');
 require('/shared/js/contacts/import/utilities/vcard_parser.js');
 
 requireApp('communications/contacts/test/unit/mock_contacts_match.js');
-requireApp('communications/contacts/test/unit/mock_mozContacts.js');
+requireApp('communications/contacts/test/unit/' +
+ 'mock_contacts_adapt_and_merge.js');
+require('/shared/test/unit/mocks/mock_mozContacts.js');
 requireApp('communications/contacts/test/unit/mock_utils.js');
 requireApp('/shared/test/unit/mocks/mock_moz_contact.js');
 requireApp('communications/contacts/test/unit/import/mock_rest.js');
 requireApp('communications/contacts/test/unit/base64_photo.js');
+
 
 function toDataUri(photo, cb) {
   var reader = new window.FileReader();
@@ -71,7 +76,7 @@ suite('vCard parsing settings', function() {
 
   mocksHelperForVCardParsing.attachTestHelpers();
 
-  var realMozContacts, realMatcher, realUtils, realRest;
+  var realMozContacts, realMatcher, realUtils, realRest, realMerge;
   suite('SD Card import', function() {
     setup(function() {
       navigator.mozContacts.contacts = [];
@@ -95,8 +100,11 @@ suite('vCard parsing settings', function() {
       };
 
       window.contacts = window.contacts || {};
-      realMatcher = window.contacts.Matcher;
-      window.contacts.Matcher = MockMatcher;
+      realMatcher = window.Matcher;
+      window.Matcher = MockMatcher;
+
+      realMerge = window.contacts.adaptAndMerge;
+      window.contacts.adaptAndMerge = MockAdaptAndMerge;
 
       realUtils = window.utils;
       window.utils = {
@@ -104,7 +112,8 @@ suite('vCard parsing settings', function() {
           'toMozContact': function(c) {
             return c;
           }
-        }
+        },
+        'thumbnailImage': MockThumbnailImage
       };
 
       realRest = window.Rest;
@@ -118,7 +127,8 @@ suite('vCard parsing settings', function() {
 
     suiteTeardown(function() {
       navigator.mozContacts = realMozContacts;
-      window.contacts.Matcher = realMatcher;
+      window.Matcher = realMatcher;
+      window.contacts.adaptAndMerge = realMerge;
       window.utils = realUtils;
       window.Rest = realRest;
     });
@@ -376,6 +386,43 @@ suite('vCard parsing settings', function() {
       });
     });
 
+    test(' - should return a correct JSON object from a merged contact vcard',
+      function(done){
+        initializeVCFReader('vcard_3_merged.vcf', function(reader) {
+
+          reader.onread = stub();
+          reader.onimported = stub();
+          reader.onerror = stub();
+
+          reader.process(function import_finish(result) {
+            assert.strictEqual(1, result.length);
+            assert.strictEqual(1, reader.onread.callCount);
+            assert.strictEqual(1, reader.onimported.callCount);
+            assert.strictEqual(0, reader.onerror.callCount);
+
+            var req = navigator.mozContacts.find();
+            req.onsuccess = function(contacts) {
+              var contact = req.result[0];
+
+              assert.strictEqual('Freddy Mercury', contact.name[0]);
+              assert.strictEqual('Freddy', contact.givenName[0]);
+              assert.strictEqual('Farrokh', contact.givenName[1]);
+              assert.strictEqual('Mercury', contact.familyName[0]);
+              assert.strictEqual('Bulsara', contact.familyName[1]);
+              assert.strictEqual('Queen', contact.org[0]);
+
+              assert.strictEqual('mobile', contact.tel[0].type[0]);
+              assert.strictEqual('(111) 555-1212', contact.tel[0].value);
+              assert.strictEqual('home', contact.tel[1].type[0]);
+              assert.strictEqual('(404) 555-1212', contact.tel[1].value);
+              assert.strictEqual('freddy@queen.com',
+                                  contact.email[0].value);
+              done();
+            };
+          });
+        });
+      });
+
     test('- should return a correct JSON object from weird encoding',
       function(done) {
 
@@ -441,7 +488,7 @@ suite('vCard parsing settings', function() {
             assert.strictEqual(true, contact.tel[0].pref);
             assert.strictEqual('(123) 456-7890', contact.tel[0].value);
             assert.strictEqual('(123) 666-7890', contact.tel[1].value);
-            assert.ok(!contact.org[0]);
+            assert.ok(!contact.org || !contact.org[0]);
             assert.strictEqual('home', contact.email[0].type[0]);
             assert.strictEqual('example@example.org', contact.email[0].value);
             done();
@@ -482,13 +529,16 @@ suite('vCard parsing settings', function() {
       });
     });
     test('- vcard 2.1 with embedded photo', function(done) {
+      this.sinon.spy(utils, 'thumbnailImage');
       initializeVCFReader('vcard_21_photo.vcf', function(reader) {
         reader.onread = stub();
         reader.onimported = stub();
         reader.onerror = stub();
 
         reader.process(function import_finish(result) {
-          assert.equal(3, result.length);
+          assert.equal(4, result.length);
+          // Checking utils.thumbnailImage was called
+          assert.ok(utils.thumbnailImage.called);
           var req = navigator.mozContacts.find();
           req.onsuccess = function() {
             var contact = req.result[0];
@@ -496,6 +546,9 @@ suite('vCard parsing settings', function() {
               assert.strictEqual(b64Photo,
                VCFReader.utils.parseDataUri(r.result).value);
               assert.strictEqual('image/bmp', contact.photo[0].type);
+              // No thumbnailImage was created because the thumbnail is equal
+              // to the blob image
+              assert.equal(1, contact.photo.length);
               done();
             });
           };
@@ -509,7 +562,7 @@ suite('vCard parsing settings', function() {
         reader.onerror = stub();
 
         reader.process(function import_finish(result) {
-          assert.equal(3, result.length);
+          assert.equal(4, result.length);
           var req = navigator.mozContacts.find();
           req.onsuccess = function() {
             var contact = req.result[1];
@@ -530,13 +583,103 @@ suite('vCard parsing settings', function() {
         reader.onerror = stub();
 
         reader.process(function import_finish(result) {
-          assert.equal(3, result.length);
+          assert.equal(4, result.length);
           var req = navigator.mozContacts.find();
           req.onsuccess = function() {
             var contact = req.result[2];
             assert.ok(typeof contact.photo, 'undefined');
             done();
           };
+        });
+      });
+    });
+    test('- vcard 2.1 with embedded photo in multiple lines', function(done) {
+      initializeVCFReader('vcard_21_photo.vcf', function(reader) {
+        reader.onread = stub();
+        reader.onimported = stub();
+        reader.onerror = stub();
+
+        reader.process(function import_finish(result) {
+          assert.equal(4, result.length);
+          var req = navigator.mozContacts.find();
+          req.onsuccess = function() {
+            var contact = req.result[3];
+            toDataUri(contact.photo[0], function(r) {
+              assert.strictEqual(b64Photo,
+               VCFReader.utils.parseDataUri(r.result).value);
+              assert.strictEqual('image/bmp', contact.photo[0].type);
+              done();
+            });
+          };
+        });
+      });
+    });
+    test('- vcard 2.1 with embedded photo generates thumbnail', function(done) {
+      var fakeThumbnail = 'thumbnail create correctly';
+      this.sinon.stub(utils, 'thumbnailImage', function(blob, callback) {
+        callback(fakeThumbnail);
+      });
+      initializeVCFReader('vcard_21_photo.vcf', function(reader) {
+        reader.onread = stub();
+        reader.onimported = stub();
+        reader.onerror = stub();
+
+        reader.process(function import_finish(result) {
+          assert.equal(4, result.length);
+          var contact = result[3];
+          assert.equal(2, contact.photo.length);
+          assert.equal(fakeThumbnail, contact.photo[1]);
+          done();
+        });
+      });
+    });
+    test('- vcard 2.1 with DQUOTE character', function(done) {
+      initializeVCFReader('vcard_21_dquote.vcf', function(reader) {
+        reader.onread = stub();
+        reader.onimported = stub();
+        reader.onerror = stub();
+        reader.process(function import_finish(result) {
+          assert.equal(1, result.length);
+          done();
+        });
+      });
+    });
+    test('- vcard parser must return id of matched contact', function(done) {
+      // Force the matcher to find a contact with a known id
+      var matchStub = sinon.stub(window.Matcher, 'match',
+       function(contact, type, cbs) {
+        cbs.onmatch([]);
+      });
+      var mergeStub = sinon.stub(window.contacts, 'adaptAndMerge',
+       function (contact, matches, cbs) {
+        cbs.success({id: 1});
+      });
+      initializeVCFReader('vcard_21.vcf', function(reader) {
+        reader.onread = stub();
+        reader.onimported = stub();
+        reader.onerror = stub();
+        reader.process(function import_finish(result) {
+          sinon.assert.calledOnce(matchStub);
+          sinon.assert.calledOnce(mergeStub);
+          assert.isNotNull(result);
+          assert.ok(Array.isArray(result));
+          assert.equal(result.length, 1);
+          assert.equal(result[0].id, 1);
+          matchStub.restore();
+          mergeStub.restore();
+          done();
+        });
+      });
+    });
+    test('- vcard with fields with empty values', function(done) {
+      initializeVCFReader('vcard_undefined.vcf', function(reader) {
+        reader.onread = stub();
+        reader.onimported = stub();
+        reader.onerror = stub();
+        reader.process(function(result) {
+          assert.equal(result.length, 1);
+          assert.ok(!result[0].org);
+          done();
         });
       });
     });

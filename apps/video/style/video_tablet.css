@@ -7,18 +7,26 @@ body {
   background-color: #1c2124;
 }
 
-#player-view.disabled #videoControls{
+#player-view.disabled .video-controls {
   pointer-events: none;
 }
 
-body:not(.pick-activity) #thumbnail-list-view header,
+/**
+ * 1. COMPLEX: Scoped style-sheets within <gaia-header>
+ *    trump all other rules. !important is required
+ *    for an app to over-ride the default appearance
+ *    of content within the custom-element. This may
+ *    change when we get `:host` and `:content` selectors
+ *    in shadow-dom.
+ */
+body:not(.pick-activity) gaia-header.thumbnails-list,
 #thumbnail-list-title {
-  display: inherit;
+  display: inherit !important; /* 1 */
 }
 
 /* app name field is shown at non-pick mode and list view */
 body.pick-activity #thumbnail-list-title {
-  display: none;
+  display: none !important; /* 1 */
 }
 
 /* moves thumbnails down to 5rem for thumbnail list title showing */
@@ -52,24 +60,20 @@ body.pick-activity #thumbnails>li:last-child {
   border: 0;
 }
 
+.player-controls-button {
+  color: #FFFFFF;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  transition: none;
+}
+
 /* player-view of background */
 #player-view {
   background-color: #1c2124;
 }
 
 /* play/pause button */
-#play {
-  background: none;
-  height: 100%;
-  position: absolute;
-  border: none;
-  padding: 0;
-  margin: 0;
-  top: 0;
-  left: 0;
-  z-index: 20;
-}
-
 #play:before {
   border: 0;
 }
@@ -207,24 +211,42 @@ footer {
   margin-bottom: 1rem;
 }
 
-.layout-selection #thumbnail-select-view,
-.layout-list #thumbnail-list-view,
-.layout-fullscreen-player #fullscreen-tool-bar {
+.layout-selection .thumbnails-select,
+.layout-list .thumbnails-list {
   display: block;
 }
 
-/* we don't need to show fullscreen-tool-bar in pick mode */
-body.pick-activity #fullscreen-tool-bar {
+/**
+ * 1. COMPLEX: Scoped style-sheets within <gaia-header>
+ *    trump all other rules. !important is required
+ *    for an app to over-ride the default appearance
+ *    of content within the custom-element. This may
+ *    change when we get `:host` and `:content` selectors
+ *    in shadow-dom.
+ */
+.layout-fullscreen-player .large-only {
+  display: block !important; /* 1 */
+}
+
+/* we don't need to show toolbar buttons in pick mode */
+body.pick-activity .single-delete-button,
+body.pick-activity .single-share-button,
+body.pick-activity .single-info-button {
   display: none;
 }
 
 @media (orientation: landscape) {
 
   /* panels of selection mode */
-  .layout-selection #thumbnail-list-view,
+  .layout-selection .thumbnails-list {
+    display: none !important; /* 1 */
+  }
+
   .layout-selection #switch-fullscreen,
   .layout-selection #player-view > *,
-  .layout-selection #fullscreen-tool-bar {
+  .layout-selection .single-delete-button,
+  .layout-selection .single-share-button,
+  .layout-selection .single-info-button {
     display: none;
   }
   /* show player-view for displaying background image, but all decendants are
@@ -239,11 +261,16 @@ body.pick-activity #fullscreen-tool-bar {
     display: block;
   }
 
-  .layout-list #thumbnail-select-view,
+  .layout-list .thumbnails-select {
+    display: none !important; /* 1 */
+  }
+
   .layout-list #switch-fullscreen,
-  .layout-list #videoControls #videoActionBar,
-  .layout-list #videoControls #close,
-  .layout-list #fullscreen-tool-bar {
+  .layout-list .video-controls #videoActionBar,
+  .layout-list .video-controls #close,
+  .layout-list .single-delete-button,
+  .layout-list .single-share-button,
+  .layout-list .single-info-button {
     display: none;
   }
 
@@ -252,16 +279,19 @@ body.pick-activity #fullscreen-tool-bar {
     display: block;
   }
 
-  .layout-fullscreen-player #thumbnail-select-view,
-  .layout-fullscreen-player #thumbnail-list-view,
+  .layout-fullscreen-player .thumbnails-list,
+  .layout-fullscreen-player .thumbnails-select {
+    display: none !important; /* 1 */
+  }
+
   .layout-fullscreen-player #thumbnails,
-  .layout-fullscreen-player #videoControls #videoActionBar {
+  .layout-fullscreen-player .video-controls #videoActionBar {
     display: none;
   }
 
   /* left pane size */
-  #thumbnail-select-view,
-  #thumbnail-list-view,
+  .thumbnails-select,
+  .thumbnails-list,
   #thumbnails {
     left: 0;
     width: 40rem;
@@ -318,13 +348,6 @@ body.pick-activity #fullscreen-tool-bar {
     background: url(images/tablet_section_divider.png) no-repeat left;
   }
 
-
-  /* position */
-  /* the videoActionBar is not shown and videoBar should be moved to bottom */
-  #player-view #videoControls #videoBar {
-    bottom: 0;
-  }
-
   #fullscreen-button {
     background-image: url(images/tablet_fullscreen.png);
     background-size: 4.6rem;
@@ -341,7 +364,7 @@ body.pick-activity #fullscreen-tool-bar {
   }
 
   /* disable video controls when selected */
-  .layout-selection #videoControls {
+  .layout-selection .video-controls {
     pointer-events: none;
   }
 
@@ -375,10 +398,6 @@ body.pick-activity #fullscreen-tool-bar {
 
   .layout-list #duration-text {
     width: 5rem;
-  }
-
-  .layout-fullscreen-player #play {
-    width: 20rem;
   }
 
   .layout-fullscreen-player #timeSlider {
@@ -451,8 +470,8 @@ body.pick-activity #fullscreen-tool-bar {
   }
 
   /* left pane size */
-  body.pick-activity #thumbnail-select-view,
-  body.pick-activity #thumbnail-list-view,
+  body.pick-activity .thumbnails-select,
+  body.pick-activity .thumbnails-list,
   body.pick-activity #thumbnails {
     left: 0;
     width: 100%;
@@ -537,38 +556,37 @@ body.pick-activity #fullscreen-tool-bar {
   }
 
   /* selection mode */
-  .layout-selection #thumbnail-list-view,
+  .layout-selection .thumbnails-list {
+    display: none !important; /* 1 */
+  }
+
   .layout-selection #player-view {
     display: none;
   }
 
   /* list mode */
-  .layout-list #thumbnail-select-view,
+  .layout-list .thumbnails-select {
+    display: none !important; /* 1 */
+  }
+
   .layout-list #player-view {
     display: none;
   }
 
   /* player mode / fullscreen-player mode */
-  .layout-fullscreen-player #thumbnail-select-view,
-  .layout-fullscreen-player #thumbnail-list-view,
-  .layout-fullscreen-player #thumbnails,
-  .layout-fullscreen-player #videoControls #videoActionBar {
-    display: none;
+  .layout-fullscreen-player .thumbnails-select,
+  .layout-fullscreen-player .thumbnails-list {
+    display: none !important; /* 1 */
   }
 
-  /* the videoActionBar is not shown and videoBar should be moved to bottom */
-  #player-view #videoControls #videoBar {
-    bottom: 0;
+  .layout-fullscreen-player #thumbnails,
+  .layout-fullscreen-player .video-controls #videoActionBar {
+    display: none;
   }
 
   /* spinner is only valid for tablet and landscape mode */
   #spinner-overlay {
     display: none;
-  }
-
-  /* video controls */
-  .layout-fullscreen-player #play {
-    width: 14rem;
   }
 
   .layout-fullscreen-player #timeSlider {
@@ -643,7 +661,7 @@ body.pick-activity #fullscreen-tool-bar {
 
   .thumbnail .details .after {
     color: #FFFFFF;
-  }  
+  }
 
   .thumbnail .details .title {
     font-size: 2.6rem;

@@ -1,11 +1,10 @@
-/* -*- Mode: js; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- /
-/* vim: set shiftwidth=2 tabstop=2 autoindent cindent expandtab: */
-
 /* global MessageDB */
 
 'use strict';
 
-requireApp('wappush/js/messagedb.js');
+require('/shared/js/event_dispatcher.js');
+
+require('/js/messagedb.js');
 
 suite('MessageDB', function() {
   var messages = {
@@ -92,164 +91,237 @@ suite('MessageDB', function() {
       id: 'http://www.mozilla.org',
       action: 'signal-high',
       text: 'check this out'
+    },
+    sl: {
+      type: 'text/vnd.wap.sl',
+      sender: '+31641600986',
+      serviceId: 0,
+      timestamp: '8',
+      href: 'http://www.mozilla.org'
     }
   };
 
-  teardown(function(done) {
-    MessageDB.clear(done);
+  setup(function(done) {
+    MessageDB.clear().then(done, done);
+  });
+
+  teardown(function() {
+    MessageDB.offAll();
   });
 
   suite('storing and retrieving messages', function() {
-    test('message is stored', function(done) {
-      MessageDB.put(messages.current,
-        function putSuccess(status) {
-          assert.equal(status, 'new');
+    var onNewStub;
 
-          MessageDB.retrieve(messages.current.timestamp,
-            function retrieveSuccess(message) {
-              done(function checks() {
-                assert.equal(message.type, messages.current.type);
-                assert.equal(message.sender, messages.current.sender);
-                assert.equal(message.serviceId, messages.current.serviceId);
-                assert.equal(message.href, messages.current.href);
-                assert.equal(message.text, messages.current.text);
-              });
-            });
-        });
+    setup(function() {
+      MessageDB.on('new', onNewStub = this.sinon.stub());
     });
 
-    test('message is removed after retrieval', function(done) {
-      MessageDB.put(messages.current,
-        function putSuccess(status) {
-          MessageDB.retrieve(messages.current.timestamp,
-            function retrieveSuccess(message) {
-              MessageDB.retrieve(messages.current.timestamp,
-                function retrieveSuccess(message) {
-                  done(function checks() {
-                    assert.equal(message, null);
-                  });
-                });
-            });
-        });
+    test('message is stored', function(done) {
+      MessageDB.put(messages.current).then(function() {
+        return MessageDB.retrieve(messages.current.timestamp);
+      }).then(function(message) {
+        sinon.assert.calledOnce(onNewStub);
+        sinon.assert.calledWith(onNewStub, message);
+        assert.equal(message.type, messages.current.type);
+        assert.equal(message.sender, messages.current.sender);
+        assert.equal(message.serviceId, messages.current.serviceId);
+        assert.equal(message.href, messages.current.href);
+        assert.equal(message.text, messages.current.text);
+      }).then(done, done);
+    });
+
+    test('non-SI message is stored', function(done) {
+      MessageDB.put(messages.sl).then(function() {
+        return MessageDB.retrieve(messages.sl.timestamp);
+      }).then(function(message) {
+        sinon.assert.calledOnce(onNewStub);
+        sinon.assert.calledWith(onNewStub, message);
+        assert.equal(message.type, messages.sl.type);
+        assert.equal(message.sender, messages.sl.sender);
+        assert.equal(message.serviceId, messages.sl.serviceId);
+        assert.equal(message.href, messages.sl.href);
+      }).then(done, done);
     });
   });
 
   suite('handling multiple messages', function() {
+    var onNewStub;
+
+    setup(function() {
+      MessageDB.on('new', onNewStub = this.sinon.stub());
+    });
+
     test('storing multiple messages with the same si-id', function(done) {
-      MessageDB.put(messages.low, function putSuccess(status_low) {
-        MessageDB.put(messages.medium, function putSuccess(status_medium) {
-          MessageDB.put(messages.high, function putSuccess(status_high) {
-            MessageDB.retrieve(messages.low.timestamp,
-              function retrieveSuccess(low) {
-                MessageDB.retrieve(messages.medium.timestamp,
-                  function retrieveSuccess(medium) {
-                    MessageDB.retrieve(messages.high.timestamp,
-                      function retrieveSuccess(high) {
-                        done(function checks() {
-                          assert.equal(status_low, 'new');
-                          assert.equal(low.id, messages.low.id);
-                          assert.equal(low.action, messages.low.action);
-                          assert.equal(status_medium, 'new');
-                          assert.equal(medium.id, messages.medium.id);
-                          assert.equal(medium.action, messages.medium.action);
-                          assert.equal(status_high, 'new');
-                          assert.equal(high.id, 'http://www.mozilla.org');
-                          assert.equal(high.action, messages.high.action);
-                        });
-                      });
-                  });
-              });
-          });
-        });
-      });
+      var results = {};
+
+      MessageDB.put(messages.low).then(function(message) {
+        return MessageDB.put(messages.medium);
+      }).then(function(message) {
+        return MessageDB.put(messages.high);
+      }).then(function(message) {
+        return MessageDB.retrieve(messages.low.timestamp);
+      }).then(function(message) {
+        results.low = message;
+        return MessageDB.retrieve(messages.medium.timestamp);
+      }).then(function(message) {
+        results.medium = message;
+        return MessageDB.retrieve(messages.high.timestamp);
+      }).then(function(message) {
+        results.high = message;
+
+        sinon.assert.calledThrice(onNewStub);
+        assert.equal(onNewStub.args[0][0], messages.low);
+        assert.equal(results.low.id, messages.low.id);
+        assert.equal(results.low.action, messages.low.action);
+        assert.equal(onNewStub.args[1][0], messages.medium);
+        assert.equal(results.medium.id, messages.medium.id);
+        assert.equal(results.medium.action, messages.medium.action);
+        assert.equal(onNewStub.args[2][0], messages.high);
+        assert.equal(results.high.id, messages.high.id);
+        assert.equal(results.high.action, messages.high.action);
+      }).then(done, done);
     });
   });
 
   suite('out-of-order message handling', function() {
+    var onNewStub;
+    var onDiscardedStub;
+    var onUpdatedStub;
+
+    setup(function() {
+      MessageDB.on('new', onNewStub = this.sinon.stub());
+      MessageDB.on('update', onUpdatedStub = this.sinon.stub());
+      MessageDB.on('discard', onDiscardedStub = this.sinon.stub());
+    });
+
     test('message is updated by newer message', function(done) {
-      MessageDB.put(messages.current,
-        function putSuccess(status) {
-          MessageDB.put(messages.newer,
-            function putSuccess(status) {
-              assert.equal(status, 'updated');
+      var results = {};
 
-              MessageDB.retrieve(messages.newer.timestamp,
-                function retrieveSuccess(message) {
-                  assert.equal(message.text, messages.newer.text);
-
-                  MessageDB.retrieve(messages.current.timestamp,
-                    function retrieveSuccess(message) {
-                      done(function checks() {
-                        assert.equal(message, null);
-                      });
-                    });
-                });
-            });
-        });
+      MessageDB.put(messages.current).then(function() {
+        sinon.assert.calledOnce(onNewStub);
+        sinon.assert.calledWith(onNewStub, messages.current);
+        return MessageDB.put(messages.newer);
+      }).then(function() {
+        sinon.assert.calledOnce(onUpdatedStub);
+        sinon.assert.calledWith(onUpdatedStub, messages.newer);
+        return MessageDB.retrieve(messages.newer.timestamp);
+      }).then(function(message) {
+        results.timestamp = message.timestamp;
+        results.text = message.text;
+        assert.equal(results.timestamp, messages.current.timestamp);
+        assert.equal(results.text, messages.newer.text);
+      }).then(done, done);
     });
 
     test('old message is discarded', function(done) {
-      MessageDB.put(messages.current,
-        function putSuccess(status) {
-          MessageDB.put(messages.older,
-            function putSuccess(status) {
-              assert.equal(status, 'discarded');
-
-              MessageDB.retrieve(messages.older.timestamp,
-                function retrieveSuccess(message) {
-                  done(function checks() {
-                    assert.equal(message, null);
-                  });
-                });
-            });
-        });
+      MessageDB.put(messages.current).then(function() {
+        sinon.assert.calledOnce(onNewStub);
+        sinon.assert.calledWith(onNewStub, messages.current);
+        return MessageDB.put(messages.older);
+      }).then(function() {
+        sinon.assert.calledOnce(onDiscardedStub);
+        sinon.assert.calledWith(onDiscardedStub, messages.older);
+        return MessageDB.retrieve(messages.older.timestamp);
+      }).then(function() {
+        assert(false, 'The promise should be rejected');
+      }, function() {}).then(done, done);
     });
   });
 
   suite('message actions', function() {
+    var onDeletedStub;
+    var onDiscardedStub;
+
+    setup(function() {
+      MessageDB.on('delete', onDeletedStub = this.sinon.stub());
+      MessageDB.on('discard', onDiscardedStub = this.sinon.stub());
+    });
+
     test('delete action removes all message with same id', function(done) {
-      MessageDB.put(messages.current,
-        function putSuccess() {
-          MessageDB.put(messages.delete,
-            function putSuccess(status) {
-              MessageDB.retrieve(messages.current.timestamp,
-                function retrieveSuccess(message) {
-                  done(function checks() {
-                    assert.equal(status, 'discarded');
-                    assert.equal(message, null);
-                  });
-                });
-            });
-        });
+      MessageDB.put(messages.current).then(function() {
+        return MessageDB.put(messages.delete);
+      }).then(function() {
+        return MessageDB.retrieve(messages.current.timestamp);
+      }).then(function() {
+        assert(false, 'The promise should be rejected');
+      }, function() {}).then(done, done);
     });
 
     test('delete action messages are never stored', function(done) {
-      MessageDB.put(messages.delete, function putSuccess(status) {
-        MessageDB.retrieve(messages.delete.timestamp,
-          function retrieveSuccess(message) {
-            done(function checks() {
-              assert.equal(status, 'discarded');
-              assert.equal(message, null);
-            });
-          });
-      });
+      MessageDB.put(messages.delete).then(function() {
+        return MessageDB.retrieve(messages.delete.timestamp);
+      }).then(function() {
+        assert(false, 'The promise should be rejected');
+      }, function() {
+        sinon.assert.calledOnce(onDiscardedStub);
+        sinon.assert.calledWith(onDiscardedStub, messages.delete);
+      }).then(done, done);
+    });
+
+    test('delete action messages dispatch a \'deleted\' event',
+    function(done) {
+      MessageDB.put(messages.current).then(function() {
+        return MessageDB.put(messages.delete);
+      }).then(function() {
+        sinon.assert.calledOnce(onDeletedStub);
+        sinon.assert.calledWith(onDeletedStub, messages.current);
+      }).then(done, done);
     });
 
     test('old delete action is ignored', function(done) {
-      MessageDB.put(messages.current,
-        function putSuccess(status) {
-          MessageDB.put(messages.old_delete,
-            function putSuccess(status) {
-              assert.equal(status, 'discarded');
+      MessageDB.put(messages.current).then(function() {
+        return MessageDB.put(messages.old_delete);
+      }).then(function() {
+        sinon.assert.notCalled(onDeletedStub);
+        return MessageDB.retrieve(messages.current.timestamp);
+      }).then(function(message) {
+        sinon.assert.calledOnce(onDiscardedStub);
+        sinon.assert.calledWith(onDiscardedStub, messages.old_delete);
+        assert.ok(message);
+      }).then(done, done);
+    });
+  });
 
-              MessageDB.retrieve(messages.current.timestamp,
-                function retrieveSuccess(message) {
-                  done(function checks() {
-                    assert.ok(message);
-                  });
-                });
-            });
-        });
+  suite('deleting messages', function() {
+    var onDeletedStub;
+
+    setup(function() {
+      MessageDB.on('delete', onDeletedStub = this.sinon.stub());
+    });
+
+    test('delete messages by timestamp', function(done) {
+      MessageDB.put(messages.low).then(function(status) {
+        return MessageDB.put(messages.medium);
+      }).then(function(status) {
+        return MessageDB.put(messages.high);
+      }).then(function(status) {
+        return MessageDB.deleteByTimestamp(messages.low.timestamp);
+      }).then(function() {
+        return MessageDB.deleteByTimestamp(messages.medium.timestamp);
+      }).then(function() {
+        return MessageDB.deleteByTimestamp(messages.high.timestamp);
+      }).then(function() {
+        return MessageDB.retrieve(messages.low.timestamp);
+      }).then(function() {
+        assert(false, 'The promise should be rejected');
+      }, function() {
+        return MessageDB.retrieve(messages.medium.timestamp);
+      }).then(function() {
+        assert(false, 'The promise should be rejected');
+      }, function() {
+        return MessageDB.retrieve(messages.high.timestamp);
+      }).then(function() {
+        assert(false, 'The promise should be rejected');
+      }, function() {}).then(done, done);
+    });
+
+    test('a \'deleted\' event is dispatched', function(done) {
+      MessageDB.put(messages.current).then(function() {
+        return MessageDB.deleteByTimestamp(messages.current.timestamp);
+      }).then(function() {
+        sinon.assert.calledOnce(onDeletedStub);
+        sinon.assert.calledWith(onDeletedStub, messages.current);
+      }).then(done, done);
     });
   });
 });

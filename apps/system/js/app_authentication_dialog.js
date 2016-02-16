@@ -1,5 +1,4 @@
 'use strict';
-/* global System */
 
 (function(exports) {
   var _id = 0;
@@ -22,7 +21,7 @@
       this);
   }
 
-  AppAuthenticationDialog.prototype.__proto__ = window.BaseUI.prototype;
+  AppAuthenticationDialog.prototype = Object.create(window.BaseUI.prototype);
 
   AppAuthenticationDialog.prototype.CLASS_NAME = 'AuthenticationDialog';
 
@@ -67,9 +66,9 @@
     };
 
     this.elementClasses = [
-      'http-authentication', 'http-username-input', 'http-password-input',
+      'http-username-input', 'http-password-input',
       'http-authentication-message', 'http-authentication-ok',
-      'http-authentication-cancel', 'title'
+      'http-authentication-cancel', 'http-authentication-header'
     ];
 
     this.elementClasses.forEach(function createElementRef(name) {
@@ -83,36 +82,30 @@
    * @memberof AppAuthenticationDialog.prototype
    */
   AppAuthenticationDialog.prototype.view = function aad_view() {
-    return '<div class="authentication-dialog" ' +
-            'id="' + this.CLASS_NAME + this.instanceID + '">' +
-            '<div role="dialog" ' +
-            'class="authentication-dialog-http-authentication ' +
-            'generic-dialog" >' +
-            '<div class="authentication-dialog-message-container inner">' +
-              '<h3 class="authentication-dialog-title"></h3>' +
-              '<p>' +
-                '<span ' +
-                'class="authentication-dialog-http-authentication-message">' +
-                '</span>' +
-              '</p>' +
-              '<p>' +
-                '<span data-l10n-id="username">Username</span>' +
-                '<input class="authentication-dialog-http-username-input" ' +
-                'type="text" />' +
-                '<span data-l10n-id="password">Password</span>' +
-                '<input class="authentication-dialog-http-password-input" ' +
-                'type="password" />' +
-              '</p>' +
-            '</div>' +
-            '<menu data-items="2">' +
-              '<button ' +
-              'class="authentication-dialog-http-authentication-cancel" ' +
-              'data-l10n-id="cancel">Cancel</button>' +
-              '<button class="authentication-dialog-http-authentication-ok ' +
-              'affirmative" data-l10n-id="login">Login</button>' +
-            '</menu>' +
-          '</div>' +
-        '</div>';
+    var id = this.CLASS_NAME + this.instanceID;
+
+    return `<section class="authentication-dialog skin-organic" id="${id}"
+      role="region">
+      <gaia-header action="close"
+        class="authentication-dialog-http-authentication-header">
+        <button class="authentication-dialog-http-authentication-cancel">
+        </button>
+        <h1 data-l10n-id="sign-in-to-website"></h1>
+        <button class="authentication-dialog-http-authentication-ok"
+        data-l10n-id="login"></button>
+      </gaia-header>
+      <span class="authentication-dialog-http-authentication-message">
+      </span>
+      <label>
+        <span data-l10n-id="username"></span>
+        <input type="text" class="authentication-dialog-http-username-input" />
+      </label>
+      <label>
+        <span data-l10n-id="password"></span>
+        <input type="password"
+               class="authentication-dialog-http-password-input" />
+      </label>
+    </section>`;
   };
 
   /**
@@ -120,8 +113,17 @@
    * @memberof AppAuthenticationDialog.prototype
    */
   AppAuthenticationDialog.prototype.handleEvent = function(evt) {
-    System.debug(' AAD>> got event: ' + evt.type);
+    this.debug(' AAD>> got event: ' + evt.type);
     evt.preventDefault();
+    evt.stopPropagation();
+
+    // We don't want to show the auth dialog when we are trying to fetch
+    // the favicon. Check bug 1180330.
+    if (evt.detail.path && evt.detail.path.indexOf('favicon.ico') > -1) {
+      evt.detail.cancel();
+      return;
+    }
+
     this._event = evt;
     if (!this._injected) {
       this.render();
@@ -138,8 +140,8 @@
     function aad__registerEvents() {
       this.elements.httpAuthenticationOk.
         addEventListener('click', this.confirmHandler.bind(this));
-      this.elements.httpAuthenticationCancel.
-        addEventListener('click', this.cancelHandler.bind(this));
+      this.elements.httpAuthenticationHeader.
+        addEventListener('action', this.cancelHandler.bind(this));
     };
 
   /**
@@ -161,10 +163,12 @@
     var evt = this._event;
     var elements = this.elements;
     this.element.classList.add('visible');
-    elements.httpAuthentication.classList.add('visible');
-    System.debug(' AAD>> showing');
-    elements.title.textContent = evt.detail.host;
-    elements.httpAuthenticationMessage.textContent = evt.detail.realm;
+    this.debug(' AAD>> showing');
+    document.l10n.setAttributes(
+      elements.httpAuthenticationMessage,
+      'http-authentication-message2',
+      {host: evt.detail.host}
+    );
     elements.httpUsernameInput.value = '';
     elements.httpPasswordInput.value = '';
   };
@@ -176,9 +180,8 @@
   AppAuthenticationDialog.prototype.hide = function aad_hide() {
     this.elements.httpUsernameInput.blur();
     this.elements.httpPasswordInput.blur();
-    this.elements.httpAuthentication.classList.remove('visible');
     this.element.classList.remove('visible');
-    System.debug(' AAD>> hided');
+    this.debug(' AAD>> hided');
   };
 
   /**

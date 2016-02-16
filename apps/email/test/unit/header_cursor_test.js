@@ -1,3 +1,6 @@
+'use strict';
+/* global testConfig */
+
 requireApp('email/js/alameda.js');
 requireApp('email/test/config.js');
 
@@ -15,10 +18,11 @@ suite('HeaderCursor', function() {
   suiteSetup(function(done) {
     testConfig({ done: done }, [
       'evt',
-      'header_cursor'
-    ], function(_evt, HeaderCursor) {
+      'header_cursor',
+      'model_create',
+    ], function(_evt, HeaderCursor, mc) {
       evt = _evt;
-      headerCursor = HeaderCursor.cursor;
+      headerCursor = new HeaderCursor(mc.defaultModel);
       CurrentMessage = HeaderCursor.CurrentMessage;
     });
   });

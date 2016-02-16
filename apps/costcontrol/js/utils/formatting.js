@@ -12,20 +12,18 @@ var Formatting = (function() {
     return Math.floor((a.getTime() - b.getTime()) / DAY);
   }
 
-  function getFormattedDate(timestamp, format) {
-    var dateFormatter = new window.navigator.mozL10n.DateTimeFormat();
-    var formatted = dateFormatter.localeFormat(timestamp, format);
-    return formatted;
+  function getFormattedDate(timestamp, formatter) {
+    return formatter.format(timestamp);
   }
 
-  function formatTime(timestamp, format) {
+  function formatTime(timestamp, formatter) {
     if (!timestamp) {
       return _('never');
     }
 
     var now = new Date(), then = new Date(timestamp);
-    if (format) {
-      return getFormattedDate(then, format);
+    if (formatter) {
+      return getFormattedDate(then, formatter);
     }
 
     var date, time;
@@ -37,10 +35,10 @@ var Formatting = (function() {
       date = _('yesterday');
 
     } else {
-      date = getFormattedDate(timestamp, '%a');
+      date = getFormattedDate(timestamp, Formatting.formatters.shortWeekday);
     }
 
-    time = getFormattedDate(timestamp, _('shortTimeFormat'));
+    time = getFormattedDate(timestamp, Formatting.formatters.shortTime);
     return _('day-hour-format', {
       day: date,
       time: time
@@ -160,7 +158,9 @@ var Formatting = (function() {
 
     // Interval
     fragment.appendChild(
-      timeElement(Formatting.formatTime(timestampA, _('short-date-format')))
+      timeElement(
+        Formatting.formatTime(timestampA, Formatting.formatters.shortDate)
+      )
     );
     fragment.appendChild(document.createTextNode(' – '));
     fragment.appendChild(timeElement(Formatting.formatTime(timestampB)));
@@ -171,6 +171,7 @@ var Formatting = (function() {
     // Right now the activity for telephony is computed in milliseconds
     return Math.ceil(activity.calltime / 60000);
   }
+  
   return {
     getFormattedDate: getFormattedDate,
     /*
@@ -206,6 +207,35 @@ var Formatting = (function() {
     formatTimeHTML: formatTimeHTML,
 
     // Given the API information compute the human friendly minutes
-    computeTelephonyMinutes: computeTelephonyMinutes
+    computeTelephonyMinutes: computeTelephonyMinutes,
+
+    formatters: {}
   };
+
 }());
+
+
+function setFormatters() {
+  const locales = navigator.languages;
+  Formatting.formatters.longDate = Intl.DateTimeFormat(locales, {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric'
+  });
+  Formatting.formatters.shortDate = Intl.DateTimeFormat(locales, {
+    month: 'short',
+    day: 'numeric',
+  });
+  Formatting.formatters.shortTime = Intl.DateTimeFormat(locales, {
+    hour12: navigator.mozHour12,
+    hour: 'numeric',
+    minute: 'numeric'
+  });
+  Formatting.formatters.shortWeekday = Intl.DateTimeFormat(locales, {
+    weekday: 'short'
+  });
+}
+
+setFormatters();
+window.addEventListener('languagechange', setFormatters, false);
+window.addEventListener('timeformatchange', setFormatters, false);

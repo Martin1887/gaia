@@ -1,6 +1,5 @@
-/* -*- Mode: js; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- /
-/* vim: set shiftwidth=2 tabstop=2 autoindent cindent expandtab: */
 'use strict';
+/* global Service */
 
 (function(exports) {
 
@@ -19,8 +18,11 @@
   var SecureWindowManager = function() {
     this.initElements();
     this.initEvents();
+    Service.request('registerHierarchy', this);
+    Service.registerState('isActive', this);
   };
   SecureWindowManager.prototype = {
+    name: 'SecureWindowManager',
 
     /**
      * @memberof SecureWindowManager#
@@ -51,12 +53,47 @@
       killAnimation: 'immediate',
       listens: ['secure-killapps',
                 'secure-closeapps',
-                'secure-modeon',
-                'secure-modeoff',
                 'secure-appcreated',
+                'secure-appopened',
                 'secure-appterminated',
-                'secure-apprequestclose'
+                'secure-apprequestclose',
+                'permissiondialoghide',
+                'sleepmenuhide',
                ]
+    }
+  };
+
+  SecureWindowManager.prototype.HIERARCHY_MANAGER = 'SecureWindowManager';
+
+  SecureWindowManager.prototype.setHierarchy = function(active) {
+    if (this.states.activeApp) {
+      this.states.activeApp.setVisibleForScreenReader(active);
+    }
+  };
+  SecureWindowManager.prototype.setFocus = function(active) {
+    if (!this.states.activeApp) {
+      return false;
+    }
+    if (active) {
+      this.states.activeApp.focus();
+    }
+    return true;
+  };
+  SecureWindowManager.prototype.getActiveWindow = function() {
+    return this.isActive() ? this.states.activeApp : null;
+  };
+  SecureWindowManager.prototype._handle_home = function() {
+    if (0 !== Object.keys(this.states.runningApps).length) {
+      this.elements.screen.classList.remove('secure-app');
+      this.softKillApps();
+    }
+    return true;
+  };
+  SecureWindowManager.prototype.respondToHierarchyEvent = function(evt) {
+    if (this['_handle_' + evt.type]) {
+      return this['_handle_' + evt.type](evt);
+    } else {
+      return true;
     }
   };
 
@@ -66,9 +103,6 @@
    * @listens secure-closeapps - means to close remain apps. It's similar to
    *                             the event above, but would show the closing
    *                             animation.
-   * @listens secure-modeon - the system would be in the secure mode by locking
-   *                          or other reasons.
-   * @listens secure-modeoff - the system now is not in the secure mode anymore.
    * @listens secure-appcreated - when a secure app got created, it would fire
    *                              this event.
    * @listens secure-appterminated - when a secure app got really closed, it
@@ -90,14 +124,8 @@
           break;
         case 'secure-closeapps':
           if (0 !== Object.keys(this.states.runningApps).length) {
-            this.killApps();
+            this.softKillApps();
           }
-          break;
-        case 'secure-modeon':
-          this.resume();
-          break;
-        case 'secure-modeoff':
-          this.suspend();
           break;
         case 'secure-appcreated':
           app = evt.detail;
@@ -107,6 +135,10 @@
           } else {
             console.error('Disallowed app: ', app.instanceID);
           }
+          break;
+        case 'secure-appopened':
+          this.elements.screen.classList.add('secure-app');
+          this.setFocus(true);
           break;
         case 'secure-appterminated':
           app = evt.detail;
@@ -126,41 +158,13 @@
           // Default animation or kill animation.
           app.close(this.states.killMode ?
               this.configs.killAnimation : null);
+          this.elements.screen.classList.remove('secure-app');
+          break;
+        case 'sleepmenuhide':
+        case 'permissiondialoghide':
+          this.setFocus(true); // See bug 1224281
           break;
       }
-    };
-
-  /**
-   * Remove event listeners except the resuming (`secure-modeon`)
-   * event.
-   *
-   * @private
-   * @this {SecureWindowManager}
-   * @memberof SecureWindowManager
-   */
-  SecureWindowManager.prototype.suspend =
-    function swm_suspend() {
-      this.suspendEvents();
-
-      // Will suspend all events.
-      // But we also want to leave a single entry to resume.
-      self.addEventListener('secure-modeon', this);
-    };
-
-  /**
-   * Hook event listeners back and don't care the resuming
-   * (`secure-modeon`) event anymore.
-   *
-   * @private
-   * @this {SecureWindowManager}
-   * @memberof SecureWindowManager
-   */
-  SecureWindowManager.prototype.resume =
-    function swm_resume() {
-      this.initEvents();
-
-      // To prevent duplicated init.
-      self.removeEventListener('secure-modeon', this);
     };
 
   /**
@@ -192,20 +196,6 @@
     };
 
   /**
-   * Remove listeners of events this manager interested in.
-   *
-   * @private
-   * @this {SecureWindowManager}
-   * @memberof SecureWindowManager
-   */
-  SecureWindowManager.prototype.suspendEvents =
-    function swm_suspendEvents() {
-      this.configs.listens.forEach((function _unbind(ename) {
-        self.removeEventListener(ename, this);
-      }).bind(this));
-    };
-
-  /**
    * Close/Kill all manager secure apps, which has been registered
    * while they're created and opened.
    *
@@ -221,6 +211,21 @@
     function swm_killApps() {
       for (var origin in this.states.runningApps) {
         this.states.runningApps[origin].kill();
+      }
+    };
+
+  /**
+   * Soft kill all running secure apps. This allows the secure apps
+   * enough time to gracefully shutdown before being killed.
+   *
+   * @private
+   * @this {SecureWindowManager}
+   * @memberof SecureWindowManager
+   */
+  SecureWindowManager.prototype.softKillApps =
+    function swm_softKillApps() {
+      for (var origin in this.states.runningApps) {
+        this.states.runningApps[origin].softKill();
       }
     };
 
@@ -288,7 +293,7 @@
    */
   SecureWindowManager.prototype.deactivateApp =
     function swm_deactivateApp() {
-      if (this.states.activeApp.isFullScreen()) {
+      if (this.states.activeApp && this.states.activeApp.isFullScreen()) {
         this.elements.screen.classList.remove('fullscreen-app');
       }
       this.states.activeApp = null;
@@ -309,6 +314,15 @@
         return false;
       }
       return true;
+    };
+
+  SecureWindowManager.prototype.isActive =
+    function swm_isActive() {
+      if (!this.states.activeApp) {
+        return false;
+      } else {
+        return this.states.activeApp.isActive();
+      }
     };
 
   /** @exports SecureWindowManager */

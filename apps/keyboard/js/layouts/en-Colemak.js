@@ -1,9 +1,11 @@
 Keyboards['en-Colemak'] = {
   label: 'English - Colemak',
+  shortLabel: 'En',
   menuLabel: 'Colemak',
   imEngine: 'latin',
-  types: ['text', 'url', 'email'],
+  types: ['text', 'url', 'email', 'password'],
   autoCorrectLanguage: 'en_us',
+  lang: 'en-US',
   alt: {
     a: 'áàâäåãāæ',
     c: 'çćč',

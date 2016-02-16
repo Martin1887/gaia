@@ -1,40 +1,34 @@
 <element name="improveBrowserOS-chooseFeedback" extends="section">
   <template>
 
-  	<header>
-      <a href="#improveBrowserOS"><span class="icon icon-back">back</span></a>
-      <h1 data-l10n-id="sendFeedbackTitle">Submit Your Feedback</h1>
-    </header>
+  	<gaia-header action="back" data-href="#improveBrowserOS">
+      <h1 data-l10n-id="sendFeedbackTitle"></h1>
+    </gaia-header>
+
     <div>
       <ul>
         <li class="description">
-          <p data-l10n-id="feedback-description">
-              Your feedback will help us to improve Firefox OS.
-          </p>
+          <p data-l10n-id="feedback-description"></p>
         </li>
         <li>
           <ul class="feedback-choose" id="feedback-mood">
             <li id="feedback-happy">
               <span class="feedback-choose-face"></span>
-              <span data-l10n-id="feedback-happy" class="feedback-face-caption">
-                Happy
-              </span>
+              <span data-l10n-id="feedback-happy" class="feedback-face-caption"></span>
             </li>
             <li id="feedback-sad">
               <span class="feedback-choose-face"></span>
-              <span data-l10n-id="feedback-sad" class="feedback-face-caption">
-                Sad
-              </span>
+              <span data-l10n-id="feedback-sad" class="feedback-face-caption"></span>
             </li>
           </ul>
         </li>
         <li>
-          <span class="feedback-feel" data-l10n-id="feedback-mood-description">
-            How do you feel?
-          </span>
+          <span class="feedback-feel" data-l10n-id="feedback-mood-description"></span>
         </li>
       </ul>
     </div>
-    <panel data-path="panels/choose_feedback/panel"></panel>
+
+    <panel data-path="panels/feedback_choose/panel"></panel>
+
   </template>
 </element>

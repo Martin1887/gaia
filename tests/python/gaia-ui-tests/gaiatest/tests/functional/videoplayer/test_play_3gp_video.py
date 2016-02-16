@@ -13,7 +13,7 @@ class TestPlay3GPVideo(GaiaTestCase):
         GaiaTestCase.setUp(self)
 
         # add video to storage
-        self.push_resource('VID_0001.3gp', destination='DCIM/100MZLLA')
+        self.push_resource('VID_counter.3gp')
 
     def test_play_3gp_video(self):
         """https://moztrap.mozilla.org/manage/case/2478/"""
@@ -27,6 +27,11 @@ class TestPlay3GPVideo(GaiaTestCase):
 
         first_video_name = video_player.first_video_name
 
+        self.assertEqual('none', self.data_layer.current_audio_channel)
+        # See bug 1109203, current_audio_channel switches context to the system
+        # app, so we need to return it back to the displayed app
+        self.apps.switch_to_displayed_app()
+
         # Click on the first video.
         fullscreen_video = video_player.tap_first_video_item()
 
@@ -35,7 +40,7 @@ class TestPlay3GPVideo(GaiaTestCase):
         time.sleep(2)
 
         # We cannot tap the toolbar so let's just enable it with javascript
-        fullscreen_video.display_controls_with_js()
+        fullscreen_video.show_controls()
 
         # The elapsed time > 0:00 denote the video is playing
         zero_time = time.strptime('00:00', '%M:%S')
@@ -43,3 +48,5 @@ class TestPlay3GPVideo(GaiaTestCase):
 
         # Check the name too. This will only work if the toolbar is visible.
         self.assertEqual(first_video_name, fullscreen_video.name)
+
+        self.assertEqual('content', self.data_layer.current_audio_channel)

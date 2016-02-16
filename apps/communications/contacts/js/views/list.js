@@ -1,15 +1,22 @@
 'use strict';
 /* global ActivityHandler */
+/* global Cache */
 /* global ConfirmDialog */
 /* global ContactPhotoHelper */
 /* global Contacts */
 /* global fb */
+/* global ICEStore */
+/* global ICEData */
 /* global ImageLoader */
 /* global LazyLoader */
 /* global monitorTagVisibility */
 /* global Normalizer */
-/* global PerformanceTestingHelper */
+/* global Loader */
 /* global utils */
+/* global ContactsService */
+/* global HeaderUI */
+/* global ICEView */
+/* global Search */
 
 var contacts = window.contacts || {};
 contacts.List = (function() {
@@ -25,6 +32,7 @@ contacts.List = (function() {
       imgLoader = null,
       needImgLoaderReload = false,
       orderByLastName = null,
+      defaultImage = null,
       photoTemplate,
       headers = {},
       loadedContacts = {},
@@ -48,11 +56,20 @@ contacts.List = (function() {
       groupList = null,
       searchList = null,
       currentlySelected = 0,
+      currentFilterList = null,
+      numFilteredContacts = 0,
       selectNavigationController = null,
       boundSelectAction4Select = null,
       // Dictionary by contact id with the rows on screen
       rowsOnScreen = {},
-      selectedContacts = {};
+      selectedContacts = {},
+      _notifyRowOnScreenCallback = null,
+      _notifyRowOnScreenUUID = null,
+      // Will keep an array of contacts ids, not higger than
+      // 2 contacts with current implementation
+      iceContacts = [],
+      iceGroup = null,
+      forceICEGroupToBeHidden = false;
 
   // Possible values for the configuration field 'defaultContactsOrder'
   // config.json file (see bug 841693)
@@ -77,9 +94,13 @@ contacts.List = (function() {
       'ABCDEFGHIJKLMNOPQRSTUVWXYZ' +          // Roman
       'ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ' +            // Greek
       'АБВГДЂЕЁЖЗИЙЈКЛЉМНЊОПРСТЋУФХЦЧЏШЩЭЮЯ'; // Cyrillic (Russian + Serbian)
-    var order = { 'favorites': 0 };
+    var order = {
+      'ice': 0,
+      'favorites': 1
+    };
+    var presetsLength = Object.keys(order).length;
     for (var i = 0; i < letters.length; i++) {
-      order[letters[i]] = i + 1;
+      order[letters[i]] = i + presetsLength;
     }
     order.und = i + 1;
     return order;
@@ -100,7 +121,7 @@ contacts.List = (function() {
     monitor && monitor.pauseMonitoringMutations();
     renderLoadedContact(row, id);
     updateRowStyle(row, true);
-    renderPhoto(row, id);
+    renderPhoto(row, id, false, group);
     updateSingleRowSelection(row, id);
 
     // Since imgLoader.reload() causes sync reflows we only want to make this
@@ -110,6 +131,11 @@ contacts.List = (function() {
     if (imgLoader && needImgLoaderReload) {
       needImgLoaderReload = false;
       imgLoader.reload();
+    }
+
+    if (_notifyRowOnScreenUUID === id) {
+      _notifyRowOnScreenCallback(row);
+      _clearNotifyRowOnScreenByUUID();
     }
 
     monitor && monitor.resumeMonitoringMutations(false);
@@ -154,7 +180,10 @@ contacts.List = (function() {
 
     monitor && monitor.pauseMonitoringMutations();
     updateRowStyle(row, false);
-    releasePhoto(row);
+    var search = window.Search;
+    if (!search || !search.isInSearchMode()) {
+      releasePhoto(row);
+    }
     monitor && monitor.resumeMonitoringMutations(false);
   };
 
@@ -171,12 +200,16 @@ contacts.List = (function() {
     groupsList = document.getElementById('groups-list');
     groupsList.addEventListener('click', onClickHandler);
 
-    initOrder();
+    initConfiguration();
 
     // Test code calls init() directly, so we may have to reset.
     if (reset) {
       resetDom();
     }
+
+    createPhotoTemplate();
+
+    Cache.oneviction = onCacheEvicted;
   };
 
   function hide() {
@@ -194,16 +227,17 @@ contacts.List = (function() {
     }
   }
 
-  // Define a source adapter object to pass to contacts.Search.
+  // Define a source adapter object to pass to Search.
   //
-  // Since multiple, separate apps use contacts.Search its important for
+  // Since multiple, separate apps use Search its important for
   // the search code to function independently.  This adapter object allows
   // the search module to access the app's contacts without knowing anything
   // about our DOM structure.
   //
-  // Only provide access to non-favorite nodes.  If we include favorites then
-  // search may see out-of-order and duplicate values.
-  var NODE_SELECTOR = 'section:not(#section-group-favorites) > ol > li';
+  // Sections marked as 'non searchable' will not display the fields, in this
+  // case the favourites sections and the ICE section, since will provide
+  // duplicate results.
+  var NODE_SELECTOR = 'section:not([data-nonsearchable="true"]) > ol > li';
   var searchSource = {
     getNodes: function() {
       var domNodes = contactsListView.querySelectorAll(NODE_SELECTOR);
@@ -225,7 +259,7 @@ contacts.List = (function() {
     },
 
     // While loading we expect to feed search more nodes via the
-    // contacts.Search.appendNodes() function.
+    // Search.appendNodes() function.
     expectMoreNodes: function() {
       return loading;
     },
@@ -239,7 +273,7 @@ contacts.List = (function() {
       updateRowStyle(node, true);
       updateSingleRowSelection(node, id);
       var out = node.cloneNode(true);
-      renderPhoto(out, id, true);
+      renderPhoto(out, id, true, node.dataset.group);
       return out;
     },
 
@@ -259,7 +293,7 @@ contacts.List = (function() {
   }; // searchSource
 
   var initSearch = function initSearch(callback) {
-    contacts.Search.init(searchSource, true, selectNavigationController);
+    Search.init(searchSource, true, selectNavigationController);
 
     if (callback) {
       callback();
@@ -278,22 +312,37 @@ contacts.List = (function() {
     };
 
     utils.alphaScroll.init(params);
+    if (iceContacts.length > 0) {
+      utils.alphaScroll.showGroup('ice');
+    } else {
+      utils.alphaScroll.hideGroup('ice');
+    }
   };
 
   var scrollToCb = function scrollCb(domTarget, group) {
     if (domTarget.offsetTop > 0) {
       scrollable.scrollTop = domTarget.offsetTop;
+    } else if (group === 'search-container') {
+      scrollable.scrollTop = 0;
     }
   };
 
-  var load = function load(contacts, forceReset) {
+  var load = function load(contacts, forceReset, callback) {
     var onError = function() {
       console.log('ERROR Retrieving contacts');
     };
 
+    if (forceReset) {
+      needImgLoaderReload = true;
+    }
+
     var complete = function complete() {
-      initOrder(function onInitOrder() {
-        getContactsByGroup(onError, contacts);
+      initConfiguration(function onInitConfiguration() {
+        getContactsByGroup(onError, contacts).then(() => {
+          if (typeof callback === 'function') {
+            callback();
+          } // Used in unit testing.
+        });
       });
     };
 
@@ -318,9 +367,18 @@ contacts.List = (function() {
     return out;
   }
 
-  var initOrder = function initOrder(callback) {
+  /**
+   * Reads configuration values setup at build time to change
+   * behaviour of the contacts list.
+   * Receives a callback as parameter to call once the
+   * parameters have been setup.
+   * Also tries to save from the external file to faster cookie
+   * values after the first file read.
+   * @param (Function) callback function to be invoked after process
+   */
+  var initConfiguration = function initConfiguration(callback) {
     callback = callback || function() {};
-    if (orderByLastName !== null) {
+    if (orderByLastName !== null && defaultImage !== null) {
       callback();
       return;
     }
@@ -328,6 +386,7 @@ contacts.List = (function() {
     var config = utils.cookie.load();
     if (config) {
       orderByLastName = config.order;
+      defaultImage = config.defaultImage;
       callback();
       return;
     }
@@ -335,12 +394,20 @@ contacts.List = (function() {
     utils.config.load('/contacts/config.json').then(function ready(configData) {
       orderByLastName = (configData.defaultContactsOrder ===
                 ORDER_BY_FAMILY_NAME ? true : false);
-      utils.cookie.update({order: orderByLastName});
+      defaultImage = configData.defaultImage === true;
+      utils.cookie.update({
+        order: orderByLastName,
+        defaultImage: defaultImage
+      });
       callback();
     }, function configError(err) {
         window.console.error('Error while reading configuration file');
         orderByLastName = utils.cookie.getDefault('order');
-        utils.cookie.update({order: orderByLastName});
+        defaultImage = utils.cookie.getDefault('defaultImage');
+        utils.cookie.update({
+          order: orderByLastName,
+          defaultImage: defaultImage
+        });
         callback();
     });
   };
@@ -353,13 +420,22 @@ contacts.List = (function() {
     var title = document.createElement('header');
     title.id = 'group-' + group;
     title.className = 'hide';
+    if (group === 'favorites') {
+      letteredSection.dataset.nonsearchable = true;
+    }
 
     var letterAbbr = document.createElement('abbr');
+    var letterAbbrId = 'contacts-listed-abbr-' + group;
     letterAbbr.setAttribute('title', 'Contacts listed ' + group);
+    letterAbbr.setAttribute('aria-hidden', true);
+    letterAbbr.id = letterAbbrId;
     letterAbbr.textContent = letter;
+    title.setAttribute('aria-labelledby', letterAbbrId);
     title.appendChild(letterAbbr);
 
     var contactsContainer = document.createElement('ol');
+    contactsContainer.setAttribute('role', 'listbox');
+    contactsContainer.setAttribute('aria-labelledby', letterAbbrId);
     contactsContainer.id = 'contacts-list-' + group;
     contactsContainer.dataset.group = group;
     letteredSection.appendChild(title);
@@ -449,6 +525,7 @@ contacts.List = (function() {
       container.dataset.fbUid = fbUid;
     }
     container.className = 'contact-item';
+    container.setAttribute('role', 'option');
     var timestampDate = contact.updated || contact.published || new Date();
     container.dataset.updated = timestampDate.getTime();
 
@@ -517,6 +594,7 @@ contacts.List = (function() {
       order = getStringToBeOrdered(contact);
       group = getGroupNameByOrderString(order);
     }
+    ph.setAttribute('role', 'option');
     ph.dataset.group = group;
 
     // NOTE: We want the group value above to be based on the raw data so that
@@ -573,6 +651,7 @@ contacts.List = (function() {
       ele = document.createElement('p');
     }
     ele.classList.add('contact-text');
+    var bdi = document.createElement('bdi');
     var givenName = (contact.givenName && contact.givenName[0]) || '';
     var familyName = (contact.familyName && contact.familyName[0]) || '';
 
@@ -583,25 +662,25 @@ contacts.List = (function() {
     }
 
     if (orderByLastName) {
-      ele.appendChild(document.createTextNode(givenName + ' '));
-      ele.appendChild(createStrongTag(familyName));
+      bdi.appendChild(document.createTextNode(givenName + ' '));
+      bdi.appendChild(createStrongTag(familyName));
     } else {
-      ele.appendChild(createStrongTag(givenName));
-      ele.appendChild(document.createTextNode(' ' + familyName));
+      bdi.appendChild(createStrongTag(givenName));
+      bdi.appendChild(document.createTextNode(' ' + familyName));
     }
+
+    ele.appendChild(bdi);
     return ele;
   }
 
   function createSocialMark() {
     var span = document.createElement('span');
     span.classList.add('icon-social');
-
     return span;
   }
 
   function markAsFb(ele) {
     ele.classList.add('icon-fb');
-
     return ele;
   }
 
@@ -609,49 +688,30 @@ contacts.List = (function() {
   function loadChunk(chunk) {
     var nodes = [];
     for (var i = 0, n = chunk.length; i < n; ++i) {
-      if (i === getRowsPerPage()) {
-        notifyAboveTheFold();
-      }
 
       var newNodes = appendToLists(chunk[i]);
       nodes.push.apply(nodes, newNodes);
     }
 
-    if (i < getRowsPerPage()) {
-      notifyAboveTheFold();
-    }
-
     // If the search view has been activated by the user, then send newly
     // loaded contacts over to populate any in-progress search.  Nothing
     // to do if search is not actived.
-    if (contacts.Search && contacts.Search.appendNodes) {
-      contacts.Search.appendNodes(nodes);
+    if (window.Search && Search.appendNodes) {
+      Search.appendNodes(nodes);
     }
   }
 
-  // Time until we show the first contacts "above the fold" is a very
-  // important usability metric.  Emit an event when as soon as we reach
-  // this point so tools can measure the time.
-  var notifiedAboveTheFold = false;
-  function notifyAboveTheFold() {
-    if (notifiedAboveTheFold) {
-      return;
-    }
-
-    notifiedAboveTheFold = true;
-    PerformanceTestingHelper.dispatch('above-the-fold-ready');
-
-    // Don't bother loading the monitor until we have rendered our
-    // first screen of contacts.  This avoids the overhead of
-    // onscreen() calls when adding those first contacts.
-    var vm_file = '/shared/js/tag_visibility_monitor.js';
-    LazyLoader.load([vm_file], function() {
-      var scrollMargin = ~~(getViewHeight() * 1.5);
-      // NOTE: Making scrollDelta too large will cause janky scrolling
-      //       due to bursts of onscreen() calls from the monitor.
-      var scrollDelta = ~~(scrollMargin / 15);
-      monitor = monitorTagVisibility(scrollable, 'li', scrollMargin,
-                                     scrollDelta, onscreen, offscreen);
+  function loadVisibilityMonitor() {
+    return new Promise((resolve) => {
+      LazyLoader.load('/shared/js/tag_visibility_monitor.js', () => {
+        var scrollMargin = ~~(getViewHeight() * 1.5);
+        // NOTE: Making scrollDelta too large will cause janky scrolling
+        //       due to bursts of onscreen() calls from the monitor.
+        var scrollDelta = ~~(scrollMargin / 15);
+        monitor = monitorTagVisibility(scrollable, 'li', scrollMargin,
+                                       scrollDelta, onscreen, offscreen);
+        resolve();
+      });
     });
   }
 
@@ -662,7 +722,11 @@ contacts.List = (function() {
         viewHeight = config.viewHeight;
       } else {
         viewHeight = scrollable.getBoundingClientRect().height;
-        utils.cookie.update({viewHeight: viewHeight});
+        // If the groups list is hiden, we'll get no height and so we don't
+        // store it.
+        if (viewHeight) {
+          utils.cookie.update({viewHeight: viewHeight});
+        }
       }
     }
     return viewHeight;
@@ -719,13 +783,19 @@ contacts.List = (function() {
     return nodes;
   }
 
-  //Adds each contact to its group container
+  // Adds each contact to its group container
   function appendToList(contact, group, ph) {
     ph = ph || createPlaceholder(contact, group);
     var list = getGroupList(group);
 
-    // If above the fold for list, render immediately
-    if (list.children.length < getRowsPerPage()) {
+    var inCache = Cache.active &&
+                  (Cache.hasContact(contact.id)) ||
+                  (group == 'favorites' && Cache.hasFavorite(contact.id));
+
+    // If above the fold for list or if the contact is in the cache,
+    // create the DOM node. If the contact is in the cache and has not
+    // changed, we won't append it to the DOM.
+    if (list.children.length < getRowsPerPage() || inCache) {
       renderContact(contact, ph);
     }
 
@@ -735,7 +805,58 @@ contacts.List = (function() {
 
     loadedContacts[contact.id][group] = contact;
 
-    list.appendChild(ph);
+    var previousNode;
+
+    // If the contact is in the cache but nothing changed, we bail out.
+    // Otherwise, we remove the DOM node and let the flow continue so we
+    // can append the new node with the updated information.
+    if (inCache) {
+      var cachedContact;
+      if (group == 'favorites') {
+        cachedContact = Cache.getFavorite(contact.id);
+      } else {
+        cachedContact = Cache.getContact(contact.id);
+      }
+      // We don't add Facebook information while creating the placeholder,
+      // this information is added afterwards in renderFbData.
+      // Because of that, we need to get rid of the additional information
+      // from the cached contact before checking against the original contact
+      // information.
+      if (contact.category &&
+          contact.category.indexOf('facebook') != -1) {
+        var separator =
+          '<p class="contact-text"><span class="icon-social';
+        cachedContact = cachedContact.split(separator)[0];
+      }
+
+      if (cachedContact === ph.innerHTML) {
+        ph = null;
+        return;
+      }
+      var toReplace = list.querySelector('li[data-uuid=\"' +
+                                         contact.id + '\"]');
+      previousNode = toReplace.nextElementSibling;
+      toReplace.parentNode.removeChild(toReplace);
+    }
+
+    // It is possible that a new contact has been added while the app was
+    // closed. In that case, we need to check if the new contact needs
+    // to be inserted in the first chunk so it is later cached.
+    if (Cache.active && (Cache.updated < contact.updated)) {
+      renderOrderString(ph, contact);
+      if (Cache.lastOrderString > ph.dataset.order) {
+        var listElements = list.getElementsByTagName('li');
+        var insertAt = searchNodes(listElements, ph.dataset.order);
+        previousNode = listElements[insertAt];
+      }
+    }
+
+    if (previousNode) {
+      list.insertBefore(ph, previousNode);
+    } else {
+      list.appendChild(ph);
+    }
+
     if (list.children.length === 1) {
       showGroupByList(list);
       setRowsPerPage(list.firstChild);
@@ -753,20 +874,160 @@ contacts.List = (function() {
     // and we didn't unselected any other contact
     selectAllPending = false;
 
-    // If there are zero contacts, then we still need to notify
-    // that the initial screen has been displayed.  This is a no-op
-    // if the notification has already happened.
-    notifyAboveTheFold();
+    loadVisibilityMonitor();
 
-    PerformanceTestingHelper.dispatch('startup-path-done');
-    fb.init(function contacts_init() {
-      if (fb.isEnabled) {
-        Contacts.loadFacebook(NOP_FUNCTION);
+    // Replacing old message 'startup-path-done'
+    utils.PerformanceHelper.loadEnd();
+    LazyLoader.load([
+     '/contacts/js/fb/fb_init.js',
+     '/contacts/js/fb_loader.js',
+     '/shared/js/contacts/utilities/image_loader.js'
+    ], () => {
+      fb.init(function contacts_init() {
+        if (fb.isEnabled) {
+          Contacts.loadFacebook(NOP_FUNCTION);
+        }
+        lazyLoadImages();
+        loaded = true;
+      });
+    });
+
+    loadICE().then(() => {
+      if (Cache.enabled) {
+        // Once we've rendered the whole list, we can check if what we added
+        // in the cached chunk is valid.
+        verifyAndRebuildCache();
       }
-      lazyLoadImages();
-      loaded = true;
     });
   };
+
+  /**
+   * Check if we have ICE contacts information
+   */
+  var ICELoaded;
+  function loadICE() {
+    if (ICELoaded) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      LazyLoader.load([
+        '/contacts/js/utilities/ice_data.js',
+        '/shared/js/contacts/utilities/ice_store.js'],
+       function() {
+        ICEStore.getContacts().then((ids) => {
+          ICELoaded = true;
+          displayICEIndicator(ids);
+          resolve();
+        });
+        ICEStore.onChange(function() {
+          ICEStore.getContacts().then(displayICEIndicator);
+        });
+      });
+    });
+  }
+
+  function displayICEIndicator(ids) {
+    if (!iceGroup) {
+      buildICEGroup();
+    } else {
+      addICEListeners();
+    }
+
+    if (!ids || !ids.length) {
+      hideICEGroup();
+      return;
+    }
+
+    iceContacts = ids;
+
+    showICEGroup();
+  }
+
+  function toggleICEGroup(show) {
+    if (!iceGroup) {
+      return;
+    }
+
+    forceICEGroupToBeHidden = !(!!show);
+    forceICEGroupToBeHidden ? hideICEGroup() : showICEGroup();
+  }
+
+  function showICEGroup() {
+    // If the ICE group has been hidden programmatically by means of
+    // <toggleICEGroup> it will only be displayed again using the same
+    // mechanism regardless updates.
+    if (forceICEGroupToBeHidden) {
+      return;
+    }
+    iceGroup.classList.remove('hide');
+    utils.alphaScroll.showGroup('ice');
+  }
+
+  function hideICEGroup() {
+    iceGroup.classList.add('hide');
+    utils.alphaScroll.hideGroup('ice');
+  }
+
+  function buildICEGroup() {
+    iceGroup = document.createElement('section');
+    iceGroup.classList.add('group-section');
+    iceGroup.id = 'section-group-ice';
+    iceGroup.dataset.nonsearchable = true;
+    var list = document.createElement('ol');
+    list.dataset.group = 'ice';
+    list.id = 'contact-list-ice';
+    list.role = 'listbox';
+    var elem = document.createElement('li');
+    elem.classList.add('contact-item');
+    elem.dataset.group = 'ice';
+    var icon = document.createElement('span');
+    icon.src = '/contacts/style/images/icon_ice.png';
+    var p = document.createElement('p');
+    p.classList.add('contact-text');
+    p.setAttribute('data-l10n-id', 'ICEContactsGroup');
+
+    groupsList.insertBefore(iceGroup, groupsList.firstChild)
+              .appendChild(list).appendChild(elem);
+    elem.appendChild(icon);
+    elem.appendChild(p);
+
+    addICEListeners();
+  }
+
+  function addICEListeners() {
+    if (!Cache.active) {
+      iceGroup.addEventListener('click', onICEGroupClicked);
+    }
+
+    // Set a listener in case ice contacts are modified
+    // and we need to remove the group.
+    ICEData.listenForChanges(function(data) {
+      if (!Array.isArray(data) || data.length === 0) {
+        hideICEGroup();
+      }
+    });
+  }
+
+  function onICEGroupClicked() {
+    loadICE().then(() => {
+      LazyLoader.load('/shared/js/contacts/utilities/image_loader.js', () => {
+        Loader.view('Ice', function() {
+          // Prebuild the rows here, we have all the data to
+          // build them. Current amount of rows is 2.
+          function rowBuilder(id, node) {
+            renderLoadedContact(node, id);
+            updateRowStyle(node, true);
+            updateSingleRowSelection(node, id);
+            var out = node.cloneNode(true);
+            renderPhoto(out, id, true, out.dataset.group);
+            return out;
+          }
+          ICEView.init(iceContacts, rowBuilder, onClickHandler);
+          ICEView.showICEList();
+        });
+      });
+    });
+  }
 
   var isFavorite = function isFavorite(contact) {
     return contact.category && contact.category.indexOf('favorite') != -1;
@@ -776,7 +1037,8 @@ contacts.List = (function() {
     LazyLoader.load(['/shared/js/contacts/utilities/image_loader.js',
                      '/contacts/js/fb_resolver.js'], function() {
       if (!imgLoader) {
-        imgLoader = new ImageLoader('#groups-container', 'li');
+        imgLoader = new ImageLoader('#groups-container',
+                                    'li:not([data-group="ice"])');
         imgLoader.setResolver(fb.resolver);
       }
       imgLoader.reload();
@@ -838,26 +1100,32 @@ contacts.List = (function() {
   }
 
   // "Render" the photo by setting the img tag's dataset-src attribute to the
-  // value in our photo cache.  This in turn will allow the imgLoader to load
-  // the image once we have stopped scrolling.
-  var renderPhoto = function renderPhoto(link, id, asClone) {
+  // value in our photo cache. This in turn will allow the imgLoader
+  // to load the image once we have stopped scrolling.
+  // We set dataset-group with the group letter
+  // if the contact doesn't have photo.
+  var renderPhoto = function renderPhoto(link, id, asClone, group) {
     id = id || link.dataset.uuid;
+    var img = link.querySelector('aside > span[data-type=img]');
+
     var photo = photosById[id];
     if (!photo) {
+      if (defaultImage) {
+        renderDefaultPhoto(img, link, group);
+      }
       return;
     }
 
-    var img = link.querySelector('aside > span[data-type=img]');
     if (img) {
-      setImageURL(img, photo, asClone);
+      // Update only if we are reusing the row for a different user, or
+      // the image has been collected
+      if (link.dataset.uuid !== id || !link.dataset.src) {
+        delete img.dataset.group;
+        img.style.backgroundPosition = img.dataset.backgroundPosition || '';
+        setImageURL(img, photo, asClone);  
+      }
+      
       return;
-    }
-    if (!photoTemplate) {
-      photoTemplate = document.createElement('aside');
-      photoTemplate.className = 'pack-end';
-      img = document.createElement('span');
-      img.dataset.type = 'img';
-      photoTemplate.appendChild(img);
     }
 
     var figure = photoTemplate.cloneNode(true);
@@ -866,6 +1134,59 @@ contacts.List = (function() {
 
     link.insertBefore(figure, link.children[0]);
     return;
+  };
+
+  /**
+   * Build the template used for displaying the thumbnail
+   * image.
+   */
+  function createPhotoTemplate() {
+    if (photoTemplate) {
+      return;
+    }
+    photoTemplate = document.createElement('aside');
+    photoTemplate.setAttribute('aria-hidden', true);
+    photoTemplate.className = 'pack-end';
+    var img = document.createElement('span');
+    img.dataset.type = 'img';
+    photoTemplate.appendChild(img);
+  }
+
+  /**
+   * Renders the default image for a contact using a random
+   * position of a background image and the group letter
+   */
+  var renderDefaultPhoto =
+    function renderDefaultPhoto(img, link, group) {
+    if (!img) {
+      var figure = photoTemplate.cloneNode(true);
+      img = figure.children[0];
+
+      img.dataset.backgroundPosition = img.style.backgroundPosition;
+
+      var posH = ['left','center','right'];
+      var posV = ['top','center','bottom'];
+      var position =
+        posH[Math.floor(Math.random() * 3)] + ' ' +
+        posV[Math.floor(Math.random() * 3)];
+
+      img.style.backgroundPosition = position;
+
+      link.insertBefore(figure, link.children[0]);
+    }
+
+    // Special groups
+    if (group === 'favorites') {
+      // Recalculate group
+      var contact = loadedContacts[link.dataset.uuid][group];
+      var order = getStringToBeOrdered(contact);
+      group = getGroupNameByOrderString(order);
+    }
+    if (group === 'und') {
+      group = '#';
+    }
+    img.dataset.group = group;
+
   };
 
   // Remove the image for the given list item.  Leave the photo in our cache,
@@ -905,7 +1226,13 @@ contacts.List = (function() {
     } else {
       meta = elements[1];
     }
-    var mark = markAsFb(createSocialMark());
+
+    // We may already have added the social mark.
+    var mark = link.querySelector('span.icon-social');
+    if (!mark) {
+      mark = markAsFb(createSocialMark());
+    }
+
     var org = meta.querySelector('span.org');
     meta.insertBefore(mark, org);
     if (!contact.org || !contact.org.length) {
@@ -913,40 +1240,56 @@ contacts.List = (function() {
     } else {
       renderOrg(contact, link);
     }
+
+    // Additional Facebook data starts coming after we already
+    // rendered the list. At that point we already built the
+    // cache without this information. To avoid flashing the
+    // screen repainting it with this new information, we request
+    // a new cache refresh if we are adding the info to a node
+    // that belongs to the cache. Because we are throttling cache
+    // refresh requests, this shouldn't be too expensive.
+    // Life can be hard sometimes.
+    if (Cache.enabled && link.dataset.cache) {
+      cacheContactsList();
+    }
   }
 
   var addOrgMarkup = function addOrgMarkup(link, content) {
-    var span = document.createElement('span');
-    span.className = 'org';
+    var bdi = document.createElement('bdi');
+    bdi.className = 'org ellipsis-dir-fix';
     if (content) {
-      span.textContent = content;
+      bdi.textContent = content;
     }
     var meta = document.createElement('p');
     meta.classList.add('contact-text');
-    meta.appendChild(span);
+    meta.appendChild(bdi);
     link.appendChild(meta);
     return meta;
   };
 
   var toggleNoContactsScreen = function cl_toggleNoContacs(show) {
-    if (show && ActivityHandler.currentlyHandling) {
-      var actName = ActivityHandler.activityName;
-      if (actName == 'pick' || actName == 'update') {
+    if (show) {
+      if (!ActivityHandler.currentlyHandling) {
+        noContacts.classList.remove('hide');
+        fastScroll.classList.add('hide');
+        scrollable.classList.add('hide');
+        return;
+      }
+
+      if (ActivityHandler.currentActivityIs(['pick', 'update'])) {
         showNoContactsAlert();
         return;
       }
     }
-    if (show && !ActivityHandler.currentlyHandling) {
-      noContacts.classList.remove('hide');
-      return;
-    }
     noContacts.classList.add('hide');
+    fastScroll.classList.remove('hide');
+    scrollable.classList.remove('hide');
   };
 
   var showNoContactsAlert = function showNoContactsAlert() {
-    var msg = _('noContactsActivity');
+    var msg = 'noContactsActivity2';
     var noObject = {
-      title: _('ok'),
+      title: 'ok',
       isDanger: false,
       callback: function onNoClicked() {
         ConfirmDialog.hide();
@@ -954,97 +1297,54 @@ contacts.List = (function() {
       }
     };
 
-    Contacts.confirmDialog(null, msg, noObject);
+    ConfirmDialog.show(null, msg, noObject);
   };
 
   var getContactsByGroup = function gCtByGroup(errorCb, contacts) {
-    if (!Contacts.asyncScriptsLoaded) {
-      // delay loading if they're not there yet
-      window.addEventListener('asyncScriptsLoaded', function listener() {
-        window.removeEventListener('asyncScriptsLoaded', listener);
-
-        getContactsByGroup(errorCb, contacts);
-      });
-      return;
-    }
-    notifiedAboveTheFold = false;
-    if (contacts) {
-      if (!contacts.length) {
-        toggleNoContactsScreen(true);
+    return Contacts.asyncScriptsLoaded.then(() => {
+      if (contacts) {
+        if (!contacts.length) {
+          toggleNoContactsScreen(true);
+          dispatchCustomEvent('listRendered');
+          return;
+        }
+        toggleNoContactsScreen(false);
+        loadChunk(contacts);
+        onListRendered();
         dispatchCustomEvent('listRendered');
         return;
       }
-      toggleNoContactsScreen(false);
-      loadChunk(contacts);
-      onListRendered();
-      dispatchCustomEvent('listRendered');
-      return;
-    }
-    getAllContacts(errorCb, loadChunk);
-  };
-
-  var getContactById = function(contactID, successCb, errorCb) {
-    var options = {
-      filterBy: ['id'],
-      filterOp: 'equals',
-      filterValue: contactID
-    };
-    var request = navigator.mozContacts.find(options);
-
-    request.onsuccess = function findCallback(e) {
-      var result = e.target.result[0];
-
-      if (!fb.isFbContact(result)) {
-        successCb(result);
-        return;
-      }
-
-      var fbContact = new fb.Contact(result);
-      var fbReq = fbContact.getData();
-      fbReq.onsuccess = function() {
-        successCb(result, fbReq.result);
-      };
-      fbReq.onerror = successCb.bind(null, result);
-    }; // request.onsuccess
-
-    if (typeof errorCb === 'function') {
-      request.onerror = errorCb;
-    }
+      getAllContacts(errorCb, loadChunk);
+    });
   };
 
   var getAllContacts = function cl_getAllContacts(errorCb, successCb) {
+    if (Cache.active) {
+      headers = Cache.headers;
+      iceGroup = document.getElementById('section-group-ice');
+      iceGroup.addEventListener('click', onICEGroupClicked);
+    }
     loading = true;
-    initOrder(function onInitOrder() {
-      var sortBy = (orderByLastName === true ? 'familyName' : 'givenName');
-      var options = {
-        sortBy: sortBy,
-        sortOrder: 'ascending'
-      };
 
-      var cursor = navigator.mozContacts.getAll(options);
-      var successCb = successCb || loadChunk;
+    if (!successCb) {
+      successCb = loadChunk;
+    }
+    initConfiguration(function onInitConfiguration() {
       var num = 0;
       var chunk = [];
-      cursor.onsuccess = function onsuccess(evt) {
-        // Cancel this load operation if requested
-        if (cancelLoadCB) {
-          // XXX: If bug 870125 is ever implemented, add a cancel/stop call
-          loading = false;
-          var cb = cancelLoadCB;
-          cancelLoadCB = null;
-          return cb();
-        }
 
-        var contact = evt.target.result;
-        if (contact) {
+      ContactsService.getAllStreamed(
+        (orderByLastName === true ? 'familyName' : 'givenName'),
+        function onContact(contact) {
           chunk.push(contact);
           if (num && (num % CHUNK_SIZE === 0)) {
             successCb(chunk);
             chunk = [];
           }
           num++;
-          cursor.continue();
-        } else {
+        },
+        errorCb,
+        function onComplete() {
           if (chunk.length) {
             successCb(chunk);
           }
@@ -1054,8 +1354,7 @@ contacts.List = (function() {
           dispatchCustomEvent('listRendered');
           loading = false;
         }
-      };
-      cursor.onerror = errorCb;
+      );
     });
   };
 
@@ -1063,7 +1362,7 @@ contacts.List = (function() {
     var renderedNode = renderContact(contact);
 
     // We must render all values here because the contact is not saved in
-    // the loadedContacts hash when added one at a via refresh().  Therefore
+    // the loadedContacts hash when added one at  via refresh().  Therefore
     // we can not lazy render these values.
     renderSearchString(renderedNode, contact);
     renderOrderString(renderedNode, contact);
@@ -1074,11 +1373,19 @@ contacts.List = (function() {
     var list = getGroupList(renderedNode.dataset.group);
     addToGroup(renderedNode, list);
 
-    // If is favorite add as well to the favorite group
+    if (!loadedContacts[contact.id]) {
+      loadedContacts[contact.id] = {};
+    }
+
+    loadedContacts[contact.id][renderedNode.dataset.group] = contact;
+
+    // If it is favorite add as well to the favorite group
     if (isFavorite(contact)) {
       list = getGroupList('favorites');
+      loadedContacts[contact.id].favorites = contact;
       var cloned = renderedNode.cloneNode(true);
       cloned.dataset.group = 'favorites';
+      renderPhoto(cloned, contact.id, false, 'favorites');
       addToGroup(cloned, list);
     }
     toggleNoContactsScreen(false);
@@ -1197,13 +1504,11 @@ contacts.List = (function() {
   };
 
   var remove = function remove(id) {
-    // Nothing to do if we don't know about this contact
-    if (!(id in selectedContacts)) {
-      return;
-    }
-
     // Could be more than one item if it's in favorites
     var items = groupsList.querySelectorAll('li[data-uuid=\"' + id + '\"]');
+    if (!items || !items.length) {
+      return;
+    }
     // We have a node list, not an array, and we want to walk it
     Array.prototype.forEach.call(items, function removeItem(item) {
       var ol = item.parentNode;
@@ -1212,13 +1517,17 @@ contacts.List = (function() {
         hideGroup(ol.dataset.group);
       }
     });
-    delete photosById[id];
+    if (photosById[id]) {
+      delete photosById[id];
+    }
     var selector = 'section header:not(.hide)';
     var visibleElements = groupsList.querySelectorAll(selector);
     var showNoContacts = visibleElements.length === 0;
     toggleNoContactsScreen(showNoContacts);
 
-    delete selectedContacts[id];
+    if (selectedContacts[id] !== undefined) {
+      delete selectedContacts[id];
+    }
   };
 
   var getStringToBeOrdered = function getStringToBeOrdered(contact, display) {
@@ -1294,21 +1603,21 @@ contacts.List = (function() {
     }
 
     // Passed an ID, so look up contact
-    getContactById(idOrContact, function(contact, fbData) {
-      var enrichedContact = null;
-      if (fb.isFbContact(contact)) {
-        var fbContact = new fb.Contact(contact);
-        enrichedContact = fbContact.merge(fbData);
-      }
-      refreshContact(contact, enrichedContact, callback);
+    LazyLoader.load([
+     '/contacts/js/fb/fb_init.js',
+     '/contacts/js/fb_loader.js'
+    ], () => {
+      ContactsService.get(idOrContact, function(contact) {
+        refreshContact(contact, null, callback);
+      });
     });
   };
 
   function refreshContact(contact, enriched, callback) {
     remove(contact.id);
     addToList(contact, enriched);
-    if (contacts.Search) {
-      contacts.Search.updateSearchList(function() {
+    if (window.Search) {
+      Search.updateSearchList(function() {
         if (callback) {
           callback(contact.id);
         }
@@ -1347,6 +1656,8 @@ contacts.List = (function() {
       cancelLoadCB = resetDom.bind(null, cb);
       return;
     }
+    iceGroup = null;
+    ICELoaded = false;
     utils.dom.removeChildNodes(groupsList);
     headers = {};
     loadedContacts = {};
@@ -1415,8 +1726,8 @@ contacts.List = (function() {
     fullfiled when we select manually the contacts.
 
     If we click in select all, the promise will be resolved
-    in the future, once all contacts are fecth and filter wich
-    ones are selected.
+    in the future, once all contacts are fetched and the
+    ones selected are filtered.
   */
   var selectAction = function selectAction(action) {
     updateSelectCount(0);
@@ -1485,7 +1796,7 @@ contacts.List = (function() {
         selectAllPending = true && !loaded;
         selectAllContacts();
 
-        currentlySelected = contacts.List.total;
+        currentlySelected = contacts.List.total - numFilteredContacts;
 
         selectAllDisabled = true;
         break;
@@ -1540,23 +1851,23 @@ contacts.List = (function() {
             }
           }
           var notSelectedCount = Object.keys(notSelectedIds).length;
-          var request = navigator.mozContacts.find({});
-          request.onsuccess = function onAllContacts() {
-            request.result.forEach(function onContact(contact) {
+
+          ContactsService.getAll(function(e, contacts) {
+            if (e) {
+              self.reject();
+              return;
+            }
+            contacts.forEach(function onContact(contact) {
               if (notSelectedCount === 0 ||
                 notSelectedIds[contact.id] === undefined) {
                 self._selected.push(contact.id);
               }
             });
-
             self.resolved = true;
             if (self.successCb) {
               self.successCb(self._selected);
             }
-          };
-          request.onerror = function onError() {
-            self.reject();
-          };
+          });
         }, 0);
       },
       reject: function reject() {
@@ -1595,8 +1906,8 @@ contacts.List = (function() {
       deselectAll = document.getElementById('deselect-all');
       deselectAll.addEventListener('click', handleSelection);
 
-      selectForm.querySelector('.icon.icon-close').parentNode.
-                    addEventListener('click', exitSelectMode.bind(null, true));
+      selectForm.querySelector('#selectable-form-header').
+                    addEventListener('action', exitSelectMode.bind(null, true));
     }
 
     isDangerSelectList = options && options.isDanger;
@@ -1633,6 +1944,21 @@ contacts.List = (function() {
     }
     searchList.classList.add('selecting');
 
+    if (options && Array.isArray(options.filterList)) {
+      currentFilterList = options.filterList;
+      numFilteredContacts = 0;
+
+      currentFilterList.forEach(function(filter) {
+        groupList.classList.add(filter.containerClass);
+        searchList.classList.add(filter.containerClass);
+        numFilteredContacts += filter.numFilteredContacts;
+      });
+
+      if (contacts.List.total == numFilteredContacts) {
+        selectAll.disabled = true;
+      }
+    }
+
     updateRowsOnScreen();
 
     clearClickHandlers();
@@ -1640,8 +1966,8 @@ contacts.List = (function() {
       selectedContacts[id] = !selectedContacts[id];
       updateRowSelection([id]);
       handleSelection(null);
-      if (contacts.Search && contacts.Search.isInSearchMode()) {
-        contacts.Search.selectRow(id, selectedContacts[id]);
+      if (window.Search && Search.isInSearchMode()) {
+        Search.selectRow(id, selectedContacts[id]);
       }
     });
 
@@ -1661,11 +1987,31 @@ contacts.List = (function() {
     identify such action.
 
     Also provide a callback to be invoked when we enter in select mode.
+
+    The 'options' object allows to filter out contacts passing an array of
+    objects composed of a 'containerClass' string, which will be applied to the
+    contact list, and a 'numFilteredContacts' integer, which tells the number
+    of contacts that will be affected. As an example, to filter out FB contacts:
+
+      options = {
+        'filterList': [
+          {
+            'containerClass' : 'disable-fb-items',
+            'numFilteredContacts' : 42
+          }
+        ]
+      };
   */
   var selectFromList = function selectFromList(title, action, callback,
       navigationController, options) {
     inSelectMode = true;
     selectNavigationController = navigationController;
+
+    // As the transition duration is long, we must avoid clicking on settings
+    // buttons (bug 1050843)
+    document.getElementById('settings-button').classList.add('hide');
+    document.getElementById('settings-close').disabled = true;
+    document.getElementById('add-contact-button').classList.add('hide');
 
     if (options && options.transitionLevel === EXPORT_TRANSITION_LEVEL) {
       selectNavigationController.back(function() {
@@ -1711,7 +2057,7 @@ contacts.List = (function() {
                              'contact-text-selecting');
         row.dataset.selectStyleSet = true;
       }
-      
+
       var label = row.querySelector('label');
       if (isDangerSelectList) {
         label.classList.add('danger');
@@ -1780,6 +2126,10 @@ contacts.List = (function() {
   var exitSelectMode = function exitSelectMode(canceling) {
     isDangerSelectList = false;
 
+    document.getElementById('settings-button').classList.remove('hide');
+    document.getElementById('add-contact-button').classList.remove('hide');
+    document.getElementById('settings-close').disabled = false;
+
     selectForm.addEventListener('transitionend', function handler() {
       selectForm.removeEventListener('transitionend', handler);
       window.setTimeout(function() {
@@ -1807,6 +2157,15 @@ contacts.List = (function() {
     fastScroll.classList.remove('selecting');
     utils.alphaScroll.toggleFormat('normal');
 
+    if (Array.isArray(currentFilterList)){
+      currentFilterList.forEach(function(filter) {
+        groupList.classList.remove(filter.containerClass);
+        searchList.classList.remove(filter.containerClass);
+      });
+      currentFilterList = null;
+      numFilteredContacts = 0;
+    }
+
     updateRowsOnScreen();
 
     // Restore contact list default click handler
@@ -1824,15 +2183,226 @@ contacts.List = (function() {
     }
   };
   function updateSelectCount(count) {
-    Contacts.updateSelectCountTitle(count);
+    HeaderUI.updateSelectCountTitle(count);
   }
 
+  // Given a UUID we will call the callback function
+  // if the contact's row get displayed on the screen
+  // or is already on the screen. The callback will
+  // receive the row displayed on the screen.
+  // This method was created with testing purposes, and
+  // just tracks a single row, not multiple ones.
+  var notifyRowOnScreenByUUID = function notifyRowOnScreenByUUID(uuid,
+     callback) {
+    if (typeof callback !== 'function' || !uuid) {
+      return;
+    }
+
+    if (rowsOnScreen[uuid]) {
+      // Get the first group that is not favourites
+      var groups = Object.keys(rowsOnScreen[uuid]);
+      var group = groups.length > 1 ? groups[1] : groups[0];
+      callback(rowsOnScreen[uuid][group]);
+      _clearNotifyRowOnScreenByUUID();
+      return;
+    }
+
+    _notifyRowOnScreenCallback = callback;
+    _notifyRowOnScreenUUID = uuid;
+  };
+
+  function _clearNotifyRowOnScreenByUUID() {
+    _notifyRowOnScreenCallback = null;
+    _notifyRowOnScreenUUID = null;
+  }
+
+  // After merging one or more contacts, we need to remove all the matches
+  // except the master one from the contacts list.
+  function onContactsMerged(ids) {
+    Object.keys(ids).forEach(id => {
+      if (id in selectedContacts) {
+        remove(id);
+      }
+    });
+    Cache.evict(false /* undo applied cache */,
+                true /* instant eviction */);
+  }
+
+  window.onmessage = (e) => {
+    if (e.data.type != 'duplicate_contacts_merged' || !e.data.data) {
+      return;
+    }
+    onContactsMerged(e.data.data);
+  };
+
+  /**
+   * Cache related functionality.
+   */
+
+  function getFirstChunkCache() {
+    // Get a representation of each group holding the first chunk of contacts
+    // as objects of this form:
+    // {
+    //   elementName: <string>,
+    //   attributes: <Array>,
+    //   innerHTML: <string>
+    // }
+
+    var cache = [];
+
+    var groups = Array.prototype.slice.call(groupsList.children);
+    var contactsCount = CHUNK_SIZE;
+    var lastOrderString;
+    while (contactsCount && groups.length) {
+      var group = groups.shift();
+
+      var groupCache = {};
+      groupCache.elementName = 'section';
+      groupCache.attributes = [];
+      for (var j = 0; j < group.attributes.length; j++) {
+        groupCache.attributes.push({
+          name: group.attributes[j].nodeName,
+          value: group.attributes[j].value
+        });
+      }
+
+      var section = document.createElement('section');
+      var header = group.querySelector('header');
+      // ICE group section has no header, only <ol> child
+      if (header) {
+        section.appendChild(header.cloneNode(true));
+      }
+
+      // We only want complete contacts until we reach CHUNK_SIZE
+      var ol = group.querySelector('ol');
+      var contacts = ol.cloneNode();
+      [].forEach.call(ol.querySelectorAll('li.contact-item'), (node) => {
+        if (!contactsCount) {
+          return;
+        }
+        contactsCount--;
+
+        if (loadedContacts && loadedContacts[node.dataset.uuid]) {
+          renderOrderString(node);
+        }
+
+        node.dataset.cache = true;
+        var contact = node.cloneNode(true);
+
+        // We cannot cache the contact image, so we get rid of them.
+        var aside = contact.querySelector('aside');
+        if (aside) {
+          aside.parentNode.removeChild(aside);
+        }
+
+        contact.dataset.status = '';
+        contact.dataset.rendered = false;
+        contact.dataset.visited = false;
+
+        lastOrderString = contact.dataset.order;
+
+        contacts.appendChild(contact);
+      });
+      section.appendChild(contacts);
+
+      groupCache.innerHTML = section.innerHTML;
+      section = null;
+      cache.push(groupCache);
+    }
+
+    return {
+      cache: cache,
+      lastOrderString: lastOrderString
+    };
+  }
+
+  var cacheRequestTimer;
+  function cacheContactsList() {
+    if (inSelectMode) {
+      return;
+    }
+    // The Cache mechanism accesses localStorage.
+    // Use the following logic to cache the contact list in a
+    // moderate pattern.
+    // 1. When a request to cache the list is received, start a
+    //    timer.
+    // 2. If another request is received while the timer is
+    //    running, reset it.
+    // 3. Once the timer fires, start caching the list.
+
+    if (cacheRequestTimer) {
+      clearTimeout(cacheRequestTimer);
+    }
+
+    cacheRequestTimer = setTimeout(() => {
+      cacheRequestTimer = null;
+      Cache.firstChunk = getFirstChunkCache();
+      // Release memory taken by the old cache.
+      Cache.cleanup();
+    }, 1000);
+  }
+
+  function removeCachedContactFromList(id) {
+    remove(id);
+    // We may also need to remove it from the list of ICE contacts.
+    ICEData.load().then((contacts) => {
+      for (var i = 0; i < contacts.length; i++) {
+        if (contacts[i].id == id) {
+          ICEData.removeICEContact(contacts[i].id);
+        }
+      }
+    });
+    // We also remove it from the cache
+    Cache.removeContact(id);
+  }
+
+  function verifyAndRebuildCache() {
+    if (!Cache.active || !Cache.length) {
+      // Everything is fine.
+      cacheContactsList();
+      return;
+    }
+
+    // If there are still contacts to consume in the cache it
+    // means that these contacts are no longer part of the contacts
+    // source, but they are still in the DOM, so we need to eliminate them.
+    // This can happen if the contacts were removed while the app
+    // was closed for instance.
+    for (var id of Cache.contacts) {
+      removeCachedContactFromList(id);
+      // If the contact is also cached as a favorite contact, we don't need to
+      // try to remove it again from the DOM when processing the pending
+      // favorites. So we simply remove them from the cache (getting the
+      // contact does the deletion from the cache).
+      if (Cache.hasFavorite(id)) {
+        Cache.getFavorite(id);
+      }
+    }
+
+    // It is possible that we have favorite contacts that are in the favorites
+    // group (which is cached for being the first group) but are also outside
+    // of the first chunk. In that case, we remove them from the favorites
+    // group.
+    for (var favId of Cache.favorites) {
+      removeCachedContactFromList(favId);
+    }
+
+    // Once we cleaned up the DOM, we can create the cache again.
+    cacheContactsList();
+  }
+
+  function onCacheEvicted() {
+    cacheContactsList();
+  }
+
+  /**
+   * API
+   */
   return {
     'init': init,
     'load': load,
     'refresh': refresh,
     'refreshFb': refreshFb,
-    'getContactById': getContactById,
     'getAllContacts': getAllContacts,
     'handleClick': handleClick,
     'hide': hide,
@@ -1861,6 +2431,13 @@ contacts.List = (function() {
     },
     get isSelecting() {
       return inSelectMode;
-    }
+    },
+    'notifyRowOnScreenByUUID': notifyRowOnScreenByUUID,
+    'toggleICEGroup': toggleICEGroup,
+    // For testing purposes only
+    set ICELoaded(loaded) {
+      ICELoaded = loaded;
+    },
+    'loadVisibilityMonitor': loadVisibilityMonitor
   };
 })();

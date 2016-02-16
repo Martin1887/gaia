@@ -84,8 +84,7 @@ var DownloadUI = (function() {
     OPEN: new DownloadAction('OPEN', 'confirm'),
     SHARE: new DownloadAction('SHARE', 'confirm'),
     WALLPAPER: new DownloadAction('WALLPAPER', 'confirm'),
-    RINGTONE: new DownloadAction('RINGTONE', 'confirm'),
-    CANCEL: new DownloadAction('CANCEL', 'cancel')
+    RINGTONE: new DownloadAction('RINGTONE', 'confirm')
   };
 
   // Confirm dialog containers
@@ -121,15 +120,19 @@ var DownloadUI = (function() {
 
   function addConfirm() {
     if (confirm !== null) {
-      confirm.innerHTML = '';
-      return;
+      confirm.parentNode.removeChild(confirm);
     }
 
     confirm = document.createElement('form');
     confirm.id = 'downloadConfirmUI';
     confirm.setAttribute('role', 'dialog');
     confirm.setAttribute('data-type', 'confirm');
-    document.body.appendChild(confirm);
+    confirm.setAttribute('data-z-index-level', '100');
+
+    var screen = document.getElementById('screen');
+    var container = screen || document.body;
+
+    container.appendChild(confirm);
   }
 
   function removeConfirm() {
@@ -145,22 +148,30 @@ var DownloadUI = (function() {
   window.addEventListener('home', removeContainers);
   window.addEventListener('holdhome', removeContainers);
 
-  function createConfirm(type, req, downloads) {
-    var _ = navigator.mozL10n.get;
+  function l10n(element, l10nid, l10nargs) {
+    // First set our args.
+    if (l10nargs) {
+      element.setAttribute('data-l10n-args', JSON.stringify(l10nargs));
+    }
+    // Then localize.
+    element.setAttribute('data-l10n-id', l10nid);
+    return element;
+  }
 
+  function createConfirm(type, req, downloads) {
     addConfirm();
 
     var dialog = document.createElement('section');
 
     // Header
     var header = document.createElement('h1');
-    header.textContent = _(type.name + '_download_title');
+    l10n(header, type.name + '_download_title');
     dialog.appendChild(header);
 
     // Message
     var message = document.createElement('p');
     if (type.isPlainMessage) {
-      message.textContent = _(type.name + '_download_message');
+      l10n(message, type.name + '_download_message');
     } else {
       var args = Object.create(null);
       if (type === TYPES.DELETE_ALL) {
@@ -168,7 +179,7 @@ var DownloadUI = (function() {
       } else {
         args.name = DownloadFormatter.getFileName(downloads[0]);
       }
-      message.textContent = _(type.name + '_download_message', args);
+      l10n(message, type.name + '_download_message', args);
     }
     dialog.appendChild(message);
 
@@ -179,9 +190,8 @@ var DownloadUI = (function() {
       // Left button
       var lButton = document.createElement('button');
       lButton.type = 'button';
-      lButton.appendChild(
-        document.createTextNode(_(type.name + '_download_left_button'))
-      );
+      lButton.setAttribute('data-l10n-id',
+                           type.name + '_download_left_button');
 
       lButton.onclick = function l_cancel() {
         lButton.onclick = null;
@@ -197,9 +207,8 @@ var DownloadUI = (function() {
       rButton.classList.add(clazz);
     });
 
-    rButton.appendChild(
-      document.createTextNode(_(type.name + '_download_right_button'))
-    );
+    rButton.setAttribute('data-l10n-id',
+                         type.name + '_download_right_button');
 
     rButton.onclick = function r_confirm() {
       rButton.onclick = null;
@@ -214,16 +223,13 @@ var DownloadUI = (function() {
   }
 
   function addActionMenu() {
+    // If we have an actionMenu, empty it and re-create it.
     if (actionMenu !== null) {
-      actionMenu.innerHTML = '';
-      return;
+      document.body.removeChild(actionMenu);
     }
-
-    actionMenu = document.createElement('form');
+    actionMenu = document.createElement('gaia-menu');
     actionMenu.id = 'downloadActionMenuUI';
-    actionMenu.setAttribute('role', 'dialog');
-    actionMenu.setAttribute('data-type', 'action');
-    document.body.appendChild(actionMenu);
+    actionMenu.className = 'actions';
   }
 
   function removeActionMenu() {
@@ -231,8 +237,9 @@ var DownloadUI = (function() {
       return;
     }
 
-    actionMenu.innerHTML = '';
-    actionMenu.style.display = 'none';
+    actionMenu.hide();
+    document.body.removeChild(actionMenu);
+    actionMenu = null;
   }
 
   function createActionMenu(req, download) {
@@ -249,37 +256,29 @@ var DownloadUI = (function() {
       }
     }
 
-    actions.push(ACTIONS.CANCEL);
     doCreateActionMenu(req, fileName, actions);
   }
 
   function doCreateActionMenu(req, fileName, actions) {
-    var _ = navigator.mozL10n.get;
-
     addActionMenu();
 
     var header = document.createElement('header');
     header.textContent = fileName;
     actionMenu.appendChild(header);
 
-    var menu = document.createElement('menu');
-    menu.classList.add('actions');
-
     actions.forEach(function addActionButton(action) {
       var button = document.createElement('button');
       button.id = action.id;
-      button.textContent = _(action.title);
+      l10n(button, action.title);
       button.dataset.type = action.type;
-      menu.appendChild(button);
+      actionMenu.appendChild(button);
       button.addEventListener('click', function buttonCliked(evt) {
         button.removeEventListener('click', buttonCliked);
         req[evt.target.dataset.type](ACTIONS[evt.target.id]);
       });
     });
-
-    actionMenu.appendChild(menu);
-
-    actionMenu.style.display = 'block';
+    document.body.appendChild(actionMenu);
+    actionMenu.removeAttribute('hidden');
   }
 
   var styleSheets = [
@@ -333,7 +332,8 @@ var DownloadUI = (function() {
     window.setTimeout(function() {
       LazyLoader.load(['shared/js/mime_mapper.js',
                        'shared/js/download/download_formatter.js',
-                       'shared/style/action_menu.css'],
+                       'shared/js/component_utils.js',
+                       'shared/elements/gaia_menu/script.js'],
                       createActionMenu.call(this, req, download));
     }, 0);
 

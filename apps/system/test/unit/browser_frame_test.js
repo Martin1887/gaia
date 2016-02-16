@@ -1,3 +1,5 @@
+/* globals BrowserFrame */
+
 'use strict';
 
 /* Unit test of browser_frame.js */
@@ -29,6 +31,14 @@ suite('browser class > ', function() {
       assert.equal(b.element.getAttribute('mozapptype'), 'critical');
     });
 
+    test('mozapptype: inputmethod', function() {
+      var b = new BrowserFrame({
+        url: window.location.protocol + '//' + 'keyboard.gaiamobile.org',
+        isInputMethod: true
+      });
+      assert.equal(b.element.getAttribute('mozapptype'), 'inputmethod');
+    });
+
     test('mozapptype: other app', function() {
       var b = new BrowserFrame({
         url: window.location.protocol + '//' + 'other.gaiamobile.org'
@@ -49,6 +59,7 @@ suite('browser class > ', function() {
 
   test('expect system message', function() {
     var b = new BrowserFrame({
+      isSystemMessage: true,
       url: window.location.protocol + '//' + 'other.gaiamobile.org',
       manifestURL: window.location.protocol +
         '//' + 'other.gaiamobile.org/manifest.webapp'
@@ -57,9 +68,33 @@ suite('browser class > ', function() {
       'expecting-system-message');
 
     var b2 = new BrowserFrame({
-      url: window.location.protocol + '//' + 'other.gaiamobile.org'
+      url: window.location.protocol + '//' + 'other.gaiamobile.org',
+      manifestURL: window.location.protocol +
+        '//' + 'other.gaiamobile.org/manifest.webapp'
     });
     assert.isNull(b2.element.getAttribute('expecting-system-message'));
+
+    var b3 = new BrowserFrame({
+      isSystemMessage: true,
+      url: window.location.protocol + '//' + 'other.gaiamobile.org'
+    });
+    assert.isNull(b3.element.getAttribute('expecting-system-message'));
+  });
+
+  test('inputmethod app attributes', function() {
+    var b = new BrowserFrame({
+      url: window.location.protocol + '//' + 'keyboard.gaiamobile.org',
+      isInputMethod: true
+    });
+    assert.equal(b.element.getAttribute('mozpasspointerevents'), 'true');
+    assert.equal(b.element.getAttribute('ignoreuserfocus'), 'true');
+  });
+
+  test('private browsing attribute', function() {
+    var b = new BrowserFrame({
+      url: 'http://mozilla.org',
+      isPrivate: true
+    });
+    assert.equal(b.element.getAttribute('mozprivatebrowsing'), 'true');
   });
 });
-

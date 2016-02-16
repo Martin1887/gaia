@@ -6,12 +6,8 @@ var serverHelper = require('./lib/server_helper');
 
 marionette('email message list edit mode', function() {
   var app;
-
   var client = marionette.client({
-    settings: {
-      // disable keyboard ftu because it blocks our display
-      'keyboard.ftu.enabled': false
-    }
+    desiredCapabilities: { raisesAccessibilityExceptions: false }
   });
 
   var server = serverHelper.use(null, this);

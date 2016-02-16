@@ -8,8 +8,7 @@
  */
 define(function(require) {
   var array = require('array'),
-      evt = require('evt'),
-      model = require('model');
+      evt = require('evt');
 
   function makeListener(type, obj) {
     return function() {
@@ -21,31 +20,20 @@ define(function(require) {
   /**
    * @constructor
    */
-  function HeaderCursor() {
+  function HeaderCursor(model) {
     // Inherit from evt.Emitter.
     evt.Emitter.call(this);
+
+    this.model = model;
+
+    // Local binding since it is passed as an evt listener.
+    this.onLatestFolder = this.onLatestFolder.bind(this);
 
     // Need to distinguish between search and nonsearch slices,
     // since there can be two cards that both are listening for
     // slice changes, but one is for search output, and one is
     // for nonsearch output. The message_list is an example.
     this.searchMode = 'nonsearch';
-
-    // Listen for some slice events to do some special work.
-    this.on('messages_splice', this.onMessagesSplice.bind(this));
-    this.on('messages_remove', this.onMessagesSpliceRemove.bind(this));
-    this.on('messages_complete', function() {
-      // Consumers, like message_list, always want their 'complete' work
-      // to fire, but by default the slice removes the complete handler
-      // at the end. So rebind on each call here.
-      if (this.messagesSlice) {
-        this.messagesSlice.oncomplete = makeListener('complete', this);
-      }
-    }.bind(this));
-
-    // Listen to model for folder changes.
-    this.onLatestFolder = this.onLatestFolder.bind(this);
-    model.latest('folder', this.onLatestFolder);
   }
 
   HeaderCursor.prototype = evt.mix({
@@ -68,6 +56,33 @@ define(function(require) {
      * @type {Array}
      */
     sliceEvents: ['splice', 'change', 'status', 'remove', 'complete'],
+
+    _inited: false,
+
+    /**
+     * Sets up the event wiring and will trigger the slice creation by listening
+     * to model 'folder' changes. Want to wait until there are views that need
+     * to use the header_cursor for showing UI, to avoid extra work, like in the
+     * background sync case.
+     */
+    init: function() {
+      this._inited = true;
+
+      // Listen for some slice events to do some special work.
+      this.on('messages_splice', this.onMessagesSplice.bind(this));
+      this.on('messages_remove', this.onMessagesSpliceRemove.bind(this));
+      this.on('messages_complete', function() {
+        // Consumers, like message_list, always want their 'complete' work
+        // to fire, but by default the slice removes the complete handler
+        // at the end. So rebind on each call here.
+        if (this.messagesSlice) {
+          this.messagesSlice.oncomplete = makeListener('complete', this);
+        }
+      }.bind(this));
+
+      // Listen to model for folder changes.
+      this.model.latest('folder', this.onLatestFolder);
+    },
 
     /**
      * The messageReader told us it wanted to advance, so we should go ahead
@@ -116,6 +131,8 @@ define(function(require) {
      */
     checkExpectingMessageSuid: function(eventIfNotFound) {
       var messageSuid = this.expectingMessageSuid;
+      var model = this.model;
+
       if (!messageSuid || !model.folder || model.folder.type !== 'inbox') {
         return;
       }
@@ -188,7 +205,7 @@ define(function(require) {
       // a change in the current account, before this listener is called.
       // So skip this work if no foldersSlice, this method will be called
       // again soon.
-      if (!model.foldersSlice) {
+      if (!this.model.foldersSlice) {
         return;
       }
 
@@ -197,19 +214,19 @@ define(function(require) {
 
     startSearch: function(phrase, whatToSearch) {
       this.searchMode = 'search';
-      this.bindToSlice(model.api.searchFolderMessages(model.folder,
-                                                      phrase,
-                                                      whatToSearch));
+      this.bindToSlice(this.model.api.searchFolderMessages(this.model.folder,
+                                                           phrase,
+                                                           whatToSearch));
     },
 
     endSearch: function() {
-      this.die();
+      this.resetMessageSlice();
       this.searchMode = 'nonsearch';
       this.freshMessagesSlice();
     },
 
     freshMessagesSlice: function() {
-      this.bindToSlice(model.api.viewFolderMessages(model.folder));
+      this.bindToSlice(this.model.api.viewFolderMessages(this.model.folder));
     },
 
     /**
@@ -217,7 +234,7 @@ define(function(require) {
      * @param  {Slice} messagesSlice the new messagesSlice.
      */
     bindToSlice: function(messagesSlice) {
-      this.die();
+      this.resetMessageSlice();
 
       this.messagesSlice = messagesSlice;
       this.sliceEvents.forEach(function(type) {
@@ -268,15 +285,33 @@ define(function(require) {
       this.setCurrentMessage(message);
     },
 
-    die: function() {
+    resetMessageSlice: function() {
       if (this.messagesSlice) {
         this.messagesSlice.die();
         this.messagesSlice = null;
       }
 
       this.currentMessage = null;
+    },
+
+    die: function() {
+      this.model.removeListener('folder', this.onLatestFolder);
+      this.resetMessageSlice();
     }
+
   });
+
+  /*
+   * Override the .on method so that initialization and slice creation is
+   * delayed until there are listeners.
+   */
+  var oldOn = HeaderCursor.prototype.on;
+  HeaderCursor.prototype.on = function() {
+    if (!this._inited) {
+      this.init();
+    }
+    return oldOn.apply(this, arguments);
+  };
 
   /**
    * @constructor
@@ -301,8 +336,7 @@ define(function(require) {
     siblings: null
   };
 
-  return {
-    CurrentMessage: CurrentMessage,
-    cursor: new HeaderCursor()
-  };
+  HeaderCursor.CurrentMessage = CurrentMessage;
+
+  return HeaderCursor;
 });

@@ -8,6 +8,7 @@
   worker.use(TestAgent.BrowserWorker.PostMessage);
 
   worker.use(TestAgent.BrowserWorker.MochaDriver, {
+
     ui: 'tdd',
     /* path to mocha */
     mochaUrl: CommonResourceLoader.url('/common/vendor/mocha/mocha.js'),
@@ -25,10 +26,23 @@
       '/test/unit/setup.js'
     ],
 
-    reporter: null
+    reporter: null,
+
+    setup: {
+      ignoreLeaks: true
+    }
+
   });
+
   worker.use(TestAgent.BrowserWorker.BlanketDriver, {
-    blanketUrl: CommonResourceLoader.url('/common/vendor/blanket/blanket.js')
+    blanketUrl: CommonResourceLoader.url('/common/vendor/blanket/blanket.js'),
+    defaultConfig: {
+      'data-cover-only': 'js/',
+      'data-cover-never': '["test/unit/","alameda.js","/shared/"]',
+      'data-cover-flags': 'lazyload',
+      'data-cover-adapter': CommonResourceLoader
+        .url('/common/vendor/blanket/test-agent-blanket.js')
+    }
   });
 
   //enable let, yield, etc...
@@ -55,5 +69,3 @@
   worker.start();
 
 }(this));
-
-

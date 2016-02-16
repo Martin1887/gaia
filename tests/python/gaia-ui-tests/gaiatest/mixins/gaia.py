@@ -8,24 +8,43 @@ import textwrap
 import time
 
 
-class GaiaOptionsMixin(object):
-
-    def __init__(self, **kwargs):
-        # Inheriting object must call this __init__ to set up option handling
-        group = self.add_option_group('gaiatest')
-        group.add_option('--restart',
-                         action='store_true',
-                         dest='restart',
-                         default=False,
-                         help='restart target instance between tests')
+class GaiaArguments(object):
+    name = 'Gaia Arguments'
+    args = [
+        [['--restart'],
+         {'action': 'store_true',
+          'dest': 'restart',
+          'default': False,
+          'help': 'restart target instance between tests',
+          }],
+        [['--locale'],
+         {'default': "undefined",
+          'help': 'locale for the device, This value overrides the value from testvars.json file',
+          }],
+        [['--capture'],
+         {'dest': 'capture',
+          'default': "off",
+          'help': 'Enabling screen video capture for max 3 minutes, saves in /sdcard folder of the device, '
+                  'then pulls it to the specified directory '
+                  'always: always pull the video file '
+                  'whenfail: only pull when the test failed '
+                  'off: off',
+          }],
+        [['--capturefolder'],
+         {'dest': 'capturefolder',
+          'default': 'videocapture',
+          'help': 'directory path to saved video captures, relative to the current location, '
+                  'Default folder is %(default)s',
+          }],
+    ]
 
 
 class GaiaTestRunnerMixin(object):
-
+    
     def __init__(self, **kwargs):
         width = 80
         if not (self.testvars.get('acknowledged_risks') is True or os.environ.get('GAIATEST_ACKNOWLEDGED_RISKS')):
-            url = 'https://developer.mozilla.org/en-US/docs/Gaia_Test_Runner#Risks'
+            url = 'http://gaiatest.readthedocs.org/en/latest/testrunner.html#risks'
             heading = 'Acknowledge risks'
             message = 'These tests are destructive and may remove data from the target Firefox OS instance as well ' \
                       'as using services that may incur costs! Before you can run these tests you must follow the ' \
@@ -54,4 +73,3 @@ class GaiaTestRunnerMixin(object):
                 print '\nTest run aborted by user.'
                 sys.exit(1)
             print 'Continuing with test run...\n'
-

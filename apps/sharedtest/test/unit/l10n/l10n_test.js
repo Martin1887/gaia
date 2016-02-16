@@ -1,7 +1,7 @@
 suite('L10n', function() {
+  'use strict';
   var _;
-  var _translate;
-  var _localize;
+  var _translateFragment;
 
   var l10props = [
     'cropimage                 = Crop',
@@ -10,24 +10,30 @@ suite('L10n', function() {
     'delete-n-items[one]       = Delete selected item?',
     'delete-n-items[other]     = Delete {{ n }} items?',
     'textcontent-test          = this is text content',
-    'prop-test.prop            = this is a property',
-    'dot.prop-test.prop        = this is another property',
-    'dataset-test.dataset.prop = this is a data attribute',
-    'style-test.style.padding  = 10px',
+    'dom-overlay-test          = this is text content <button>(bar)</button>',
+    'attr-test.title           = this is an attribute',
     'euroSign                  = price: 10\\u20ac to 20\\u20ac',
     'leadingSpaces             = \\u0020\\u020\\u20%2F',
     'trailingBackslash         = backslash\\\\',
     'multiLine                 = foo \\',
     '                            bar \\',
     '                            baz',
-    'update.innerHTML          = {[ plural(n) ]}',
-    'update.innerHTML[zero]    = <strong>No updates.</strong>',
-    'update.innerHTML[one]     = <strong>{{n}} update available.</strong> \\',
+    'update                    = {[ plural(n) ]}',
+    'update[zero]              = <strong>No updates.</strong>',
+    'update[one]               = <strong>{{n}} update available.</strong> \\',
     '                            <span>Tap for more info.</span>',
-    'update.innerHTML[other]   = <strong>{{n}} updates available.</strong> \\',
+    'update[other]             = <strong>{{n}} updates available.</strong> \\',
+    '                            <span>Tap for more info.</span>',
+    'overlay                    = {[ plural(n) ]}',
+    'overlay[zero]              = <strong>No updates.</strong>',
+    'overlay[one]               = <strong>{{n}} update available.</strong> \\',
+    '                            <span>Tap for more info.</span>',
+    'overlay[other]             = <strong>{{n}} updates available.</strong> \\',
     '                            <span>Tap for more info.</span>',
     'inline-translation-test   = static content provided by inlined JSON',
-    'a11y-label.ariaLabel      = label via ARIA'
+    'a11y-label.ariaLabel      = label via ARIA',
+    'a11y-label.ariaValueText  = valuetext via ARIA',
+    'a11y-label.ariaMozHint    = moz-hint via ARIA'
   ].join('\n');
 
   var inlineL10Props = {
@@ -54,8 +60,7 @@ suite('L10n', function() {
     };
 
     _ = navigator.mozL10n.get;
-    _translate = navigator.mozL10n.translate;
-    _localize = navigator.mozL10n.localize;
+    _translateFragment = navigator.mozL10n.translateFragment;
 
     // en-US has already been loaded in setup.js and l10n.js is smart enough
     // not to re-fetch resources;  hence, set the lang to something new
@@ -67,6 +72,8 @@ suite('L10n', function() {
     inline.textContent = JSON.stringify(inlineL10Props);
     document.head.appendChild(inline);
 
+    navigator.mozL10n.ctx.registerLocales('en-US',
+                                          ['fr', 'zh-TW', 'ar']);
     navigator.mozL10n.language.code = lang;
     navigator.mozL10n.once(done);
   });
@@ -112,7 +119,7 @@ suite('L10n', function() {
     });
   });
 
-  suite('translate', function() {
+  suite('translateFragment', function() {
     var elem;
     setup(function() {
       elem = document.createElement('div');
@@ -120,60 +127,75 @@ suite('L10n', function() {
 
     test('text content', function() {
       elem.dataset.l10nId = 'textcontent-test';
-      _translate(elem);
+      _translateFragment(elem);
       assert.equal(elem.textContent, 'this is text content');
     });
 
     test('properties', function() {
-      elem.dataset.l10nId = 'prop-test';
-      _translate(elem);
-      assert.equal(elem.prop, 'this is a property');
-    });
-
-    test('properties using final period', function() {
-      elem.dataset.l10nId = 'dot.prop-test';
-      _translate(elem);
-      assert.equal(elem.prop, 'this is another property');
-    });
-
-    test('data-* attributes', function() {
-      elem.dataset.l10nId = 'dataset-test';
-      _translate(elem);
-      assert.equal(elem.dataset.prop, 'this is a data attribute');
-    });
-
-    test('style attributes', function() {
-      elem.dataset.l10nId = 'style-test';
-      _translate(elem);
-      assert.equal(elem.style.padding, '10px');
+      elem.dataset.l10nId = 'attr-test';
+      _translateFragment(elem);
+      assert.equal(elem.getAttribute('title'), 'this is an attribute');
     });
 
     test('ARIA labels', function() {
       elem.dataset.l10nId = 'a11y-label';
-      _translate(elem);
+      _translateFragment(elem);
       assert.equal(elem.getAttribute('aria-label'), 'label via ARIA');
+    });
+
+    test('ARIA valuetext', function() {
+      elem.dataset.l10nId = 'a11y-label';
+      _translateFragment(elem);
+      assert.equal(elem.getAttribute('aria-valuetext'), 'valuetext via ARIA');
+    });
+
+    test('ARIA moz-hint', function() {
+      elem.dataset.l10nId = 'a11y-label';
+      _translateFragment(elem);
+      assert.equal(elem.getAttribute('aria-moz-hint'), 'moz-hint via ARIA');
+    });
+
+    test('for a document fragment', function() {
+      var fragment = document.createDocumentFragment();
+      elem.dataset.l10nId = 'textcontent-test';
+      fragment.appendChild(elem);
+      _translateFragment(fragment);
+      assert.equal(elem.textContent, 'this is text content');
+    });
+
+    test('for a shadowRoot', function() {
+      var container = document.createElement('div');
+      container.createShadowRoot();
+      elem.dataset.l10nId = 'textcontent-test';
+      container.shadowRoot.appendChild(elem);
+      _translateFragment(container.shadowRoot);
+      assert.equal(elem.textContent, 'this is text content');
     });
   });
 
-  suite('localize', function() {
+  suite('localize + translate', function() {
     var elem;
     setup(function() {
       elem = document.createElement('div');
     });
 
     test('text content', function() {
-      _localize(elem, 'textcontent-test');
+      navigator.mozL10n.setAttributes(elem, 'textcontent-test');
+      _translateFragment(elem);
       assert.equal(elem.textContent, 'this is text content');
     });
 
     test('properties', function() {
-      _localize(elem, 'prop-test');
-      assert.equal(elem.prop, 'this is a property');
+      navigator.mozL10n.setAttributes(elem, 'attr-test');
+      _translateFragment(elem);
+      assert.equal(elem.getAttribute('title'), 'this is an attribute');
     });
 
+    // XXX Remove in https://bugzil.la/1027117
     suite('properties + pluralization', function() {
       test('n=0', function() {
-        _localize(elem, 'update', { n: 0 });
+        navigator.mozL10n.setAttributes(elem, 'update', { n: 0 });
+        _translateFragment(elem);
         var info = elem.querySelector('strong');
         var span = elem.querySelector('span');
         assert.ok(info);
@@ -182,7 +204,8 @@ suite('L10n', function() {
       });
 
       test('n=1', function() {
-        _localize(elem, 'update', { n: 1 });
+        navigator.mozL10n.setAttributes(elem, 'update', { n: 1 });
+        _translateFragment(elem);
         var info = elem.querySelector('strong');
         var span = elem.querySelector('span');
         assert.ok(info);
@@ -191,7 +214,8 @@ suite('L10n', function() {
       });
 
       test('n=2', function() {
-        _localize(elem, 'update', { n: 2 });
+        navigator.mozL10n.setAttributes(elem, 'update', { n: 2 });
+        _translateFragment(elem);
         var info = elem.querySelector('strong');
         var span = elem.querySelector('span');
         assert.ok(info);
@@ -200,11 +224,51 @@ suite('L10n', function() {
       });
     });
 
-    test('element with child', function() {
+    suite('DOM overlays + pluralization', function() {
+      test('n=0', function() {
+        navigator.mozL10n.setAttributes(elem, 'overlay', { n: 0 });
+        _translateFragment(elem);
+        var info = elem.querySelector('strong');
+        var span = elem.querySelector('span');
+        assert.ok(info);
+        assert.isNull(span);
+        assert.equal(info.textContent, 'No updates.');
+      });
+
+      test('n=1', function() {
+        navigator.mozL10n.setAttributes(elem, 'overlay', { n: 1 });
+        _translateFragment(elem);
+        var info = elem.querySelector('strong');
+        var span = elem.querySelector('span');
+        assert.ok(info);
+        assert.ok(span);
+        assert.equal(info.textContent, '1 update available.');
+      });
+
+      test('n=2', function() {
+        navigator.mozL10n.setAttributes(elem, 'overlay', { n: 2 });
+        _translateFragment(elem);
+        var info = elem.querySelector('strong');
+        var span = elem.querySelector('span');
+        assert.ok(info);
+        assert.ok(span);
+        assert.equal(info.textContent, '2 updates available.');
+      });
+    });
+
+    test('element with child, translation without a child', function() {
       elem.innerHTML = 'here is a button <button>(foo)</button>';
-      _localize(elem, 'textcontent-test');
-      assert.equal(elem.textContent, 'this is text content(foo)');
-      assert.ok(elem.querySelector('button'));
+      navigator.mozL10n.setAttributes(elem, 'textcontent-test');
+      _translateFragment(elem);
+      assert.equal(elem.innerHTML, 'this is text content');
+    });
+
+    test('element and translation with child', function() {
+      elem.innerHTML = 'here is a button <button>(foo)</button>';
+      navigator.mozL10n.setAttributes(elem, 'dom-overlay-test');
+      _translateFragment(elem);
+      assert.equal(elem.innerHTML,
+                   'this is text content <button>(bar)</button>');
     });
   });
 
@@ -249,4 +313,3 @@ suite('L10n', function() {
     });
   });
 });
-

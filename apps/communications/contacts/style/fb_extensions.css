@@ -1,4 +1,4 @@
-#fb-extensions {
+#iframe_extensions {
   position: fixed;
   top: 100%;
   left: 0;
@@ -8,48 +8,54 @@
   border: 0;
   margin: 0;
   padding: 0;
-  -moz-transition: -moz-transform .6s ease;
+  transition: transform .6s ease;
   background: #f4f4f4;
 }
 
-#fb-extensions.opening {
-  -moz-transform: translateY(-100%);
+#iframe_extensions.opening {
+  transform: translateY(-100%);
 }
 
-#fb-extensions.hidden {
+#iframe_extensions.hidden {
   visibility: hidden;
 }
 
-.facebook.removed dl,
-p.facebook.removed input {
-  background-color: rgba(59, 82, 152, 0.2);
-  border: 1px solid #3b5998;
+/* FB info (non-editable) */
+.view-edit-contact .facebook fieldset legend,
+.view-edit-contact .facebook fieldset input[type="date"] {
+  border-color: #acbee4;
+  color: #8d9abb;
+  background-image: url(fb/dialog.svg);
 }
 
-.facebook.removed dl dd p:last-child {
-  border-bottom: none;
+.view-edit-contact .facebook input {
+  border-color: #acbee4;
+  color: #8d9abb;
 }
 
-.facebook.removed dl dd p {
-  border-bottom: 1px solid #3b5998;
-  border-left: 1px solid #3b5998;
+.view-edit-contact .facebook span {
+  color: #8d9abb;
 }
 
-.with-photo.removed.facebook img {
+.view-edit-contact .facebook fieldset input[value=""] {
+  display: none;
+}
+
+.with-photo.facebook img {
   pointer-events: auto;
   opacity: 0.95;
 }
 
-.with-photo.removed.facebook {
-  padding-right: 0
+.with-photo.facebook {
+  padding-inline-end: 0;
 }
 
-.with-photo.removed.facebook .edit-photo  {
-  right: 0
-}
+/* XXX BiDi warning */
+html[dir="ltr"] .with-photo.facebook .edit-photo  { right: 0; }
+html[dir="rtl"] .with-photo.facebook .edit-photo  { right: -1.5rem; }
 
 #settingsFb li p {
-  margin-left: 0;
+  margin-inline-start: 0;
 }
 
 #settings-article[data-state="fb-disabled"] #settingsFb,
@@ -75,3 +81,4 @@ p.facebook.removed input {
   white-space: normal;
   margin-top: 1rem;
 }
+

@@ -1,55 +1,77 @@
 'use strict';
+
+/* global ActivityHandler */
 /* global contacts */
-/* global LazyLoader */
-/* global MmiManager */
-/* global MockActivities */
+/* global ContactsService */
 /* global MockContactAllFields */
 /* global MockContacts */
+/* global MockContactsButtons */
 /* global MockContactsListObj */
 /* global MockDetailsDom */
 /* global MockExtFb */
 /* global Mockfb */
+/* global MockMozNfc */
+/* global MockContactsNfc */
 /* global MocksHelper */
-/* global MultiSimActionButton */
+/* global MainNavigation */
+/* global MockMozContacts */
+/* global MockUtils */
+/* global MockWebrtcClient */
 /* global Normalizer */
-/* global TelephonyHelper */
-/* global utils */
+/* export TAG_OPTIONS */
+/* global triggerEvent */
 /* exported SCALE_RATIO */
+/* global utils */
+/* global NFC */
+
+/* exported _ */
 
 //Avoiding lint checking the DOM file renaming it to .html
+requireApp('communications/contacts/services/contacts.js');
 requireApp('communications/contacts/test/unit/mock_details_dom.js.html');
+requireApp(
+  'communications/contacts/test/unit/webrtc-client/mock_webrtc_client.js');
 
 require('/shared/js/text_normalizer.js');
 require('/shared/js/contacts/import/utilities/misc.js');
 require('/shared/js/contacts/utilities/dom.js');
 require('/shared/js/contacts/utilities/templates.js');
-require('/shared/js/contacts/utilities/event_listeners.js');
+requireApp('communications/contacts/test/unit/mock_event_listeners.js');
 require('/shared/test/unit/mocks/mock_contact_all_fields.js');
 require('/shared/test/unit/mocks/mock_lazy_loader.js');
-require('/shared/test/unit/mocks/mock_multi_sim_action_button.js');
-require('/dialer/test/unit/mock_mmi_manager.js');
-require('/dialer/test/unit/mock_telephony_helper.js');
+require('/shared/test/unit/mocks/contacts/mock_contacts_buttons.js');
 
+require('/shared/test/unit/mocks/mock_mozContacts.js');
 requireApp('communications/contacts/js/views/details.js');
+requireApp('communications/contacts/test/unit/mock_contacts_nfc.js');
+requireApp('communications/contacts/test/unit/mock_cache.js');
 requireApp('communications/contacts/test/unit/mock_navigation.js');
+requireApp('communications/contacts/test/unit/mock_main_navigation.js');
 requireApp('communications/contacts/test/unit/mock_contacts.js');
 requireApp('communications/contacts/test/unit/mock_contacts_list_obj.js');
 requireApp('communications/contacts/test/unit/mock_fb.js');
 requireApp('communications/contacts/test/unit/mock_extfb.js');
 requireApp('communications/contacts/test/unit/mock_activities.js');
+requireApp('communications/contacts/test/unit/helper.js');
+requireApp('communications/contacts/js/utilities/mozContact.js');
+requireApp('communications/contacts/js/utilities/extract_params.js');
 
 require('/shared/test/unit/mocks/mock_contact_photo_helper.js');
 
-var subject,
+require('/shared/test/unit/mocks/mock_moz_contact.js');
+require('/shared/test/unit/mocks/mock_moz_nfc.js');
+
+var _ = function(key) { return key; },
+    subject,
     container,
     realL10n,
     realOnLine,
     realFormatDate,
-    realActivityHandler,
     dom,
     contactDetails,
     listContainer,
     detailsName,
+    detailsNameText,
     orgTitle,
     phonesTemplate,
     emailsTemplate,
@@ -60,30 +82,29 @@ var subject,
     favoriteMessage,
     detailsInner,
     TAG_OPTIONS,
-    dom,
-    Contacts,
     realContacts,
     realFb,
     mockContact,
-    fbButtons,
-    linkButtons,
     realContactsList,
-    mozL10nGetSpy;
+    mozL10nGetSpy,
+    header,
+    realListeners,
+    realNFC,
+    realMozNFC;
+
+requireApp('communications/contacts/js/tag_optionsstem.js');
 
 var SCALE_RATIO = 1;
 
-if (!window.ActivityHandler) {
-  window.ActivityHandler = null;
-}
-
-mocha.globals(['fb', 'mozL10n']);
-
 var mocksHelperForDetailView = new MocksHelper([
-  'ContactPhotoHelper',
+  'MainNavigation',
+  'ActivityHandler',
   'LazyLoader',
-  'MmiManager',
-  'MultiSimActionButton',
-  'TelephonyHelper'
+  'Cache',
+  'ContactsButtons',
+  'ContactPhotoHelper',
+  'mozContact',
+  'WebrtcClient'
 ]).init();
 
 suite('Render contact', function() {
@@ -99,9 +120,11 @@ suite('Render contact', function() {
   }
 
   suiteSetup(function() {
+    navigator.mozContacts = MockMozContacts;
     realOnLine = Object.getOwnPropertyDescriptor(navigator, 'onLine');
     realL10n = navigator.mozL10n;
-    realActivityHandler = window.ActivityHandler;
+    realListeners = utils.listeners;
+    utils.listeners = MockUtils.listeners;
     navigator.mozL10n = {
       get: function get(key) {
         return key;
@@ -125,8 +148,6 @@ suite('Render contact', function() {
         return normalizedDate.toString();
     };
 
-    window.ActivityHandler = MockActivities;
-
     Object.defineProperty(navigator, 'onLine', {
       configurable: true,
       get: navigatorOnLine,
@@ -137,18 +158,24 @@ suite('Render contact', function() {
     contacts.List = MockContactsListObj;
     realContacts = window.Contacts;
     window.Contacts = MockContacts;
+    realNFC = window.NFC;
+    window.NFC = MockContactsNfc;
+    realMozNFC = window.navigator.mozNfc;
+    window.navigator.mozNfc = MockMozNfc;
     realFb = window.fb;
     window.fb = Mockfb;
-    window.Contacts.extServices = MockExtFb;
+    window.ExtServices = MockExtFb;
     dom = document.createElement('section');
     dom.id = 'view-contact-details';
     dom.innerHTML = MockDetailsDom;
     container = dom.querySelector('#details-list');
     subject = contacts.Details;
+    utils.listeners.dom = dom;
     subject.init(dom);
     contactDetails = dom.querySelector('#contact-detail');
     listContainer = dom.querySelector('#details-list');
     detailsName = dom.querySelector('#contact-name-title');
+    detailsNameText = dom.querySelector('#contact-name-title bdi');
     orgTitle = dom.querySelector('#org-title');
     phonesTemplate = dom.querySelector('#phone-details-template-\\#i\\#');
     emailsTemplate = dom.querySelector('#email-details-template-\\#i\\#');
@@ -157,17 +184,8 @@ suite('Render contact', function() {
     editContactButton = dom.querySelector('#edit-contact-button');
     cover = dom.querySelector('#cover-img');
     detailsInner = dom.querySelector('#contact-detail-inner');
-    favoriteMessage = dom.querySelector('#toggle-favorite').children[0];
-
-    fbButtons = [
-      '#profile_button',
-      '#msg_button',
-      '#wall_button'
-    ];
-
-    linkButtons = [
-      '#link_button'
-    ];
+    favoriteMessage = dom.querySelector('#toggle-favorite');
+    header = dom.querySelector('#details-view-header');
   });
 
   suiteTeardown(function() {
@@ -178,17 +196,20 @@ suite('Render contact', function() {
     mozL10nGetSpy.restore();
     window.mozL10n = realL10n;
 
+    window.NFC = realNFC;
+    window.navigator.mozNfc = realMozNFC;
+
+    utils.listeners = realListeners;
+
     if (realOnLine) {
       Object.defineProperty(navigator, 'onLine', realOnLine);
     }
     utils.misc.formatDate = realFormatDate;
-    window.ActivityHandler = realActivityHandler;
   });
 
   setup(function() {
     mockContact = new MockContactAllFields(true);
     subject.setContact(mockContact);
-    TAG_OPTIONS = Contacts.getTags();
     window.set;
   });
 
@@ -200,7 +221,7 @@ suite('Render contact', function() {
   suite('Render name', function() {
     test('with name', function() {
       subject.render(null, TAG_OPTIONS);
-      assert.equal(detailsName.textContent, mockContact.name[0]);
+      assert.equal(detailsNameText.textContent, mockContact.name[0]);
     });
 
     test('without name, with phone', function() {
@@ -208,7 +229,7 @@ suite('Render contact', function() {
       contactWoName.name = null;
       subject.setContact(contactWoName);
       subject.render(null, TAG_OPTIONS);
-      assert.equal(detailsName.textContent, contactWoName.tel[0].value);
+      assert.equal(detailsNameText.textContent, contactWoName.tel[0].value);
     });
 
     test('without name, without phone, with email', function() {
@@ -217,7 +238,7 @@ suite('Render contact', function() {
       contactWoName.tel = null;
       subject.setContact(contactWoName);
       subject.render(null, TAG_OPTIONS);
-      assert.equal(detailsName.textContent, contactWoName.email[0].value);
+      assert.equal(detailsNameText.textContent, contactWoName.email[0].value);
     });
 
     test('no name, no phone, no email', function() {
@@ -227,23 +248,45 @@ suite('Render contact', function() {
       contactWoName.email = null;
       subject.setContact(contactWoName);
       subject.render(null, TAG_OPTIONS);
-      assert.notEqual(detailsName.textContent, '');
+      assert.notEqual(detailsNameText.textContent, '');
       assert.isTrue(mozL10nGetSpy.calledWith('noName'));
     });
-
   });
 
   suite('Render favorite', function() {
     test('with favorite contact', function() {
       subject.render(null, TAG_OPTIONS);
-      assert.isTrue(detailsName.classList.contains('favorite'));
+      assert.isTrue(header.classList.contains('favorite'));
     });
     test('without favorite contact', function() {
       var contactWoFav = new MockContactAllFields(true);
       contactWoFav.category = [];
       subject.setContact(contactWoFav);
       subject.render(null, TAG_OPTIONS);
-      assert.isFalse(detailsName.classList.contains('favorite'));
+      assert.isFalse(header.classList.contains('favorite'));
+    });
+    test('change in favorite not render the window', function(done) {
+      var contactWoPhoto = new MockContactAllFields();
+      contactWoPhoto.photo = null;
+      // Stub so save is working as if it was successful
+      this.sinon.stub(ContactsService, 'save', function(contact, cb) {
+        cb();
+      });
+      // Stub find, so request is working
+      this.sinon.stub(navigator.mozContacts, 'find', function(options) {
+        return {
+          onsuccess: function(){},
+          onerror: function() {}
+        };
+      });
+
+      subject.setContact(contactWoPhoto);
+      subject.render(null, TAG_OPTIONS);
+      var spy = sinon.spy(subject, 'toggleFavorite');
+      subject.toggleFavorite();
+      spy.lastCall.returnValue.then(function(value) {
+        assert.isTrue(value);
+      }).then(done, done);
     });
   });
 
@@ -264,265 +307,46 @@ suite('Render contact', function() {
   });
 
   suite('Render social', function() {
-     teardown(function() {
-      window.fb.setIsFbContact(false);
-      window.fb.setIsFbLinked(false);
-    });
-
-    function assertFbButtons(buttons, mode, state) {
-      buttons.forEach(function(buttonid) {
-        var selector = buttonid;
-        if (state) {
-          selector += '[' + state + ']';
-        }
-        if (mode === 'present') {
-          assert.isNotNull(container.querySelector(selector));
-        }
-        else {
-          assert.isNull(container.querySelector(selector));
-        }
-      });
-    }
-
-    test('It is not a Facebook Contact', function() {
-      window.fb.setIsEnabled(true);
-      window.fb.setIsFbContact(false);
+    test('Share button must be renderer properly', function() {
       subject.render(null, TAG_OPTIONS);
       assert.include(container.innerHTML, 'social-template');
-      assert.isFalse(container.querySelector('#link_button').
+      assert.isFalse(container.querySelector('#share_button').
                     classList.contains('hide'));
-      assert.isTrue(container.
-                       querySelector('#profile_button').
-                       classList.contains('hide')
-      );
-    });
-
-    test('It is a Facebook Contact', function() {
-      window.fb.setIsFbContact(true);
-
-      // The edit mode should be disabled
-      subject.render();
-      assert.equal('FB', orgTitle.textContent);
-
-      assert.isFalse(container.
-                       querySelector('#profile_button').
-                       classList.contains('hide')
-      );
-
-      assert.isFalse(container.
-                       querySelector('#msg_button').
-                       classList.contains('hide')
-      );
-
-      assert.isFalse(container.
-                       querySelector('#wall_button').
-                       classList.contains('hide')
-      );
-
-      window.fb.setIsFbContact(false);
-    });
-
-    test('Facebook is not enabled', function() {
-      window.fb.setIsEnabled(false);
-
-      subject.render(null, TAG_OPTIONS);
-      var incSocial = container.innerHTML.indexOf('social-template');
-      assert.isTrue(incSocial === -1);
-
-      assertFbButtons(linkButtons, 'absent');
-
-      window.fb.setIsEnabled(true);
-    });
-
-    test('FB Contact. Device is offline', function() {
-      navigator.onLine = false;
-      window.fb.setIsFbContact(true);
-
-      subject.render(null, TAG_OPTIONS);
-
-      assertFbButtons(fbButtons, 'present', 'disabled');
-    });
-
-    test('FB Contact. Device is online', function() {
-      navigator.onLine = true;
-      window.fb.setIsFbContact(true);
-
-      subject.render(null, TAG_OPTIONS);
-
-      assertFbButtons(fbButtons, 'present');
-      assertFbButtons(fbButtons, 'absent', 'disabled');
-    });
-
-    test('Not FB Contact. Device is offline', function() {
-      navigator.onLine = false;
-      window.fb.setIsFbContact(false);
-
-      subject.render(null, TAG_OPTIONS);
-
-      assertFbButtons(linkButtons, 'present', 'disabled');
-    });
-
-    test('Not FB Contact. Device is online', function() {
-      navigator.onLine = true;
-      window.fb.setIsFbContact(false);
-
-      subject.render(null, TAG_OPTIONS);
-
-      assertFbButtons(linkButtons, 'present');
-      assertFbButtons(linkButtons, 'absent', 'disabled');
     });
   });
 
-  suite('Render phones', function() {
-    test('with 1 phone', function() {
+  suite('Render ContactsButtons', function() {
+    setup(function() {
+      this.sinon.stub(MockContactsButtons, 'renderPhones');
+      this.sinon.stub(MockContactsButtons, 'renderEmails');
+
       subject.render(null, TAG_OPTIONS);
-      assert.include(container.innerHTML, 'phone-details-template-0');
-      assert.include(container.innerHTML, mockContact.tel[0].value);
-      assert.include(container.innerHTML, mockContact.tel[0].carrier);
-      assert.include(container.innerHTML, mockContact.tel[0].type);
-      assert.include(
-        container.querySelector('h2').innerHTML,
-        mockContact.tel[0].carrier
-      );
-      assert.isTrue(mozL10nGetSpy.calledWith('separator'));
     });
 
-    test('with 1 phone and carrier undefined', function() {
-
-      var contactNoCarrier = new MockContactAllFields(true);
-      contactNoCarrier.tel = [
-        {
-          value: '+34678987123',
-          type: ['Personal']
-        }
-      ];
-      subject.setContact(contactNoCarrier);
-      subject.render(null, TAG_OPTIONS);
-      var phoneButton = container.querySelector('#call-or-pick-0');
-      assert.equal(phoneButton.querySelector('b').textContent,
-                    contactNoCarrier.tel[0].value);
-      var carrierContent = container.querySelector('.carrier').textContent;
-      assert.lengthOf(carrierContent, 0);
-
+    test('initializes ContactsButtons', function() {
+      this.sinon.stub(MockContactsButtons, 'init');
+      subject.init(dom);
+      sinon.assert.calledWith(MockContactsButtons.init, listContainer,
+                              contactDetails, ActivityHandler);
     });
 
-    test('with no phones', function() {
-      var contactWoTel = new MockContactAllFields(true);
-      contactWoTel.tel = [];
-      subject.setContact(contactWoTel);
-      subject.render(null, TAG_OPTIONS);
-      assert.equal(-1, container.innerHTML.indexOf('phone-details-template'));
+    test('calls renderPhones', function() {
+      sinon.assert.calledWith(MockContactsButtons.renderPhones, mockContact);
     });
 
-    test('with null phones', function() {
-      var contactWoTel = new MockContactAllFields(true);
-      contactWoTel.tel = null;
-      subject.setContact(contactWoTel);
-      subject.render(null, TAG_OPTIONS);
-      assert.equal(-1, container.innerHTML.indexOf('phone-details-template'));
-    });
-
-    test('with more than 1 phone', function() {
-      var contactMultTel = new MockContactAllFields(true);
-      contactMultTel.tel[1] = contactMultTel.tel[0];
-      for (var elem in contactMultTel.tel[1]) {
-        var currentElem = contactMultTel.tel[1][elem] + 'dup';
-        contactMultTel.tel[1][elem] = currentElem;
-      }
-      contactMultTel.tel[1].type = '';
-      subject.setContact(contactMultTel);
-      subject.render(null, TAG_OPTIONS);
-      assert.include(container.innerHTML, 'phone-details-template-0');
-      assert.include(container.innerHTML, 'phone-details-template-1');
-      assert.include(container.innerHTML, contactMultTel.tel[0].value);
-      assert.include(container.innerHTML, contactMultTel.tel[0].carrier);
-      assert.include(container.innerHTML, contactMultTel.tel[0].type);
-      assert.include(container.innerHTML, contactMultTel.tel[1].value);
-      assert.include(container.innerHTML, contactMultTel.tel[1].carrier);
-      assert.include(container.innerHTML, subject.defaultTelType);
-      assert.equal(-1, container.innerHTML.indexOf('phone-details-template-2'));
-    });
-
-    test('highlight phone number', function() {
-
-      var contact = new MockContactAllFields(true);
-      contact.tel = [
-        {
-          value: '+48225363636',
-          type: ['Personal']
-        }
-      ];
-      subject.setContact(contact);
-      subject.render(null, TAG_OPTIONS);
-      subject.reMark('tel', contact.tel[0].value);
-      var phoneButton = container.querySelector('#call-or-pick-0');
-      assert.isTrue(phoneButton.classList.contains('remark'));
-
-    });
-
-    test('highlight phone number as missed', function() {
-
-      var contact = new MockContactAllFields(true);
-      contact.tel = [
-        {
-          value: '+48225363636',
-          type: ['Personal']
-        }
-      ];
-      subject.setContact(contact);
-      subject.render(null, TAG_OPTIONS);
-      subject.reMark('tel', contact.tel[0].value, 'remark-missed');
-      var phoneButton = container.querySelector('#call-or-pick-0');
-      assert.isTrue(phoneButton.classList.contains('remark-missed'));
-
+    test('calls renderEmails', function() {
+      sinon.assert.calledWith(MockContactsButtons.renderEmails, mockContact);
     });
   });
 
-  suite('Render emails', function() {
-    test('with 1 email', function() {
-      subject.render(null, TAG_OPTIONS);
-      assert.include(container.innerHTML, 'email-details-template-0');
-      assert.include(container.innerHTML, mockContact.email[0].value);
-      assert.include(container.innerHTML, mockContact.email[0].type);
-    });
-
-    test('with no emails', function() {
-      var contactWoEmail = new MockContactAllFields(true);
-      contactWoEmail.email = [];
-      subject.setContact(contactWoEmail);
-      subject.render(null, TAG_OPTIONS);
-      assert.equal(-1, container.innerHTML.indexOf('email-details-template'));
-    });
-
-    test('with null emails', function() {
-      var contactWoEmail = new MockContactAllFields(true);
-      contactWoEmail.email = null;
-      subject.setContact(contactWoEmail);
-      subject.render(null, TAG_OPTIONS);
-      assert.equal(-1, container.innerHTML.indexOf('email-details-template'));
-    });
-
-    test('with more than 1 email', function() {
-      var contactMultEmail = new MockContactAllFields(true);
-      contactMultEmail.email[1] = contactMultEmail.email[0];
-      for (var elem in contactMultEmail.email[1]) {
-        var currentElem = contactMultEmail.email[1][elem] + 'dup';
-        contactMultEmail.email[1][elem] = currentElem;
-      }
-      subject.setContact(contactMultEmail);
-      subject.render(null, TAG_OPTIONS);
-      assert.include(container.innerHTML, 'email-details-template-0');
-      assert.include(container.innerHTML, 'email-details-template-1');
-      var email0 = contactMultEmail.email[0];
-      var email1 = contactMultEmail.email[1];
-      assert.include(container.innerHTML, email0.value);
-      assert.include(container.innerHTML, email0.type);
-      assert.include(container.innerHTML, email1.value);
-      assert.include(container.innerHTML, email1.type);
-      assert.equal(-1, container.innerHTML.indexOf('email-details-template-2'));
-    });
-  });
   suite('Render addresses', function() {
+    test('in correct position', function() {
+      subject.render(null, TAG_OPTIONS);
+      assert.include(container.innerHTML, 'address-details-template-0');
+      var li = container.querySelector('#address-details-template-0');
+      assert.equal(li.nextSibling.id, 'dates-template-1');
+    });
+
     test('with 1 address', function() {
       subject.render(null, TAG_OPTIONS);
       assert.include(container.innerHTML, 'address-details-template-0');
@@ -715,6 +539,20 @@ suite('Render contact', function() {
     });
   });
 
+  suite('Render in read only mode', function() {
+    setup(function() {
+      subject.render(null, TAG_OPTIONS, true);
+    });
+
+    test('> editing button is disabled if we are in read only', function() {
+      assert.isTrue(editContactButton.classList.contains('hide'));
+    });
+
+    test('> link and share buttons are disabled in reado only', function() {
+      assert.isTrue(socialTemplate.classList.contains('hide'));
+    });
+  });
+
   suite('Render photos', function() {
     test('without photo', function() {
       subject.render(null, TAG_OPTIONS);
@@ -747,10 +585,12 @@ suite('Render contact', function() {
       subject.setContact(contact);
       var observer = new MutationObserver(function() {
         assert.isTrue(contactDetails.classList.contains('up'));
-        assert.include(dom.innerHTML, contact.photo[0]);
+        // assert.include worked only for string and arrays!!
+        // in new version chaijs fail
+        //assert.include(dom.innerHTML, contact.photo[0]);
 
         observer.disconnect();
-        var spy = sinon.spy(Contacts, 'updatePhoto');
+        var spy = sinon.spy(utils.dom, 'updatePhoto');
 
         var observer2 = new MutationObserver(function() {
           observer2.disconnect();
@@ -773,132 +613,82 @@ suite('Render contact', function() {
     });
   });
 
-  suite('> User actions', function() {
-    var realMozTelephony;
-    var realMozMobileConnection;
-    suiteSetup(function() {
-      realMozTelephony = navigator.mozTelephony;
-      realMozMobileConnection = navigator.mozMobileConnection;
-      navigator.mozTelephony = true;
-      navigator.mozMobileConnection = true;
-      sinon.spy(window, 'MultiSimActionButton');
-    });
-
-    suiteTeardown(function() {
-      navigator.mozTelephony = realMozTelephony;
-      navigator.mozMobileConnection = realMozMobileConnection;
-    });
-
+  suite('NFC activation', function() {
     setup(function() {
-      this.sinon.spy(LazyLoader, 'load');
+      this.sinon.spy(NFC, 'startListening');
+      this.sinon.spy(NFC, 'stopListening');
     });
 
-    teardown(function() {
-      LazyLoader.load.reset();
-    });
-
-    function makeCall(cb) {
-      var theContact = new MockContactAllFields(true);
-      subject.setContact(theContact);
+    test('> start listening when render a contact', function() {
       subject.render(null, TAG_OPTIONS);
-
-      var stubCall = sinon.stub(TelephonyHelper, 'call', cb);
-      MultiSimActionButton.args[0][1]();
-      stubCall.restore();
-    }
-
-    test(' > Not loading MultiSimActionButton when we are on an activity',
-         function() {
-      this.sinon.stub(MmiManager, 'isMMI').returns(true);
-      MockActivities.currentlyHandling = true;
-      subject.render(null, TAG_OPTIONS);
-
-      sinon.assert.notCalled(MmiManager.isMMI);
-      sinon.assert.neverCalledWith(LazyLoader.load,
-       ['/shared/js/multi_sim_action_button.js']);
-      MockActivities.currentlyHandling = false;
+      sinon.assert.calledOnce(NFC.startListening);
     });
 
-    test('> Not loading MultiSimActionButton if we have a MMI code',
-         function() {
-      this.sinon.stub(MmiManager, 'isMMI').returns(true);
-
-      subject.render(null, TAG_OPTIONS);
-
-      sinon.assert.called(MmiManager.isMMI);
-      sinon.assert.neverCalledWith(LazyLoader.load,
-       ['/shared/js/multi_sim_action_button.js']);
+    test('> stop listening when opening edit mode', function() {
+      // subject.render(null, TAG_OPTIONS);
+      // sinon.assert.calledOnce(NFC.startListening);
+      editContactButton.click();
+      sinon.assert.calledOnce(NFC.stopListening);
     });
 
-    test('> Load call button', function() {
-      this.sinon.stub(MmiManager, 'isMMI').returns(false);
-      subject.render(null, TAG_OPTIONS);
+    test('> stop listening when closing details', function() {
+      // subject.render(null, TAG_OPTIONS);
+      // sinon.assert.calledOnce(NFC.startListening);
+      triggerEvent(header, 'action');
+      sinon.assert.calledOnce(NFC.stopListening);
+    });
+  });
 
-      // We have two buttons, 2 calls per button created
-      assert.equal(LazyLoader.load.callCount, 4);
-      var spyCall = LazyLoader.load.getCall(1);
-      assert.deepEqual(
-        ['/shared/js/multi_sim_action_button.js'], spyCall.args[0]);
+  suite('> Handle back button', function() {
+    setup(function () {
+      this.sinon.spy(MockWebrtcClient, 'stop');
+      this.sinon.spy(window.ActivityHandler, 'postCancel');
+      this.sinon.spy(MainNavigation, 'back');
     });
 
-    test('> Multiple MultiSimActionButtons initialized with correct values',
-         function() {
-      var theContact = new MockContactAllFields(true);
-      subject.setContact(theContact);
-      this.sinon.stub(MmiManager, 'isMMI').returns(false);
+    test('> going back from details', function () {
+      triggerEvent(header, 'action');
 
-      subject.render(null, TAG_OPTIONS);
-
-      var phone1 = container.querySelector('#call-or-pick-0');
-      var phone2 = container.querySelector('#call-or-pick-1');
-      var phoneNumber1 = theContact.tel[0].value;
-      var phoneNumber2 = theContact.tel[1].value;
-
-      sinon.assert.calledWith(MultiSimActionButton, phone1,
-           sinon.match.func, 'ril.telephony.defaultServiceId',
-           sinon.match.func);
-      // Check the getter contains the correct phone number
-      var getterResult = MultiSimActionButton.args[0][3]();
-      assert.equal(phoneNumber1, getterResult);
-
-      sinon.assert.calledWith(MultiSimActionButton, phone2,
-           sinon.match.func, 'ril.telephony.defaultServiceId',
-           sinon.match.func);
-      // Second call getter result
-      getterResult = MultiSimActionButton.args[1][3]();
-      assert.equal(phoneNumber2, getterResult);
-
+      sinon.assert.calledOnce(MockWebrtcClient.stop);
+      sinon.assert.notCalled(ActivityHandler.postCancel);
+      sinon.assert.calledOnce(MainNavigation.back);
     });
 
-    test('> Calling and oncall ', function() {
-      makeCall(function(num, cIndex, oncall, connected, disconnected, error) {
-        assert.isTrue(contactDetails.classList.contains('calls-disabled'));
-        oncall();
-        assert.isFalse(contactDetails.classList.contains('calls-disabled'));
+    test('> going back from details during an activity', function () {
+      ActivityHandler.currentlyHandling = true;
+      triggerEvent(header, 'action');
+
+      sinon.assert.calledOnce(MockWebrtcClient.stop);
+      sinon.assert.calledOnce(ActivityHandler.postCancel);
+      sinon.assert.notCalled(MainNavigation.back);
+
+      ActivityHandler.currentlyHandling = false;
+    });
+
+    test('> going back from details during an IMPORT activity', function () {
+      ActivityHandler.currentlyHandling = true;
+      ActivityHandler.activityName = 'import';
+      triggerEvent(header, 'action');
+
+      sinon.assert.calledOnce(MockWebrtcClient.stop);
+      sinon.assert.notCalled(ActivityHandler.postCancel);
+      sinon.assert.calledOnce(MainNavigation.back);
+
+      ActivityHandler.currentlyHandling = false;
+      ActivityHandler.activityName = 'view';
+    });
+
+    suite('back_to_previous_tab set', function() {
+      setup(function() {
+        window.location.hash = '#nothing?back_to_previous_tab=1';
       });
-    });
-
-    test('> Calling and connected ', function() {
-      makeCall(function(num, cIndex, oncall, connected, disconnected, error) {
-        assert.isTrue(contactDetails.classList.contains('calls-disabled'));
-        connected();
-        assert.isFalse(contactDetails.classList.contains('calls-disabled'));
+      teardown(function() {
+        window.location.hash = '';
       });
-    });
 
-    test('> Calling and disconnected ', function() {
-      makeCall(function(num, cIndex, oncall, connected, disconnected, error) {
-        assert.isTrue(contactDetails.classList.contains('calls-disabled'));
-        disconnected();
-        assert.isFalse(contactDetails.classList.contains('calls-disabled'));
-      });
-    });
-
-    test('> Calling and error ', function() {
-      makeCall(function(num, cIndex, oncall, connected, disconnected, error) {
-        assert.isTrue(contactDetails.classList.contains('calls-disabled'));
-        error();
-        assert.isFalse(contactDetails.classList.contains('calls-disabled'));
+      test('> should not navigate back', function() {
+        triggerEvent(header, 'action');
+        sinon.assert.notCalled(MainNavigation.back);
       });
     });
   });

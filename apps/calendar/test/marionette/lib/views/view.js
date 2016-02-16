@@ -31,6 +31,10 @@ View.prototype = {
     return this.client.findElement(this.selector);
   },
 
+  get element() {
+    return this.getElement();
+  },
+
   /**
    * Whether or not the root element associated with
    * this view is displayed.
@@ -55,9 +59,25 @@ View.prototype = {
     var formData = {};
     formData[name] = value;
     this.setFormData(formData);
+
+    // Send input event to trigger the listener method.
+    // e.g. Set the start date to trigger doing auto change end date.
+    this.form.findElement('[name="' + name + '"]')
+      .scriptWith(function(el) {
+        el.dispatchEvent(new Event('input'));
+        el.dispatchEvent(new Event('change'));
+      });
+    this.form.scriptWith(function(el) {
+      el.dispatchEvent(new Event('input'));
+      el.dispatchEvent(new Event('change'));
+    });
   },
 
   setFormData: function(formData) {
     this.client.forms.fill(this.form, formData);
+  },
+
+  getFormValue: function(name) {
+    return this.findElement('[name="' + name + '"]').getAttribute('value');
   }
 };

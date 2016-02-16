@@ -1,93 +1,86 @@
-(function(window) {
-  'use strict';
+define(function(require, exports, module) {
+'use strict';
 
-  var template = Calendar.Templates.Account;
+var Presets = require('common/presets');
+var View = require('view');
+var co = require('ext/co');
+var core = require('core');
+var template = require('templates/account');
 
-  function CreateAccount(options) {
-    Calendar.View.apply(this, arguments);
-    this.cancel = this.cancel.bind(this);
-    this._initEvents();
-  }
+require('dom!create-account-view');
 
-  CreateAccount.prototype = {
-    __proto__: Calendar.View.prototype,
+function CreateAccount(options) {
+  View.apply(this, arguments);
+  this.cancel = this.cancel.bind(this);
+}
+module.exports = CreateAccount;
 
-    _changeToken: 0,
+CreateAccount.prototype = {
+  __proto__: View.prototype,
 
-    presets: Calendar.Presets,
+  _changeToken: 0,
 
+  presets: Presets,
 
-    selectors: {
-      element: '#create-account-view',
-      accounts: '#create-account-presets',
-      cancelButton: '#create-account-view .cancel'
-    },
+  selectors: {
+    element: '#create-account-view',
+    accounts: '#create-account-presets',
+    header: '#create-account-header'
+  },
 
-    get accounts() {
-      return this._findElement('accounts');
-    },
+  get accounts() {
+    return this._findElement('accounts');
+  },
 
-    get cancelButton() {
-      return this._findElement('cancelButton');
-    },
+  get header() {
+    return this._findElement('header');
+  },
 
-    _initEvents: function() {
-      var self = this;
-      var store = this.app.store('Account');
+  _initEvents: function() {
+    this._accountStream = core.bridge.observeAccounts();
+    this._accountStream.listen(() => this.render());
+    this.header.addEventListener('action', this.cancel);
+  },
 
-      // Here instead of bind
-      // for inheritance / testing reasons.
-      function render() {
-        self.render();
-      }
+  destroy: function() {
+    this._accountStream && this._accountStream.cancel();
+    this.header.removeEventListener('action', this.cancel);
+  },
 
-      store.on('remove', render);
-      store.on('add', render);
+  render: co.wrap(function *() {
+    var presets = this.presets;
+    var listElement = this.accounts;
+    var currentToken = ++this._changeToken;
 
-      this.cancelButton.addEventListener('click', this.cancel);
-    },
+    listElement.innerHTML = '';
 
-    render: function() {
-      var presets = this.presets;
-      var store = this.app.store('Account');
-      var listElement = this.accounts;
-      var currentToken = ++this._changeToken;
-
-      listElement.innerHTML = '';
-
-      function renderPreset(presetName) {
-        listElement.insertAdjacentHTML(
-          'beforeend',
-          template.provider.render({ name: presetName })
-        );
-      }
-
-      store.availablePresets(presets, function(err, available) {
-        if (this._changeToken !== currentToken) {
-          // another render call takes priority over this one.
-          return;
-        }
-
-        if (err) {
-          console.log('Error displaying presets', err);
-          return;
-        }
-
-        available.forEach(renderPreset);
-
-        if (this.onrender) {
-          this.onrender();
-        }
-
-      }.bind(this));
-    },
-
-    cancel: function() {
-      window.back();
+    function renderPreset(presetName) {
+      listElement.insertAdjacentHTML(
+        'beforeend',
+        template.provider.render({ name: presetName })
+      );
     }
-  };
 
-  CreateAccount.prototype.onfirstseen = CreateAccount.prototype.render;
-  Calendar.ns('Views').CreateAccount = CreateAccount;
+    try {
+      var available = yield core.bridge.availablePresets(presets);
+      if (this._changeToken !== currentToken) {
+        // another render call takes priority over this one.
+        return;
+      }
+      available.forEach(renderPreset);
+    } catch (err) {
+      console.error('Error displaying presets', err);
+    }
+  }),
 
-}(this));
+  onfirstseen: function() {
+    // render will be called as a side-effect of _initEvents
+    this._initEvents();
+  },
+
+  cancel: function() {
+    window.history.back();
+  }
+};
+
+});

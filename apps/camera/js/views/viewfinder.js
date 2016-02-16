@@ -5,10 +5,10 @@ define(function(require, exports, module) {
  * Dependencies
  */
 
+var debug = require('debug')('view:viewfinder');
 var bind = require('lib/bind');
 var CameraUtils = require('lib/camera-utils');
-var debug = require('debug')('view:viewfinder');
-var View = require('vendor/view');
+var View = require('view');
 
 /**
  * Locals
@@ -27,24 +27,30 @@ var clamp = function(value, minimum, maximum) {
 module.exports = View.extend({
   name: 'viewfinder',
   className: 'js-viewfinder',
-  fadeTime: 200,
+  fadeTime: 360,
 
   initialize: function() {
     this.render();
-
-    bind(this.el, 'click', this.onClick);
-    bind(this.el, 'animationend', this.onShutterEnd);
-
     this.getSize();
   },
 
   render: function() {
     this.el.innerHTML = this.template();
-
-    // Find elements
     this.els.frame = this.find('.js-frame');
     this.els.video = this.find('.js-video');
     this.els.videoContainer = this.find('.js-video-container');
+
+    // Clean up
+    delete this.template;
+
+    debug('rendered');
+    return this.bindEvents();
+  },
+
+  bindEvents: function() {
+    bind(this.el, 'click', this.onClick);
+    bind(this.el, 'animationend', this.onShutterEnd);
+    return this;
   },
 
   /**
@@ -59,10 +65,14 @@ module.exports = View.extend({
   getSize: function() {
     this.width = window.innerWidth;
     this.height = window.innerHeight;
+    return {
+      width: this.width,
+      height: this.height
+    };
   },
 
   onClick: function(e) {
-    this.emit('click');
+    this.emit('click', e);
   },
 
   enableZoom: function(minimumZoom, maximumZoom) {
@@ -115,6 +125,16 @@ module.exports = View.extend({
     this._zoom = clamp(zoom, this._minimumZoom, this._maximumZoom);
   },
 
+  _useZoomPreviewAdjustment: false,
+
+  enableZoomPreviewAdjustment: function() {
+    this._useZoomPreviewAdjustment = true;
+  },
+
+  disableZoomPreviewAdjustment: function() {
+    this._useZoomPreviewAdjustment = false;
+  },
+
   /**
    * Adjust the scale of the <video/> tag to compensate for the inability
    * of the Camera API to zoom the preview stream beyond a certain point.
@@ -122,23 +142,37 @@ module.exports = View.extend({
    * calculated by `Camera.prototype.getZoomPreviewAdjustment()`.
    */
   setZoomPreviewAdjustment: function(zoomPreviewAdjustment) {
-    this.els.video.style.transform = 'scale(' + zoomPreviewAdjustment + ')';
+    if (this._useZoomPreviewAdjustment) {
+      this.els.video.style.transform = 'scale(' + zoomPreviewAdjustment + ')';
+    }
   },
 
   stopStream: function() {
     this.els.video.mozSrcObject = null;
   },
 
-  fadeOut: function(done) {
+  fadeOut: function() {
     debug('fade-out');
-    this.el.classList.remove('visible');
-    if (done) { setTimeout(done, this.fadeTime);}
+    var self = this;
+    this.hide();
+    clearTimeout(this.fadeTimeout);
+    this.fadeTimeout = setTimeout(function() {
+      self.emit('fadedout');
+    }, this.fadeTime);
   },
 
-  fadeIn: function(done) {
+  fadeIn: function(firstRun) {
     debug('fade-in');
-    this.el.classList.add('visible');
-    if (done) { setTimeout(done, this.fadeTime); }
+    this.show();
+    if (firstRun) {
+      this.emit('fadedin');
+      // Delay to prevent the duration from applying too early
+      requestAnimationFrame(() => {
+        this.el.style.transitionDuration = this.fadeTime + 'ms';
+      });
+    } else {
+      this.fadeTimeout = setTimeout(this.firer('fadedin'), this.fadeTime);
+    }
   },
 
   /**
@@ -170,6 +204,7 @@ module.exports = View.extend({
    * @param  {Boolean} mirrored
    */
   updatePreview: function(preview, sensorAngle, mirrored) {
+    if (!preview) { return; }
     var aspect;
 
     // Invert dimensions if the camera's `sensorAngle` is
@@ -245,7 +280,8 @@ module.exports = View.extend({
 
   template: function() {
     return '<div class="viewfinder-frame js-frame">' +
-        '<div class="viewfinder-video-container js-video-container">' +
+        '<div class="viewfinder-video-container js-video-container" ' +
+        'aria-hidden="true">' +
           '<video class="viewfinder-video js-video"></video>' +
         '</div>' +
         '<div class="viewfinder-grid">' +

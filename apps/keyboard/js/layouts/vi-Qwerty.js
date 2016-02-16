@@ -4,11 +4,13 @@
 
 Keyboards['vi-Qwerty'] = {
   label: 'Vietnamese',
+  shortLabel: 'Vi',
   menuLabel: 'Tiếng Việt (QWERTY)',
   imEngine: 'vietnamese',
   needsCandidatePanel: true,
   width: 10,
   types: ['text', 'url', 'email'],
+  lang: 'vi',
   alt: {
     'a': 'ăâ',
     'd': 'đ',

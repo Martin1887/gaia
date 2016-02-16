@@ -1,18 +1,16 @@
 'use strict';
-/* global MocksHelper, SimPinSystemDialog */
-
-mocha.globals(['BaseUI', 'AppWindowManager', 'LayoutManager',
-               'System', 'SystemDialog', 'SimPinSystemDialog',
-               'dispatchEvent', 'stubById']);
+/* global MocksHelper, SimPinSystemDialog, LayoutManager */
 
 requireApp('system/test/unit/mock_app_window_manager.js');
 requireApp('system/test/unit/mock_layout_manager.js');
 requireApp('system/test/unit/mock_system_dialog_manager.js');
+requireApp('system/test/unit/mock_keyboard_manager.js');
 
 var mocksForSystemSimPinDialog = new MocksHelper([
   'AppWindowManager',
   'LayoutManager',
-  'SystemDialogManager'
+  'SystemDialogManager',
+  'KeyboardManager'
 ]).init();
 
 suite('system/SimPinSystemDialog', function() {
@@ -27,13 +25,15 @@ suite('system/SimPinSystemDialog', function() {
     stubById = this.sinon.stub(document, 'getElementById');
     stubById.returns(document.createElement('div'));
     stubDispatch = this.sinon.stub(window, 'dispatchEvent');
-    requireApp('system/js/system.js');
+    requireApp('system/js/service.js');
     requireApp('system/js/base_ui.js');
     requireApp('system/js/system_dialog.js');
     requireApp('system/js/system_simcard_dialog.js', done);
+    window.layoutManager = new LayoutManager();
   });
 
   teardown(function() {
+    window.layoutManager = null;
     stubById.restore();
     stubDispatch.restore();
   });

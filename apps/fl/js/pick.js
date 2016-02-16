@@ -1,6 +1,15 @@
+'use strict';
+/* global
+  _,
+  $,
+  ForwardLock,
+  objectStore,
+  RINGTONE_NAME_KEY
+*/
+
 // Wait until we're loaded, localized, and get an activity request
 window.addEventListener('load', function() {
-  navigator.mozL10n.ready(function() {
+  navigator.mozL10n.once(function() {
     navigator.mozSetMessageHandler('activity', function(activity) {
       var type = activity.source.data.type;
       if (type === 'ringtone' ||
@@ -22,21 +31,23 @@ window.addEventListener('load', function() {
 
 function pickRingtone(activity) {
   var selectedRingtone;
+  var selectedRingtoneID;
   var player = new Audio(); // for previewing sounds
   var currentRingtoneName;
   var numRingtones = 0;
-  var template = $('ringtone-template');
   var container = $('ringtones');
+  var header = $('header');
   container.hidden = false;
 
   // Display the right title
+  $('done').hidden = false;
   $('title').textContent = _('pick-ringtone');
 
   // Make the cancel button work
-  $('back').onclick = function() {
+  header.addEventListener('action', function() {
     player.pause(); // Stop any currently playing sound.
     activity.postError('cancelled');
-  };
+  });
 
   // Make the done button work
   $('done').onclick = function() {
@@ -48,7 +59,8 @@ function pickRingtone(activity) {
                            function(lockedBlob) {
                              activity.postResult({
                                blob: lockedBlob,
-                               name: selectedRingtone.descriptor.name
+                               name: selectedRingtone.descriptor.name,
+                               id: selectedRingtoneID
                              });
                            });
     });
@@ -74,44 +86,54 @@ function pickRingtone(activity) {
       var cursor = ringtoneStore.openCursor();
       cursor.onsuccess = function() {
         if (cursor.result) {
-          addRingtone(cursor.result.value);
+          addRingtone(cursor.result.value, 'forwardlock:' + cursor.result.key);
           cursor.result.continue();
         }
         else { // we reached the end of the enumeration
-          if (numRingtones === 0)
+          if (numRingtones === 0) {
             displayError(activity, 'no-installed-ringtones');
+          }
         }
       };
     });
   }
 
-  function addRingtone(ringtone) {
+  function addRingtone(ringtone, id) {
     numRingtones++;
     var name = ringtone.descriptor.name;
-    var dom = template.content.cloneNode(true);
-    var input = dom.querySelector('input');
-    dom.querySelector('a').textContent = name;
+    var listItem = document.createElement('li');
+
+    var radio = document.createElement('gaia-radio');
+    radio.name = 'ringtone';
+
+    var label = document.createElement('label');
+    label.textContent = name;
+    radio.appendChild(label);
 
     if (name === currentRingtoneName) {
       selectedRingtone = ringtone;
-      input.checked = true;
+      selectedRingtoneID = id;
+      radio.checked = true;
     }
 
-    input.onchange = function() {
-      if (input.checked) {
+    radio.addEventListener('change', function() {
+      if (radio.checked) {
         selectedRingtone = ringtone;
+        selectedRingtoneID = id;
         play(ringtone);
       }
-    };
+    });
 
-    container.appendChild(dom);
+    listItem.appendChild(radio);
+    container.appendChild(listItem);
   }
 
   function play(ringtone) {
     // We create blob urls as needed. Since this app is always short-lived
     // we don't bother releasing them.
-    if (!ringtone.url)
+    if (!ringtone.url) {
       ringtone.url = URL.createObjectURL(ringtone.blob);
+    }
     player.src = ringtone.url;
     player.play();
   }
@@ -124,10 +146,9 @@ function pickWallpaper(activity) {
   container.hidden = false;
 
   $('title').textContent = _('pick-wallpaper');
-  $('done').hidden = true;
-  $('back').onclick = function() {
+  $('header').addEventListener('action', function() {
     activity.postError('cancelled');
-  };
+  });
 
   // Enumerate the wallpapers from the database and display them onscreen
   objectStore.readonly('wallpapers', function(wallpaperStore) {
@@ -139,8 +160,9 @@ function pickWallpaper(activity) {
         cursor.result.continue();
       }
       else { // we reached the end of the enumeration
-        if (numWallpapers === 0)
+        if (numWallpapers === 0) {
           displayError(activity, 'no-installed-wallpaper');
+        }
       }
     };
   });
@@ -148,10 +170,10 @@ function pickWallpaper(activity) {
   function addWallpaper(wallpaper) {
     var blob = wallpaper.blob;
     var url = URL.createObjectURL(blob);
-    var wallpaper = template.content.cloneNode(true).firstElementChild;
-    container.appendChild(wallpaper);
-    wallpaper.style.backgroundImage = 'url(' + url + ')';
-    wallpaper.onclick = function() {
+    var wallpaperEl = template.content.cloneNode(true).firstElementChild;
+    container.appendChild(wallpaperEl);
+    wallpaperEl.style.backgroundImage = 'url(' + url + ')';
+    wallpaperEl.onclick = function() {
       ForwardLock.getKey(function(secret) {
         ForwardLock.lockBlob(secret, blob, {}, function(lockedBlob) {
           activity.postResult({ blob: lockedBlob });

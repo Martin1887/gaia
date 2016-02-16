@@ -1,3 +1,6 @@
+'use strict';
+/* jshint node:true */
+
 /**
  * @constructor
  * @param {Marionette.Client} client Marionette client to use.
@@ -20,29 +23,18 @@ Gallery.ORIGIN = 'app://gallery.gaiamobile.org';
  */
 Gallery.Selector = Object.freeze({
   thumbnail: '.thumbnail',
-  fullscreenView: '#fullscreen-view',
-  thumbnailsView: '#thumbnail-list-view',
+  thumbnailImage: '.thumbnailImage',
+  thumbnailsView: '#thumbnail-views > footer.thumbnails-list',
   thumbnailsSelectButton: '#thumbnails-select-button',
   thumbnailsDeleteButton: '#thumbnails-delete-button',
-  fullscreenBackButton: '#fullscreen-back-button-tiny',
-  editButton: '#fullscreen-edit-button-tiny',
+  thumbnailsShareButton: '#thumbnails-share-button',
   confirmButton: '#confirm-ok',
+  confirmCancelButton: '#confirm-cancel',
   overlayView: '#overlay',
-  editView: '#edit-view',
-  editExposureButton: '#edit-exposure-button',
-  editCropButton: '#edit-crop-button',
-  editEffectButton: '#edit-effect-button',
-  editEnhanceButton: '#edit-enhance-button',
-  exposureOptions: '#exposure-slider',
-  cropOptions: '#edit-crop-options',
-  effectOptions: '#edit-effect-options',
-  enhanceOptions: '#edit-enhance-options',
-  exposureSlider: '#sliderthumb',
-  editCropAspectPortraitButton: '#edit-crop-aspect-portrait',
-  editEffectSepiaButton: '#edit-effect-sepia',
-  editSaveButton: '#edit-save-button',
-  fullscreenFrame2: '#frame2',
-  fullscreenFrame3: '#frame3'
+  overlayTitle: '#overlay-title',
+  overlayText: '#overlay-text',
+  overlayCameraButton: '#overlay-camera-button',
+  thumbnailsNumberSelected: '#thumbnails-number-selected'
 });
 
 Gallery.prototype = {
@@ -53,24 +45,24 @@ Gallery.prototype = {
   client: null,
 
   /**
-   * @return {Marionette.Element} First element of all thumbnail images.
+   * @return {Marionette.Element} First thumbnail containing element
    */
   get thumbnail() {
     return this.client.helper.waitForElement(Gallery.Selector.thumbnail);
   },
 
   /**
-   * @return {Marionette.Element} List of elements of thumbnail images.
+   * @return {Marionette.Element} List of thumbnail containing elements
    */
   get thumbnails() {
     return this.client.findElements(Gallery.Selector.thumbnail);
   },
 
   /**
-   * @return {Marionette.Element} Container for fullscreen view of an image.
+   * @return {Marionette.Element} List of thumbnail images
    */
-  get fullscreenView() {
-    return this.client.helper.waitForElement(Gallery.Selector.fullscreenView);
+  get thumbnailsImage() {
+    return this.client.findElements(Gallery.Selector.thumbnailImage);
   },
 
   /**
@@ -81,6 +73,14 @@ Gallery.prototype = {
   },
 
   /**
+   * @return {boolean} thumbnails view display status.
+   */
+  get thumbnailsViewDisplayed() {
+    return this.client.helper.waitForElement(
+      Gallery.Selector.thumbnailsView).displayed();
+  },  
+
+  /**
    * @return {Marionette.Element} Container for different overlay messages.
    */
   get overlayView() {
@@ -88,12 +88,26 @@ Gallery.prototype = {
   },
 
   /**
-   * @return {Marionette.Element} Element to click to get back
-   *                              to thumbnail view.
+   * @return {Marionette.Element} Container for overlay message title.
    */
-  get fullscreenBackButton() {
-    return this.client.helper.waitForElement(
-      Gallery.Selector.fullscreenBackButton);
+  get overlayTitle() {
+    return this.client.helper.waitForElement(Gallery.Selector.overlayTitle);
+  },
+  
+  /**
+   * @return {Marionette.Element} Container for overlay message content.
+   */
+  get overlayText() {
+    return this.client.helper.waitForElement(Gallery.Selector.overlayText);
+  },
+
+  /**
+   * @return {Marionette.Element} Container for the camera button 
+   *                              when no media is found.
+   */
+  get cameraButton() {
+    return this.client.helper.waitForElement(Gallery.Selector.
+      overlayCameraButton);
   },
 
   /**
@@ -113,6 +127,14 @@ Gallery.prototype = {
   },
 
   /**
+   * @return {Marionette.Element} Element to click to share multiple images.
+   */
+  get thumbnailsShareButton() {
+    return this.client.helper.waitForElement(
+      Gallery.Selector.thumbnailsShareButton);
+  },
+
+  /**
    * @return {Marionette.Element} Element to click to confirm the delete dialog.
    */
   get confirmButton() {
@@ -120,154 +142,61 @@ Gallery.prototype = {
   },
 
   /**
-   * @return {Marionette.Element} Element to click for image editing mode.
+   * @return {Marionette.Element} Element to click to cancel the delete dialog.
    */
-  get editButton() {
-    return this.client.helper.waitForElement(Gallery.Selector.editButton);
-  },
-
-  /**
-   * @return {Marionette.Element} Element to click for effects editing mode.
-   */
-  get editEffectButton() {
-    return this.client.helper.waitForElement(Gallery.Selector.editEffectButton);
-  },
-
-  /**
-   * @return {Marionette.Element} Element to click for the exposure
-   *                              editing mode.
-   */
-  get editEnhanceButton() {
+  get confirmCancelButton() {
     return this.client.helper.waitForElement(
-      Gallery.Selector.editEnhanceButton);
+      Gallery.Selector.confirmCancelButton);
   },
 
   /**
-   * @return {Marionette.Element} Element to click for the exposure editing
-   *                              mode.
+   * @return {Marionette.Element} Element to display number of selected items
    */
-  get editExposureButton() {
+  get thumbnailsNumberSelected() {
     return this.client.helper.waitForElement(
-      Gallery.Selector.editExposureButton);
+      Gallery.Selector.thumbnailsNumberSelected);
   },
 
-  /**
-   * @return {Marionette.Element} Element to click for crop editing mode.
-   */
-  get editCropButton() {
-    return this.client.helper.waitForElement(Gallery.Selector.editCropButton);
+  switchToSelectView: function() {
+    this.thumbnailsSelectButton.click();
+    this.client.waitFor(function() {
+      return this.thumbnailsNumberSelected.displayed();
+    }.bind(this));
   },
 
-  /**
-   * @return {Marionette.Element} Container to host the exposure options' tab.
-   */
-  get exposureOptions() {
-    return this.client.helper.waitForElement(Gallery.Selector.exposureOptions);
+  tapFirstThumbnail: function() {
+    this.thumbnail.click();
   },
 
-  /**
-   * @return {Marionette.Element} Container to host the crop options' tab.
-   */
-  get cropOptions() {
-    return this.client.helper.waitForElement(Gallery.Selector.cropOptions);
+  tapThumbnail: function(n) {
+    this.thumbnails[n].click();
   },
 
-  /**
-   * @return {Marionette.Element} Container to host the effect options' tab.
-   */
-  get effectOptions() {
-    return this.client.helper.waitForElement(Gallery.Selector.effectOptions);
+  isThumbnailSelected: function(n) {
+    this.client.waitFor(function() {
+      return this.thumbnails[n].cssProperty('outline') != null;
+    }.bind(this));
   },
 
-  /**
-   * @return {Marionette.Element} Container to host the enhance options' tab.
-   */
-  get enhanceOptions() {
-    return this.client.helper.waitForElement(Gallery.Selector.enhanceOptions);
-  },
-
-  /**
-   * @return {Marionette.Element} Element to swipe to change exposure settings.
-   */
-  get exposureSlider() {
-    return this.client.helper.waitForElement(Gallery.Selector.exposureSlider);
-  },
-
-  /**
-   * @return {Marionette.Element} Element to click to save changes from editing.
-   */
-  get editSaveButton() {
-    return this.client.helper.waitForElement(Gallery.Selector.editSaveButton);
-  },
-
-  /**
-   * @return {Marionette.Element} Element to click to crop an image.
-   */
-  get editCropAspectPortraitButton() {
-    return this.client
-               .findElement(Gallery.Selector.editCropAspectPortraitButton);
-  },
-
-  /**
-   * @return {Marionette.Element} Element to click to apply a sepia affect.
-   */
-  get editEffectSepiaButton() {
-    return this.client.findElement(Gallery.Selector.editEffectSepiaButton);
-  },
-
-  /**
-   * @return {Marionette.Element} Container element to host fullscreen images.
-   */
-  get fullscreenFrame2() {
-    return this.client.helper.waitForElement(Gallery.Selector.fullscreenFrame2);
-  },
-
-  /**
-   * @return {Marionette.Element} Container element to host fullscreen images.
-   */
-  get fullscreenFrame3() {
-    return this.client.helper.waitForElement(Gallery.Selector.fullscreenFrame3);
-  },
-
-  /**
-   * @return {boolean} Whether or not the thumbnail view is in list mode.
-   */
-  isThumbnailListViewVisible: function() {
-    var elementClass = this.client
-      .findElement('#thumbnails')
-      .getAttribute('class');
-    return elementClass == 'list';
-  },
-
-  /**
-   * Read the translateX style and return its integer value.
-   */
-  getFrameTranslation: function(frame) {
-    var style = frame.getAttribute('style');
-    return parseInt(style.match(/.*:\s.*\((\d*).*/)[1]);
-  },
-
-  /**
-  * Wait for the image editor view to render before continuing with the tests.
-  */
-  waitForImageEditor: function() {
-    this.client.helper.waitForElement(Gallery.Selector.editCropButton);
-    this.client.helper.waitForElement(Gallery.Selector.editEffectButton);
-    this.client.helper.waitForElement(Gallery.Selector.editExposureButton);
+  getThumbnailFileName: function(n) {
+    return this.thumbnailsImage[n].getAttribute('data-filename');
   },
 
   /**
    * Start the Gallery, save the client for future ops, and wait for the
    * Gallery to finish an initial render.
    */
-  launch: function() {
-
+  launch: function(nomedia) {
     this.client.apps.launch(Gallery.ORIGIN);
     this.client.apps.switchToApp(Gallery.ORIGIN);
     // Wait for the document body to know we're really 'launched'.
     this.client.helper.waitForElement('body');
     // Make sure the gallery is done scanning for new content.
-    this.client.setSearchTimeout(3000);
-    this.client.helper.waitForElement(Gallery.Selector.thumbnail);
+    this.client.setSearchTimeout(1000);
+
+    // Check for thumbnail when loaded with images
+    if (!nomedia) {
+      this.client.helper.waitForElement(Gallery.Selector.thumbnail); 
+    }
   }
 };

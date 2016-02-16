@@ -1,11 +1,18 @@
 {
-  "email": {
-    "src": ["apps/email/js/**/*.js",
-            "!apps/email/js/ext/mailapi/activesync/configurator.js"
-    ],
-    "options": {
-      "destination": "docs/email"
-    }
+  "name": "email",
+  "tags": {
+    "dictionaries": ["jsdoc"]
+  },
+  "source": {
+    "include": ["!apps/email/js/ext/**/*.js", "apps/email/js/**/*.js"]
+  },
+  "plugins": [
+    "plugins/markdown",
+    "plugins/summarize"
+  ],
+  "opts": {
+    "private": true,
+    "recurse": true,
+    "destination": "docs/email"
   }
 }
-

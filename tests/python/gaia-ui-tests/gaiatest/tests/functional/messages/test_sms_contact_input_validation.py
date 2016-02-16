@@ -16,12 +16,15 @@ class TestContactValidation(GaiaTestCase):
         self.messages.launch()
 
         new_message = self.messages.tap_create_new_message()
-        keyboard = new_message.tap_recipient_section()
+
+        from gaiatest.apps.keyboard.app import Keyboard
+        keyboard = Keyboard(self.marionette)
+
         keyboard.send('test_contact')
         keyboard.tap_enter()
 
         # Verify if recipient is invalid and uneditable
-        self.assertIn('attention', new_message.recipient_css_class)
+        self.assertIn('invalid', new_message.recipient_css_class)
         self.assertTrue(new_message.is_recipient_name_editable == 'false')
 
         new_message.tap_recipient_name()

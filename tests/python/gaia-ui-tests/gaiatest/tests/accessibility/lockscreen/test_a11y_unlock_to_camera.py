@@ -2,7 +2,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from marionette.by import By
+from marionette_driver import By
+
 from gaiatest import GaiaTestCase
 from gaiatest.apps.lockscreen.app import LockScreen
 
@@ -19,16 +20,15 @@ class TestLockScreenAccessibility(GaiaTestCase):
         lockScreen_window = self.marionette.find_element(*lock_screen._lockscreen_window_locator)
         camera_locator = (By.CSS_SELECTOR, '[data-manifest-name="Camera"]')
 
-        self.assertFalse(self.accessibility.is_hidden(lockScreen_window))
-        self.assertFalse(self.is_element_present(*camera_locator))
+        self.assertTrue(self.accessibility.is_visible(lockScreen_window))
+        self.assertFalse(lock_screen.is_element_present(*camera_locator))
 
         camera = lock_screen.a11y_click_camera_button()
-        lock_screen.wait_for_lockscreen_not_visible()
-        self.assertEquals(self.apps.displayed_app.name, camera.name)
+        self.wait_for_condition(lambda m: self.apps.displayed_app.name == camera.name)
 
         self.assertTrue(self.accessibility.is_hidden(lockScreen_window))
-        self.assertFalse(self.accessibility.is_hidden(self.marionette.find_element(
+        self.assertTrue(self.accessibility.is_visible(self.marionette.find_element(
             *camera_locator)))
 
-        camera.switch_to_camera_frame()
+        self.apps.switch_to_displayed_app()
         camera.wait_for_capture_ready()

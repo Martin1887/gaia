@@ -8,10 +8,7 @@ marionette('email message list edit mode', function() {
   var app;
 
   var client = marionette.client({
-    settings: {
-      // disable keyboard ftu because it blocks our display
-      'keyboard.ftu.enabled': false
-    }
+    desiredCapabilities: { raisesAccessibilityExceptions: false }
   });
 
   var server = serverHelper.use(null, this);
@@ -25,13 +22,10 @@ marionette('email message list edit mode', function() {
     ]);
   });
 
-  test('tapping trash with no selected messages should exit', function() {
+  test('trash is disabled when no selected messages', function() {
     assert.ok(true);
     app.editMode();
-    app.editModeTrash();
-
-    var checkboxes = app.editModeCheckboxes();
-    assert.ok(!checkboxes[0].displayed());
+    app.isEditModeTrashDisabled();
   });
 
 });

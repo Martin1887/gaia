@@ -2,16 +2,17 @@
 
 /* global BookmarkRemover, loadBodyHTML, BookmarksDatabase */
 /* global requireApp, require, suite, suiteTeardown, suiteSetup, test, assert,
-          sinon, teardown, setup */
+          sinon, teardown, setup, MockL10n */
 
 require('/shared/js/bookmarks_database.js');
 require('/shared/test/unit/load_body_html_helper.js');
+require('/shared/test/unit/mocks/mock_l10n.js');
 requireApp('bookmark/js/bookmark_remover.js');
-requireApp('bookmark/test/unit/mock_l10n.js');
 
 suite('bookmark_remover.js >', function() {
 
   var getStub;
+  var realMozL10n;
 
   var name = 'Mozilla';
   var url = 'http://www.mozilla.org/es-ES/firefox/new/';
@@ -26,16 +27,19 @@ suite('bookmark_remover.js >', function() {
   suiteSetup(function() {
     getStub = sinon.stub(BookmarksDatabase, 'get', function(purl) {
       return {
-        then: function(resolve, refect) {
-          databaseInError ? refect('refected') :
+        then: function(resolve, reject) {
+          databaseInError ? reject('rejected') :
                             resolve (purl === url ? bookmark : null);
         }
       };
     });
+    realMozL10n = navigator.mozL10n;
+    navigator.mozL10n = MockL10n;
   });
 
   suiteTeardown(function() {
     getStub.restore();
+    navigator.mozL10n = realMozL10n;
   });
 
   setup(function() {
@@ -51,9 +55,23 @@ suite('bookmark_remover.js >', function() {
     BookmarkRemover.init({
       id: bookmark.url
     });
-    assert.isTrue(document.getElementById('title').textContent.contains(name));
-    assert.isTrue(document.getElementById('message').textContent.
-                                                            contains(name));
+    assert.isTrue(document.getElementById('title').dataset.l10nArgs
+      .contains(name));
+    assert.isTrue(document.getElementById('message').dataset.l10nArgs
+      .contains(name));
+  });
+
+  test('Handles quotes in bookmark name >', function() {
+    bookmark.name = name = 'Mozilla"\'';
+    BookmarkRemover.init({
+      id: bookmark.url
+    });
+    var titleArgs =
+      JSON.parse(document.getElementById('title').dataset.l10nArgs);
+    var messageArgs =
+      JSON.parse(document.getElementById('message').dataset.l10nArgs);
+    assert.equal(titleArgs.name, name);
+    assert.equal(messageArgs.name, name);
   });
 
   test('Bookmark does not exist >', function(done) {
@@ -71,7 +89,7 @@ suite('bookmark_remover.js >', function() {
     BookmarkRemover.init({
       id: bookmark.url,
       oncancelled: function(e) {
-        assert.equal(e, 'refected');
+        assert.equal(e, 'rejected');
         done();
       }
     });

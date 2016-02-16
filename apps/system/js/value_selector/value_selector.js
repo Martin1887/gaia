@@ -1,199 +1,348 @@
-/* -*- Mode: js; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- /
-/* vim: set shiftwidth=2 tabstop=2 autoindent cindent expandtab: */
+/* global BaseUI, InputParser, ValueSelector, SpinDatePicker,
+          ValuePicker, Sanitizer, LazyLoader */
 
 'use strict';
 
-var ValueSelector = {
+(function(exports) {
 
-  _containers: {},
-  _popups: {},
-  _buttons: {},
-  _datePicker: null,
-  _currentPickerType: null,
-  _currentInputType: null,
-  _currentDatetimeValue: '',
-  _im: navigator.mozInputMethod,
+  var _id = 0;
 
-  debug: function(msg) {
-    var debugFlag = false;
-    if (debugFlag) {
-      console.log('[ValueSelector] ', msg);
-    }
-  },
-
-  init: function vs_init() {
-    var self = this;
-
-    window.addEventListener('mozChromeEvent', function(evt) {
-      switch (evt.detail.type) {
-        case 'inputmethod-contextchange':
-          self.inputFocusChange(evt.detail);
-          break;
-      }
+  function toCamelCase(str) {
+    return str.replace(/\-(.)/g, function replacer(str, p1) {
+      return p1.toUpperCase();
     });
+  }
 
-    this._element = document.getElementById('value-selector');
-    this._element.addEventListener('mousedown', this);
-    this._containers['select'] =
-      document.getElementById('value-selector-container');
-    this._containers['select'].addEventListener('click', this);
+  exports.ValueSelector = function(app) {
+    this.app = app;
+    this.containerElement = app.element;
+    this.instanceID = _id++;
+    this._currentPickerType = null;
+    this._currentInputType = null;
+    this._currentDatetimeValue = '';
+    this._injected = false;
+    this._datePicker = null;
+    this._timePicker = null;
 
-    this._popups['select'] =
-      document.getElementById('select-option-popup');
-    this._popups['select'].addEventListener('submit', this);
-    this._popups['time'] =
-      document.getElementById('time-picker-popup');
-    this._popups['date'] =
-      document.getElementById('spin-date-picker-popup');
+    this.isShown = false;
 
-    this._buttons['select'] = document.getElementById('select-options-buttons');
-    this._buttons['select'].addEventListener('click', this);
+    app.element.addEventListener('_opening', this);
+    app.element.addEventListener('_closing', this);
+    app.element.addEventListener('_closed', this);
+    app.element.addEventListener('_inputfocus', this);
+    app.element.addEventListener('_inputblur', this);
+    app.element.addEventListener('_localized', this);
+    LazyLoader.load(['shared/js/input_parser.js']);
+    window.addEventListener('timeformatchange', this);
+  };
 
-    this._buttons['time'] = document.getElementById('time-picker-buttons');
-    this._buttons['time'].addEventListener('click', this);
+  ValueSelector.prototype = Object.create(BaseUI.prototype);
 
-    this._buttons['date'] = document.getElementById('spin-date-picker-buttons');
-    this._buttons['date'].addEventListener('click', this);
+  ValueSelector.prototype.CLASS_NAME = 'ValueSelector';
 
-    this._context = document.getElementById('time-picker');
+  ValueSelector.prototype.ELEMENT_PREFIX = 'value-selector-';
 
-    this._containers['time'] = this._context.querySelector('.picker-container');
-    this._containers['date'] = document.getElementById('spin-date-picker');
+  ValueSelector.prototype.EVENT_PREFIX = 'value-selector-';
 
-    // Prevent focus being taken away by us for time picker.
-    // The event listener on outer box will not be triggered cause
-    // there is a evt.stopPropagation() in value_picker.js
+  ValueSelector.prototype.customID = function vs_customID() {
+    if (this.app) {
+      return '[' + this.app.origin + ']';
+    } else {
+      return '';
+    }
+  };
 
-    var pickerElements = ['.value-picker-hours', '.value-picker-minutes',
-                         '.value-picker-hour24-state'];
+  ValueSelector.prototype._im = navigator.mozInputMethod;
 
-    pickerElements.forEach(function(className) {
-      var el = this._context.querySelector(className);
-      el.addEventListener('mousedown', this);
-    }, this);
+  ValueSelector.prototype.destroy = function() {
+    window.removeEventListener('timeformatchange', this);
+  };
 
-    window.addEventListener('appopened', this);
-    window.addEventListener('appclosing', this);
-
-    // invalidate the current date and time picker when language setting changes
-    navigator.mozSettings.addObserver('language.current',
-      (function language_change(e) {
+  ValueSelector.prototype.handleEvent = function vs_handleEvent(evt) {
+    this.app.debug('handling ' + evt.type);
+    var target = evt.target;
+    switch (evt.type) {
+      case 'submit':
+      case 'mousedown':
+        evt.preventDefault();
+        break;
+      case 'click':
+        if (target.dataset.type === 'cancel') {
+          this.cancel();
+        } else if (target.dataset.type === 'ok') {
+          this.confirm();
+        } else {
+          this.handleSelect(target);
+        }
+        break;
+      case '_opening':
+      case '_closing':
+      case '_closed':
+        if (this._injected) {
+          this.hide();
+        }
+        break;
+      case '_localized':
+        // invalidate the current date and time picker when language setting
+        // changes
         if (this._datePicker) {
           this._datePicker.uninit();
           this._datePicker = null;
         }
-        if (this._timePickerInitialized) {
-          this._timePickerInitialized = false;
-          TimePicker.uninitTimePicker();
-      }}).bind(this));
-  },
+        if (this._timePicker) {
+          this._timePicker.uninit();
+          this._timePicker = null;
+        }
+        break;
+      case 'timeformatchange':
+        // invalidate the current time picker when time format changes
+        if (this._timePicker) {
+          this._timePicker.uninit();
+          this._timePicker = null;
+        }
+        break;
+      case '_inputfocus':
+        this._currentDatetimeValue = evt.detail.value;
+        this._currentInputType = evt.detail.inputType;
 
-  inputFocusChange: function vs_focusChange(detail) {
-    var self = this;
+        this.show(evt.detail);
+        break;
+      case '_inputblur':
+        this._currentDatetimeValue = undefined;
+        this._currentInputType = undefined;
 
-    var typeToHandle = ['select-one', 'select-multiple', 'date',
-      'time', 'datetime', 'datetime-local', 'blur'];
+        this.hide();
+        break;
+      case 'transitionend':
+        this.element.classList.remove('transitioning');
+        break;
+    }
+  };
 
-    var currentInputType = detail.inputType;
-    // handle the <select> element and inputs with type of date/time
-    // in system app for now
-    if (typeToHandle.indexOf(currentInputType) == -1)
-      return;
+  ValueSelector.prototype.render = function vs_render(callback) {
+    this.publish('willrender');
+    this.containerElement.insertAdjacentHTML('beforeend',
+          Sanitizer.unwrapSafeHTML(this.view()));
+    this._fetchElements();
+    this._registerEvents();
+    this._injected = true;
+    this.publish('rendered');
+    callback();
+  };
 
-    if (detail.choices)
-      detail.choices = JSON.parse(detail.choices);
+  ValueSelector.prototype._fetchElements = function vs__fetchElements() {
+    this.element = document.getElementById(this.CLASS_NAME + this.instanceID);
+    this.elements = {};
 
-    var currentValue = detail.value;
-    self._currentDatetimeValue = currentValue;
-    self._currentInputType = currentInputType;
+    this.elementClasses = ['select-option-popup', 'container',
+      'options-container', 'options-title', 'select-options-buttons',
+      'time-picker-popup', 'time-picker', 'time-picker-container',
+      'time-picker-buttons', 'spin-date-picker-popup', 'spin-date-picker',
+      'spin-date-picker-buttons'];
+
+    // Loop and add element with camel style name to Value Selector attribute.
+    this.elementClasses.forEach(function createElementRef(name) {
+      this.elements[toCamelCase(name)] =
+        this.element.querySelector('.' + this.ELEMENT_PREFIX + name);
+    }, this);
+  };
+
+  ValueSelector.prototype.view = function vs_view() {
+    /* jshint maxlen: false */
+    var id = this.CLASS_NAME + this.instanceID;
+    return Sanitizer.createSafeHTML `
+    <div data-z-index-level="value-selector" class="value-selector" id="${id}" hidden>
+      <form class="value-selector-select-option-popup" role="dialog" data-type="value-selector" hidden>
+        <section class="value-selector-container">
+          <h1 class="value-selector-options-title" data-l10n-id="choose-option"></h1>
+          <ol class="value-selector-options-container" role="listbox"></ol>
+        </section>
+        <menu class="value-selector-select-options-buttons value-selector-buttons">
+          <button class="value-option-confirm full" data-type="ok" data-l10n-id="ok"></button>
+        </menu>
+      </form>
+      <div class="value-selector-time-picker-popup" role="dialog" data-type="time-selector" hidden>
+        <h1 data-l10n-id="select-time"></h1>
+        <div class="value-selector-time-picker">
+          <div class="value-selector-time-picker-container picker-container">
+            <div class="picker-bar-background"></div>
+            <div class="value-picker-hours-wrapper">
+              <div class="value-picker-hours animation-on"></div>
+            </div>
+            <div class="value-picker-minutes-wrapper">
+              <div class="value-picker-minutes animation-on"></div>
+            </div>
+            <div class="value-picker-hour24-wrapper">
+              <div class="value-picker-hour24-state animation-on"></div>
+            </div>
+            <div class="value-indicator">
+              <div aria-hidden="true" class="value-indicator-colon hours-minutes-separator">:</div>
+            </div>
+          </div>
+        </div>
+        <menu class="value-selector-time-picker-buttons value-selector-buttons" data-items="2">
+          <button class="value-selector-cancel" data-type="cancel" data-l10n-id="cancel"></button>
+          <button class="value-selector-confirm affirmative" data-type="ok" data-l10n-id="ok"></button>
+        </menu>
+      </div>
+      <div role="dialog" data-type="date-selector" class="value-selector-spin-date-picker-popup" hidden>
+        <h1 data-l10n-id="select-day"></h1>
+        <div class="value-selector-spin-date-picker">
+          <div class="picker-container">
+            <div class="picker-bar-background"></div>
+            <div class="value-picker-date-wrapper">
+              <div class="value-picker-date animation-on"></div>
+              <div class="value-picker-date animation-on"></div>
+              <div class="value-picker-date animation-on"></div>
+              <div class="value-picker-date animation-on"></div>
+            </div>
+            <div class="value-picker-month-wrapper">
+              <div class="value-picker-month animation-on"></div>
+            </div>
+            <div class="value-picker-year-wrapper">
+              <div class="value-picker-year animation-on"></div>
+            </div>
+            <div class="value-indicator"></div>
+          </div>
+        </div>
+        <menu class="value-selector-spin-date-picker-buttons value-selector-buttons" data-items="2">
+          <button class="value-selector-cancel" data-type="cancel" data-l10n-id="cancel"></button>
+          <button class="value-option-confirm affirmative" data-type="ok" data-l10n-id="ok"></button>
+        </menu>
+      </div>
+    </div>`;
+  };
+
+  ValueSelector.prototype.optionView = function(
+    {index, checked, labelFor,text}) {
+    return Sanitizer.createSafeHTML `
+      <li role="option" data-option-index="${index}"
+        aria-selected="${checked}" dir="auto">
+        <label role="presentation" for="${labelFor}">
+          <span>${text}</span>
+        </label>
+      </li>`;
+  };
+
+  ValueSelector.prototype.groupView = function({text}) {
+    return Sanitizer.createSafeHTML `
+    <li role="subheader" dir="auto">
+        <label role="presentation">
+          <span>${text}</span>
+        </label>
+      </li>`;
+  };
+
+  ValueSelector.prototype._registerEvents = function vs__registerEvents() {
+    this.elements.container.addEventListener('click', this);
+    // Prevent the form from submit.
+    this.elements.selectOptionPopup.addEventListener('submit', this);
+    this.element.addEventListener('mousedown', this);
+    this.element.addEventListener('transitionend', this);
+    ['selectOptionsButtons', 'timePickerButtons',
+      'spinDatePickerButtons'].forEach(function(elementId) {
+        this.elements[elementId].addEventListener('click', this);
+      }, this);
+  };
+
+  ValueSelector.prototype.show = function vs_show(detail) {
+    this.isShown = true;
+
+    if (this._injected) {
+      this._showSync(detail);
+    } else {
+      this.render(function afterRender() {
+        // Nesting two requestionAnimationFrames stops the style changes
+        // from this.show coalescing with the creation of the elements,
+        // without forcing a synchronous style flush.
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => {
+            // If isShown flag is reset by hide() we should not show ourselves.
+            if (!this.isShown) {
+              return;
+            }
+            // XXX: It's still possible the detail we use here ended up
+            // overwritten the currently-showning selector, but that can only
+            // happen if another show() take place before this place.
+            this._showSync(detail);
+          });
+        });
+      }.bind(this));
+    }
+  };
+
+  ValueSelector.prototype._showSync = function vs__showSync(detail) {
+    var currentInputType = this._currentInputType;
+    var currentValue = this._currentDatetimeValue;
+
+    this.publish('shown');
+    var min = detail.min;
+    var max = detail.max;
+
+    this.app._setVisibleForScreenReader(false);
+    if (this.element.hidden) {
+      this.element.classList.add('transitioning');
+      this.element.hidden = false;
+    }
 
     switch (currentInputType) {
       case 'select-one':
       case 'select-multiple':
-        self.debug('select triggered' + JSON.stringify(detail));
-        self._currentPickerType = currentInputType;
-        self.showOptions(detail);
+        this.app.debug('select triggered' + JSON.stringify(detail));
+        this._currentPickerType = currentInputType;
+        this.showOptions(detail);
         break;
 
       case 'date':
-        var min = detail.min;
-        var max = detail.max;
-        self.showDatePicker(currentValue, min, max);
+        this.showDatePicker(currentValue, min, max);
         break;
 
       case 'time':
-        self.showTimePicker(currentValue);
+        this.showTimePicker(currentValue);
         break;
 
       case 'datetime':
       case 'datetime-local':
-        var min = detail.min;
-        var max = detail.max;
-        if (currentValue !== '') {
-          var date = new Date(currentValue);
-          var localDate = date.toLocaleFormat('%Y-%m-%d');
-          self.showDatePicker(localDate, min, max);
-        } else {
-          self.showDatePicker('', min, max);
-        }
-        break;
-
-      case 'blur':
-        self.hide();
+        this.showDatePicker(currentValue, min, max);
         break;
     }
+  };
+
+  ValueSelector.prototype.showPanel = function vs_showPanel(type) {
+    ['selectOptionPopup', 'timePickerPopup', 'spinDatePickerPopup'].forEach(
+      function(elementId) {
+        this.elements[elementId].hidden = (type !== elementId);
+      }, this);
   },
 
-  handleEvent: function vs_handleEvent(evt) {
-    switch (evt.type) {
-      case 'appopened':
-      case 'appclosing':
-        this.hide();
-        break;
+  ValueSelector.prototype.hide = function vs_hide() {
+    this.isShown = false;
 
-      case 'click':
-        var currentTarget = evt.currentTarget;
-        switch (currentTarget) {
-          case this._buttons['select']:
-          case this._buttons['time']:
-          case this._buttons['date']:
-            var target = evt.target;
-            if (target.dataset.type == 'cancel') {
-              this.cancel();
-            } else if (target.dataset.type == 'ok') {
-              this.confirm();
-            }
-            break;
-
-          case this._containers['select']:
-            this.handleSelect(evt.target);
-            break;
-        }
-        break;
-
-      case 'submit':
-        // Prevent the form from submit.
-      case 'mousedown':
-        // Prevent focus being taken away by us.
-        evt.preventDefault();
-        break;
-
-      default:
-        this.debug('no event handler defined for' + evt.type);
-        break;
+    if (!this.element || this.element.hidden) {
+      return;
     }
-  },
 
-  handleSelect: function vs_handleSelect(target) {
+    this.app._setVisibleForScreenReader(true);
+    this.element.blur();
+    this.element.classList.add('transitioning');
+    this.element.hidden = true;
+    if (this.app.getBottomMostWindow().isActive() && this.app.isActive()) {
+      this.app.focus();
+    }
+    this.publish('hidden');
+  };
 
+  ValueSelector.prototype.handleSelect = function vs_handleSelect(target) {
     if (target.dataset === undefined ||
         (target.dataset.optionIndex === undefined &&
-         target.dataset.optionValue === undefined))
+         target.dataset.optionValue === undefined)) {
       return;
+    }
 
+    var selectee;
     if (this._currentPickerType === 'select-one') {
-      var selectee = this._containers['select'].
-          querySelectorAll('[aria-selected="true"]');
+      selectee = this.elements.container.querySelectorAll(
+        '[aria-selected="true"]');
       for (var i = 0; i < selectee.length; i++) {
         selectee[i].removeAttribute('aria-selected');
       }
@@ -209,19 +358,20 @@ var ValueSelector = {
     var singleOptionIndex;
     var optionIndices = [];
 
-    var selectee = this._containers['select'].
-          querySelectorAll('[aria-selected="true"]');
+    selectee = this.elements.container.querySelectorAll(
+      '[aria-selected="true"]');
 
     if (this._currentPickerType === 'select-one') {
 
-      if (selectee.length > 0)
+      if (selectee.length > 0) {
         singleOptionIndex = selectee[0].dataset.optionIndex;
+      }
 
       this._im.setSelectedOption(singleOptionIndex);
 
     } else if (this._currentPickerType === 'select-multiple') {
       // Multiple select case
-      for (var i = 0; i < selectee.length; i++) {
+      for (var i = 0; i < selectee.length; i++) { // jshint ignore:line
 
         var index = parseInt(selectee[i].dataset.optionIndex);
         optionIndices.push(index);
@@ -230,68 +380,40 @@ var ValueSelector = {
       this._im.setSelectedOptions(optionIndices);
     }
 
-  },
+  };
 
-  show: function vs_show(detail) {
-    this._element.hidden = false;
-  },
-
-  showPanel: function vs_showPanel(type) {
-    for (var p in this._containers) {
-      if (p === type) {
-        this._popups[p].hidden = false;
-      } else {
-        this._popups[p].hidden = true;
-      }
-    }
-  },
-
-  hide: function vs_hide() {
-    this._element.hidden = true;
-  },
-
-  cancel: function vs_cancel() {
-    this.debug('cancel invoked');
+  ValueSelector.prototype.cancel = function vs_cancel() {
+    this.app.debug('cancel invoked');
     this._im.removeFocus();
     this.hide();
-  },
+  };
 
-  confirm: function vs_confirm() {
+  ValueSelector.prototype.confirm = function vs_confirm() {
     var currentInputType = this._currentInputType;
 
+    // Time and Date value has to conform to RFC3339 spec
     switch (currentInputType) {
       case 'time':
-        var timeValue = TimePicker.getTimeValue();
-        this.debug('output value: ' + timeValue);
+        var timeValue = this._timePicker.getTimeValue();
+        this.app.debug('output value: ' + timeValue);
         this._im.setValue(timeValue);
         break;
-
       case 'date':
-        var dateValue = this._datePicker.value;
         // The format should be 2012-09-19
-        dateValue = dateValue.toLocaleFormat('%Y-%m-%d');
-        this.debug('output value: ' + dateValue);
+        var dateValue = InputParser.exportDate(this._datePicker._value);
+        this.app.debug('output value: ' + dateValue);
         this._im.setValue(dateValue);
         break;
-
       case 'datetime':
       case 'datetime-local':
         var currentDatetimeValue = this._currentDatetimeValue;
         if (this._currentPickerType === 'date') {
-          this.hide();
-
-          if (currentDatetimeValue !== '') {
-            var date = new Date(this._currentDatetimeValue);
-            var localTime = date.toLocaleFormat('%H:%M');
-            this.showTimePicker(localTime);
-          } else {
-            this.showTimePicker();
-          }
+          this.showTimePicker(currentDatetimeValue);
           return;
         } else if (this._currentPickerType === 'time') {
           var selectedDate = this._datePicker.value;
-          var hour = TimePicker.getHour();
-          var minute = TimePicker.timePicker.minute.getSelectedDisplayedText();
+          var hour = this._timePicker.getHour();
+          var minute = this._timePicker.minute.getSelectedIndex();
           var second = '';
           var millisecond = '';
           var date = null;
@@ -313,16 +435,8 @@ var ValueSelector = {
           selectedDate.setSeconds(second);
           selectedDate.setMilliseconds(millisecond);
 
-          var datetimeValue = '';
-          if (currentInputType === 'datetime') {
-            // The datetime format should be 1983-09-08T14:54:39.123Z
-            datetimeValue = selectedDate.toISOString();
-          } else { // if (currentInputType === 'datetime-local')
-            // The datetime-local format should be 1983-09-08T14:54:39.123
-            datetimeValue = selectedDate.toLocaleFormat('%Y-%m-%dT%H:%M:%S.') +
-                            selectedDate.getMilliseconds();
-          }
-          this.debug('output value: ' + datetimeValue);
+          var datetimeValue = selectedDate.getTime();
+          this.app.debug('output value: ' + datetimeValue);
           this._im.setValue(datetimeValue);
         }
         break;
@@ -330,273 +444,285 @@ var ValueSelector = {
 
     this._im.removeFocus();
     this.hide();
-  },
+  };
 
-  showOptions: function vs_showOptions(detail) {
-
+  ValueSelector.prototype.showOptions = function vs_showOptions(detail) {
     var options = null;
-    if (detail.choices && detail.choices.choices)
+    if (detail.choices && detail.choices.choices) {
       options = detail.choices.choices;
+    }
 
-    if (options)
+    if (options) {
       this.buildOptions(options);
-
-    this.show();
-    this.showPanel('select');
-  },
-
-  buildOptions: function(options) {
-
-    var optionHTML = '';
-
-    function escapeHTML(str) {
-      var span = document.createElement('span');
-      span.textContent = str;
-      return span.innerHTML;
     }
 
-    for (var i = 0, n = options.length; i < n; i++) {
+    this.showPanel('selectOptionPopup');
+  };
 
-      var checked = options[i].selected ? ' aria-selected="true"' : '';
-
-      // This for attribute is created only to avoid applying
-      // a general rule in building block
-      var forAttribute = ' for="gaia-option-' + options[i].optionIndex + '"';
-
-      optionHTML += '<li role="option" data-option-index="' +
-                     options[i].optionIndex + '"' + checked + '>' +
-                     '<label role="presentation"' + forAttribute + '> <span>' +
-                     escapeHTML(options[i].text) +
-                     '</span></label>' +
-                    '</li>';
-    }
-
-    var optionsContainer = document.querySelector(
-                             '#value-selector-container ol');
-    if (!optionsContainer)
+  ValueSelector.prototype.buildOptions = function(options) {
+    if (this.elements.optionsContainer) {
+      this.elements.optionsContainer.innerHTML = '';
+    } else {
       return;
+    }
 
     // Add ARIA property to notify if this is a multi-select or not.
-    optionsContainer.setAttribute('aria-multiselectable',
+    this.elements.optionsContainer.setAttribute('aria-multiselectable',
       this._currentPickerType !== 'select-one');
 
-    optionsContainer.innerHTML = optionHTML;
-
+    options.forEach(function(option) {
+      if (option.group) {
+        this.elements.optionsContainer.insertAdjacentHTML('beforeend',
+          Sanitizer.unwrapSafeHTML(this.groupView({
+            text: option.text
+          })));
+      } else {
+        this.elements.optionsContainer.insertAdjacentHTML('beforeend',
+          Sanitizer.unwrapSafeHTML(this.optionView({
+            index: option.optionIndex.toString(10),
+            checked: option.selected.toString(),
+            labelFor: 'gaia-option-' + option.optionIndex,
+            text: option.text
+          })));
+      }
+    }, this);
 
     // Apply different style when the options are more than 1 page
-    if (options.length > 5) {
-      this._containers['select'].classList.add('scrollable');
-    } else {
-      this._containers['select'].classList.remove('scrollable');
-    }
+    this.elements.container.classList.toggle('scrollable', options.length > 5);
 
     // Change the title for multiple select
-    var titleL10nId = 'choose-options';
-    if (this._currentPickerType === 'select-one')
-      titleL10nId = 'choose-option';
+    var titleL10nId = this._currentPickerType === 'select-one' ?
+      'choose-option' : 'choose-options';
 
-    var optionsTitle = document.querySelector(
-                       '#value-selector-container h1');
-
-    if (optionsTitle) {
-      optionsTitle.dataset.l10nId = titleL10nId;
-      optionsTitle.textContent = navigator.mozL10n.get(titleL10nId);
+    if (this.elements.optionsTitle) {
+      this.elements.optionsTitle.dataset.l10nId = titleL10nId;
     }
-  },
+  };
 
-  showTimePicker: function vs_showTimePicker(currentValue) {
-    this._currentPickerType = 'time';
-    this.show();
-    this.showPanel('time');
+  ValueSelector.prototype.showTimePicker =
+    function vs_showTimePicker(currentValue) {
+      this._currentPickerType = 'time';
+      this.showPanel('timePickerPopup');
 
-    if (!this._timePickerInitialized) {
-      TimePicker.initTimePicker();
-      this._timePickerInitialized = true;
-    }
+      if (!this._timePicker) {
+        this._timePicker = new TimePicker(this.elements.timePickerContainer);
+      }
 
-    var time;
-    if (!currentValue) {
-      var now = new Date();
-      time = {
-        hours: now.getHours(),
-        minutes: now.getMinutes()
-      };
-    } else {
-      time = InputParser.importTime(currentValue);
-    }
+      var time;
+      if (!currentValue) {
+        var now = new Date();
+        time = {
+          hours: now.getHours(),
+          minutes: now.getMinutes()
+        };
+      } else {
+        time = InputParser.importTime(currentValue);
+      }
 
-    var timePicker = TimePicker.timePicker;
-    // Set the value of time picker according to the current value
-    if (timePicker.is12hFormat) {
-      var hour = (time.hours % 12);
-      hour = (hour == 0) ? 12 : hour;
-      // 24-hour state value selector: AM = 0, PM = 1
-      var hour24State = (time.hours >= 12) ? 1 : 0;
-      timePicker.hour.setSelectedIndexByDisplayedText(hour);
-      timePicker.hour24State.setSelectedIndex(hour24State);
-    } else {
-      timePicker.hour.setSelectedIndex(time.hours);
-    }
+      // Set the value of time picker according to the current value
+      if (this._timePicker.is12hFormat) {
+        var hour = (time.hours % 12);
+        hour = (hour === 0) ? 12 : hour;
+        // 24-hour state value selector: AM = 0, PM = 1
+        var hour24State = (time.hours >= 12) ? 1 : 0;
+        this._timePicker.hour.setSelectedIndex(hour - 1);
+        this._timePicker.hour24State.setSelectedIndex(hour24State);
+      } else {
+        this._timePicker.hour.setSelectedIndex(time.hours);
+      }
 
-    timePicker.minute.setSelectedIndex(time.minutes);
-  },
-
-  showDatePicker: function vs_showDatePicker(currentValue, min, max) {
-    this._currentPickerType = 'date';
-    this.show();
-    this.showPanel('date');
-
-    var minDate = null;
-    var maxDate = null;
-
-    var str2Date = function vs_str2Date(str) {
-      if (!str)
-        return null;
-
-      var dcs = str.split('-');
-      var date = new Date(dcs[0], parseInt(dcs[1]) - 1, dcs[2]);
-
-      if (isNaN(date.getTime()))
-        date = null;
-
-      return date;
+      this._timePicker.minute.setSelectedIndex(time.minutes);
     };
 
-    minDate = str2Date(min);
-    maxDate = str2Date(max);
+  ValueSelector.prototype.showDatePicker =
+    function vs_showDatePicker(currentValue, min, max) {
+      this._currentPickerType = 'date';
+      this.showPanel('spinDatePickerPopup');
 
-    if (!this._datePicker) {
-      this._datePicker = new SpinDatePicker(this._containers['date']);
-    }
-    this._datePicker.setRange(minDate, maxDate);
+      var minDate = min ? InputParser.formatInputDate(min) : null;
+      var maxDate = max ? InputParser.formatInputDate(max) : null;
 
-    // Show current date as default value
-    var date = new Date();
-    if (currentValue) {
-      date = InputParser.formatInputDate(currentValue, '');
-    }
-    this._datePicker.value = date;
-  }
+      if (!this._datePicker) {
+        this._datePicker = new SpinDatePicker(this.elements.spinDatePicker);
+      }
 
-};
+      this._datePicker.setRange(minDate, maxDate);
 
-var TimePicker = {
-  timePicker: {
-    hour: null,
-    minute: null,
-    hour24State: null,
-    is12hFormat: false
-  },
+      // Show current date as default value
+      var date = new Date();
+      if (currentValue) {
+        date = InputParser.formatInputDate(currentValue);
+      }
+      this._datePicker.value = date;
+    };
 
-  get hourSelector() {
-    delete this.hourSelector;
-    return this.hourSelector =
-      ValueSelector._context.querySelector('.value-picker-hours');
-  },
-
-  get minuteSelector() {
-    delete this.minuteSelector;
-    return this.minuteSelector =
-      ValueSelector._context.querySelector('.value-picker-minutes');
-  },
-
-  get hour24StateSelector() {
-    delete this.hour24StateSelector;
-    return this.hour24StateSelector =
-      ValueSelector._context.querySelector('.value-picker-hour24-state');
-  },
-
-  initTimePicker: function tp_initTimePicker() {
-    var localeTimeFormat = navigator.mozL10n.get('shortTimeFormat');
-    var is12hFormat = (localeTimeFormat.indexOf('%p') >= 0);
-    this.timePicker.is12hFormat = is12hFormat;
-    this.setTimePickerStyle();
+  function TimePicker(element) {
+    this.element = element;
+    this._fetchElements();
+    var formatter = Intl.DateTimeFormat(navigator.languages, {
+      hour12: navigator.mozHour12,
+      hour: 'numeric'
+    });
+    var is12hFormat = formatter.resolvedOptions().hour12;
     var startHour = is12hFormat ? 1 : 0;
     var endHour = is12hFormat ? (startHour + 12) : (startHour + 12 * 2);
     var unitClassName = 'picker-unit';
-    var hourDisplayedText = [];
-    for (var i = startHour; i < endHour; i++) {
-      var value = i;
-      hourDisplayedText.push(value);
-    }
-    var hourUnitStyle = {
-      valueDisplayedText: hourDisplayedText,
-      className: unitClassName
-    };
-    this.timePicker.hour = new ValuePicker(this.hourSelector, hourUnitStyle);
 
-    var minuteDisplayedText = [];
-    for (var i = 0; i < 60; i++) {
-      var value = (i < 10) ? '0' + i : i;
-      minuteDisplayedText.push(value);
-    }
-    var minuteUnitStyle = {
-      valueDisplayedText: minuteDisplayedText,
-      className: unitClassName
-    };
-    this.timePicker.minute =
-      new ValuePicker(this.minuteSelector, minuteUnitStyle);
+    this.is12hFormat = is12hFormat;
 
+    var hourFormatter = Intl.NumberFormat(navigator.languages, {
+      style: 'decimal',
+    });
+
+    this.hour = new ValuePicker(this.elements.valuePickerHours, {
+      optionsL10n: 
+        this._setDisplayedText(startHour, endHour, function(value) {
+          return { raw: hourFormatter.format(value) };
+        }
+      ),
+      className: unitClassName
+    });
+
+    var minuteFormatter = Intl.NumberFormat(navigator.languages, {
+      style: 'decimal',
+      minimumIntegerDigits: 2
+    });
+
+    this.minute = new ValuePicker(this.elements.valuePickerMinutes, {
+      optionsL10n: this._setDisplayedText(0, 60, function(value) {
+        return { raw: minuteFormatter.format(value) };
+      }),
+      className: unitClassName
+    });
     if (is12hFormat) {
-      var hour24StateUnitStyle = {
-        valueDisplayedText: [
-          navigator.mozL10n.get('time_am'),
-          navigator.mozL10n.get('time_pm')
+      this.hour24State = new ValuePicker(this.elements.valuePickerHour24State, {
+        optionsL10n: [
+          'time_am',
+          'time_pm'
         ],
         className: unitClassName
-      };
-      this.timePicker.hour24State =
-        new ValuePicker(this.hour24StateSelector, hour24StateUnitStyle);
+      });
     }
 
-    var separator = ':';
-    var minutesPosition = localeTimeFormat.indexOf('%M');
-    if (minutesPosition > 0) {
-      separator = localeTimeFormat.substr(minutesPosition - 1, 1);
-    }
-    document.getElementById('hours-minutes-separator').textContent = separator;
-  },
+    this.elements.hoursMinutesSeparator.setAttribute('data-l10n-id',
+      'hourMinutesSeparator');
+    this.setTimePickerStyle();
 
-  uninitTimePicker: function tp_uninitTimePicker() {
-    TimePicker.timePicker.minute.uninit();
-    TimePicker.timePicker.hour.uninit();
-    if (TimePicker.timePicker.hour24State) {
-      TimePicker.timePicker.hour24State.uninit();
-    }
-  },
-
-  setTimePickerStyle: function tp_setTimePickerStyle() {
-    var style = 'format24h';
-    if (this.timePicker.is12hFormat) {
-      var localeTimeFormat = navigator.mozL10n.get('shortTimeFormat');
-      var reversedPeriod =
-        (localeTimeFormat.indexOf('%p') < localeTimeFormat.indexOf('%M'));
-      style = (reversedPeriod) ? 'format12hrev' : 'format12h';
-    }
-    var container = ValueSelector._context.querySelector('.picker-container');
-    container.className = 'picker-container ' + style;
-  },
-
-  getHour: function tp_getHours() {
-    var hour = 0;
-    if (this.timePicker.is12hFormat) {
-      var hour24Offset = 12 * this.timePicker.hour24State.getSelectedIndex();
-      hour = this.timePicker.hour.getSelectedDisplayedText();
-      hour = (hour == 12) ? 0 : hour;
-      hour = hour + hour24Offset;
-    } else {
-      hour = this.timePicker.hour.getSelectedIndex();
-    }
-    return hour;
-  },
-
-  // return a string for the time value, format: "16:37"
-  getTimeValue: function tp_getTimeValue() {
-    var hour = this.getHour();
-    var minute = this.timePicker.minute.getSelectedDisplayedText();
-
-    return (hour < 10 ? '0' : '') + hour + ':' + minute;
+    this._registerEvents();
   }
-};
 
-ValueSelector.init();
+  TimePicker.prototype = {
+    _fetchElements: function tp__fetchElements() {
+      this.elements = {};
+      this.elementClasses = ['value-picker-hours', 'value-picker-minutes',
+        'value-picker-hour24-state', 'hours-minutes-separator'];
+
+      // Loop and add element with camel style name to Time Picker attribute.
+      this.elementClasses.forEach(function createElementRef(name) {
+        this.elements[toCamelCase(name)] =
+          this.element.querySelector('.' + name);
+      }, this);
+    },
+
+    _registerEvents: function tp__registerEvents() {
+      // Prevent focus being taken away by us for time picker.
+      // The event listener on outer box will not be triggered cause there is a
+      // evt.stopPropagation() in value_picker.js
+      ['valuePickerHours', 'valuePickerMinutes',
+        'valuePickerHour24State'].forEach(function(elementId) {
+          this.elements[elementId].addEventListener('mousedown', this);
+        }, this);
+    },
+
+    handleEvent: function tp_handleEvent(evt) {
+      evt.preventDefault();
+    },
+
+    _unregisterEvents: function tp__unregisterEvents() {
+      ['valuePickerHours', 'valuePickerMinutes',
+        'valuePickerHour24State'].forEach(function(elementId) {
+          this.elements[elementId].removeEventListener('mousedown', this);
+        }, this);
+    },
+
+    _setDisplayedText: function tp__setDisplayedText(min, max, format) {
+      var list = [];
+      for (var i = min; i < max; ++i) {
+        list.push(format ? format(i) : i);
+      }
+      return list;
+    },
+
+    uninit: function tp_uninit() {
+      this._unregisterEvents();
+      this.minute.uninit();
+      this.hour.uninit();
+      if (this.hour24State) {
+        this.hour24State.uninit();
+      }
+    },
+
+    setTimePickerStyle: function tp_setTimePickerStyle() {
+      document.l10n.formatValue('timePickerOrder').then(tpOrder => {
+        var style = 'format24h';
+
+        if (this.is12hFormat) {
+          // handle revert appearance
+          var reversedPeriod =
+            (tpOrder.indexOf('p') < tpOrder.indexOf('M'));
+          style = (reversedPeriod) ? 'format12hrev' : 'format12h';
+
+          if ('format12h' === style) {
+            this.element.classList.remove('format12hrev');
+            this.element.classList.remove('format24h');
+            if (!this.element.classList.contains(style)) {
+              this.element.classList.add(style);
+            }
+          } else {
+            this.element.classList.remove('format12h');
+            this.element.classList.remove('format24h');
+            if (!this.element.classList.contains(style)) {
+              this.element.classList.add(style);
+            }
+          }
+        }
+
+        if ('format24h' === style) {
+          this.element.classList.remove('format12h');
+          this.element.classList.remove('format12hrev');
+          if (!this.element.classList.contains(style)) {
+            this.element.classList.add(style);
+          }
+        }
+      });
+    },
+
+    getHour: function tp_getHours() {
+      var hour = this.hour.getSelectedIndex();
+      if (this.is12hFormat) { // hour + 12 if is PM
+        hour = (hour == 11) ? 0 : hour + 1;
+        if (this.hour24State.getSelectedIndex()) {
+          hour += 12;
+        }
+      }
+      return hour;
+    },
+
+    getTimeValue: function tp_getTimeValue() {
+      var hour = this.getHour();
+      var minute = this.minute.getSelectedIndex();
+
+      var date = new Date(0);
+      date.setHours(hour);
+      date.setMinutes(minute);
+
+      // For <input type=time> we have to build a time string
+      // matching RFC3339 spec: HH:mm(:ss)
+      return date.toLocaleString('en-US', {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    }
+  };
+})(window);

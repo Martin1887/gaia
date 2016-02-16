@@ -1,3 +1,6 @@
+/* global playerShowing,showThrobber,hideThrobber,updateDialog,videodb,
+  addVideo,getVideoRotation,THUMBNAIL_WIDTH,THUMBNAIL_HEIGHT,MediaDB */
+/* exported addToMetadataQueue,stopParsingMetadata */
 // This file is part of the Gaia Video app.
 //
 // It includes functions to obtain metadata for video files. The most
@@ -28,6 +31,7 @@
 // metadata is ready, it is saved to MediaDB, and then addVideo() is invoked
 // to display the video title and thumbnail.
 //
+'use strict';
 
 var metadataQueue = [];
 var processingQueue = false;
@@ -46,8 +50,9 @@ function addToMetadataQueue(fileinfo) {
 // Start or resume metadata parsing, if conditions are right
 function startParsingMetadata() {
   // If we're already working, return right away
-  if (processingQueue)
+  if (processingQueue) {
     return;
+  }
 
   // If there is no work queued, fire noMoreWorkCallback event and return right
   // away.
@@ -67,6 +72,14 @@ function startParsingMetadata() {
     return;
   }
 
+  // If our MediaDB object is not ready, it means that we can't read
+  // video files so can't process metadata yet. We just return in this
+  // case. The onready event handler in db.js will call this function
+  // when the db becomes ready.
+  if (videodb.state !== MediaDB.READY) {
+    return;
+  }
+
   // Start processing the queue
   processingQueue = true;
   showThrobber();
@@ -77,8 +90,9 @@ function startParsingMetadata() {
 function stopParsingMetadata(callback) {
   // If we're not processing metadata, just call the callback right away
   if (!processingQueue) {
-    if (callback)
+    if (callback) {
       callback();
+    }
     return;
   }
 
@@ -106,8 +120,9 @@ function processFirstQueuedItem() {
     processingQueue = false;
     hideThrobber();
 
-    if (callback !== true)
+    if (callback !== true) {
       callback();  // Okay, we've stopped.
+    }
     return;
   }
 
@@ -132,6 +147,14 @@ function processFirstQueuedItem() {
   // the next item on the queue.
   var fileinfo = metadataQueue.shift();
 
+  // XXX
+  // The code below is brittle because it does not have exception handlers.
+  // If anything goes wrong with this getFile() call or any of the nexted
+  // functions that get called asynchronously, then we may never advance to
+  // the next item in the queue and the metadata parsing process will just
+  // freeze up forever. The fix, I suppose is to add try/catch for each
+  // async step (or to convert to promises). See Bug 1229651 for a specific
+  // example of what happens when getFile() throws an exception.
   videodb.getFile(fileinfo.name, function(file) {
     getMetadata(file, function(metadata) {
       // Associate the metadata with this fileinfo object
@@ -179,15 +202,35 @@ function getMetadata(videofile, callback) {
   offscreenVideo.preload = 'metadata';
   offscreenVideo.src = url;
 
+  //
+  // There seems to have been a gecko regression, and error events are no
+  // longer being fired when we try to play some zero-length or truncated
+  // video files. To workaround this, we use a timeout to assume the
+  // video is unplayable if we nave not gotten any events within a reasonable
+  // amount of time.
+  //
+  // See bug 1198169
+  //
+  const METADATA_TIMEOUT = 3000;
+  var timeoutId = setTimeout(function() {
+    console.error('No loadedmetadata or error events seen yet.',
+                  'Assuming video file is corrupt:', videofile.name);
+    offscreenVideo.onerror();
+  }, METADATA_TIMEOUT);
+
   offscreenVideo.onerror = function(e) {
     // Something went wrong. Maybe the file was corrupt?
-    console.error("Can't play video", videofile.name, e);
+    console.error('Can\'t play video', videofile.name, e);
     metadata.isVideo = false;
+    clearTimeout(timeoutId);
     unload();
     callback(metadata);
   };
 
   offscreenVideo.onloadedmetadata = function() {
+    // We got metadata, so we don't need the timeout
+    clearTimeout(timeoutId);
+
     // If videoWidth is 0 then this is likely an audio file (ogg / mp4)
     // with an ambiguous filename extension that makes it look like a video.
     // This test only works correctly if we're using a new offscreen video
@@ -218,10 +261,12 @@ function getMetadata(videofile, callback) {
     // in shared/js/media/get_video_rotation.js
     if (/.3gp$/.test(videofile.name)) {
       getVideoRotation(videofile, function(rotation) {
-        if (typeof rotation === 'number')
+        if (typeof rotation === 'number') {
           metadata.rotation = rotation;
-        else if (typeof rotation === 'string')
+        }
+        else if (typeof rotation === 'string') {
           console.warn('Video rotation:', rotation);
+        }
         createThumbnail();
       });
     } else {
@@ -253,7 +298,8 @@ function getMetadata(videofile, callback) {
     // and may not fire an error event, so if we aren't able to seek
     // after a certain amount of time, we'll abort and assume that the
     // video is invalid.
-    offscreenVideo.currentTime = Math.min(5, offscreenVideo.duration / 10);
+    var t = Math.min(5, offscreenVideo.duration / 10);
+    offscreenVideo.fastSeek(t);
 
     var failed = false;                      // Did seeking fail?
     var timeout = setTimeout(fail, 10000);   // Fail after 10 seconds
@@ -269,8 +315,10 @@ function getMetadata(videofile, callback) {
       callback(metadata);
     }
     offscreenVideo.onseeked = function() {   // Seeking success case
-      if (failed) // Avoid race condition: if we already failed, stop now
+      // Avoid race condition: if we already failed, stop now
+      if (failed) {
         return;
+      }
       clearTimeout(timeout);
       captureFrame(offscreenVideo, metadata, function(poster) {
         metadata.poster = poster;
@@ -298,10 +346,16 @@ function getMetadata(videofile, callback) {
 
 function captureFrame(player, metadata, callback) {
   try {
+    // Create a new canvas, and set its size
     var canvas = document.createElement('canvas');
-    var ctx = canvas.getContext('2d');
     canvas.width = THUMBNAIL_WIDTH;
     canvas.height = THUMBNAIL_HEIGHT;
+
+    // Now create the context for the canvas after the size is set.
+    // The flag is a hint that we're going to be calling toBlob() on
+    // this canvas and that it is more efficient to use a software canvas
+    // than it is to do this on the GPU.
+    var ctx = canvas.getContext('2d', { willReadFrequently: true });
 
     var vw = player.videoWidth, vh = player.videoHeight;
     var tw, th;
@@ -350,10 +404,16 @@ function captureFrame(player, metadata, callback) {
     ctx.drawImage(player, x, y);
 
     // Convert it to an image file and pass to the callback.
-    canvas.toBlob(callback, 'image/jpeg');
+    canvas.toBlob(done, 'image/jpeg');
   }
   catch (e) {
     console.error('Exception in captureFrame:', e, e.stack);
-    callback(null);
+    done(null);
+  }
+
+  function done(blob) {
+    canvas.width = 0;    // Free canvas memory
+    ctx = canvas = null; // Prevent leaks, just to be safe
+    callback(blob);      // Return the frame thumbnail to the caller
   }
 }

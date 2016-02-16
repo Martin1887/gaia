@@ -1,4 +1,4 @@
-/* global _, debug, ConfigManager, Toolkit  */
+/* global _, debug, ConfigManager, Toolkit, SimManager */
 /* exported addAlarmTimeout, setNextReset, addNetworkUsageAlarm,
             getTopUpTimeout, Common, sendBalanceThresholdNotification
 */
@@ -23,13 +23,13 @@ function getTopUpTimeout(callback) {
          window.getTopUpTimeout(callback);
 }
 
-function addNetworkUsageAlarm(dataInterface, dataLimit, callback) {
+function addNetworkUsageAlarm(dataInterface, dataLimit, onsuccess, onerror) {
   var handlerContainer = document.getElementById('message-handler');
   if (handlerContainer) {
     handlerContainer.contentWindow
-      .addNetworkUsageAlarm(dataInterface, dataLimit, callback);
+      .addNetworkUsageAlarm(dataInterface, dataLimit, onsuccess, onerror);
   } else {
-    window.addNetworkUsageAlarm(dataInterface, dataLimit, callback);
+    window.addNetworkUsageAlarm(dataInterface, dataLimit, onsuccess, onerror);
   }
 }
 
@@ -56,15 +56,37 @@ var Common = {
 
   COST_CONTROL_APP: 'app://costcontrol.gaiamobile.org',
 
-  allNetworkInterfaces: {},
+  DATA_USAGE_WARNING: 0.8,
 
-  dataSimIccId: null,
+  allApps: null,
+
+  allAppsLoaded: false,
+
+  allNetworkInterfaces: null,
 
   allNetworkInterfaceLoaded: false,
+  //XXX: Group of apps, whose traffic will be added to the system app.
+  // See: https://bugzilla.mozilla.org/show_bug.cgi?id=1079609
+  specialApps: [
+    'app://search.gaiamobile.org/manifest.webapp'
+  ],
 
-  dataSimIccIdLoaded: false,
+  SYSTEM_MANIFEST: 'app://system.gaiamobile.org/manifest.webapp',
 
-  dataSimIcc: null,
+  BROWSER_APP: {
+    manifestURL: 'app://browser.gaiamobile.org/manifest.webapp',
+    origin: '',
+    manifest: {
+      icons: {
+        '84': '/shared/resources/branding/browser_84.png',
+        '126': '/shared/resources/branding/browser_126.png',
+        '142': '/shared/resources/branding/browser_142.png',
+        '189': '/shared/resources/branding/browser_189.png',
+        '284': '/shared/resources/branding/browser_284.png'
+      },
+      name: 'browser'
+    }
+  },
 
   startFTE: function(mode) {
     var iframe = document.getElementById('fte_view');
@@ -78,6 +100,28 @@ var Common = {
         window.removeEventListener('message', handler);
 
         iframe.classList.remove('non-ready');
+
+        // PERFORMANCE MARKERS
+        // Designates that the app's *core* chrome or navigation interface
+        // exists in the DOM and is marked as ready to be displayed.
+        window.performance.mark('navigationLoaded');
+
+        // Designates that the app's *core* chrome or navigation interface
+        // has its events bound and is ready for user interaction.
+        window.performance.mark('navigationInteractive');
+
+        // Designates that the app is visually loaded (e.g.: all of the
+        // "above-the-fold" content exists in the DOM and is marked as
+        // ready to be displayed).
+        window.performance.mark('visuallyLoaded');
+
+        // Designates that the app has its events bound for the minimum
+        // set of functionality to allow the user to interact with the
+        // "above-the-fold" content.
+        window.performance.mark('contentInteractive');
+
+        // Start up ended when FTE ready
+        window.performance.mark('fullyLoaded');
       }
     });
 
@@ -85,7 +129,7 @@ var Common = {
   },
 
   closeFTE: function() {
-    var iframe = document.getElementById('fte_view');
+    var iframe = window.parent.document.getElementById('fte_view');
     iframe.classList.add('non-ready');
     iframe.src = '';
   },
@@ -109,20 +153,7 @@ var Common = {
   },
 
   get localize() {
-    return navigator.mozL10n.localize;
-  },
-
-  getIccInfo: function _getIccInfo(iccId) {
-    if (!iccId) {
-      return undefined;
-    }
-    var iccManager = window.navigator.mozIccManager;
-    var iccInfo = iccManager.getIccById(iccId);
-    if (!iccInfo) {
-      console.error('Unrecognized iccID: ' + iccId);
-      return undefined;
-    }
-    return iccInfo;
+    return navigator.mozL10n.setAttributes;
   },
 
   // Returns whether exists an nsIDOMNetworkStatsInterfaces object
@@ -141,13 +172,11 @@ var Common = {
     }
   },
 
-  getDataSIMInterface: function _getDataSIMInterface() {
-    if (!this.dataSimIccIdLoaded) {
-      console.warn('Data simcard is not ready yet');
+  getDataSIMInterface: function _getDataSIMInterface(iccId) {
+    if (!iccId) {
+      console.warn('Undefined icc identifier, unable get data interface');
       return;
     }
-
-    var iccId = this.dataSimIccId;
     if (iccId) {
       var findCurrentInterface = function(networkInterface) {
         if (networkInterface.id === iccId) {
@@ -166,6 +195,34 @@ var Common = {
       }
     };
     return this.getInterface(findWifiInterface);
+  },
+
+  loadApps: function() {
+    return new Promise(function(resolve, reject) {
+      if (Common.allAppsLoaded) {
+        resolve(Common.allApps);
+        return;
+      }
+
+      var request = window.navigator.mozApps.mgmt.getAll();
+      request.onsuccess = function(event) {
+        var appList = event.target.result;
+        // XXX : The data traffic of the filtered apps will be automatically
+        // counted as residual data. This traffic is added to the system app
+        // on the drawApps method located on "js/views/datausage.js"
+        // See: https://bugzilla.mozilla.org/show_bug.cgi?id=1084010#c0
+        Common.allApps = appList.filter(function(app) {
+          return Common.specialApps.indexOf(app.manifestURL) === -1;
+        });
+        Common.allApps.push(Common.BROWSER_APP);
+        Common.allAppsLoaded = true;
+        resolve(Common.allApps);
+      };
+
+      request.onerror = function() {
+        reject(new Error('Apps could not be loaded'));
+      };
+    });
   },
 
   loadNetworkInterfaces: function(onsuccess, onerror) {
@@ -187,57 +244,70 @@ var Common = {
     };
   },
 
-  loadDataSIMIccId: function _loadDataSIMIccId(onsuccess, onerror) {
-    var settings = navigator.mozSettings,
-        mobileConnections = navigator.mozMobileConnections,
-        dataSlotId = 0;
-    var req = settings &&
-              settings.createLock().get('ril.data.defaultServiceId');
+  getApp: function(manifestURL) {
+    return this.allApps.find(function(app) {
+      return app.manifestURL === manifestURL;
+    });
+  },
 
-    req.onsuccess = function _onsuccesSlotId() {
-      dataSlotId = req.result['ril.data.defaultServiceId'] || 0;
-      var mobileConnection = mobileConnections[dataSlotId];
-      var iccId = mobileConnection.iccId || null;
-      if (!iccId) {
-        console.error('The slot ' + dataSlotId +
-                   ', configured as the data slot, is empty');
-        (typeof onerror === 'function') && onerror();
-        return;
-      }
-      Common.dataSimIccId = iccId;
-      Common.dataSimIccIdLoaded = true;
-      Common.dataSimIcc = Common.getIccInfo(iccId);
-      if (!Common.dataSimIcc) {
-        (typeof onerror === 'function') && onerror();
-      }
-      if (onsuccess) {
-        onsuccess(iccId);
-      }
-    };
+  getAppManifest: function(app) {
+    return app.manifest || app.updateManifest;
+  },
 
-    req.onerror = function _onerrorSlotId() {
-      console.warn('ril.data.defaultServiceId does not exists');
-      var iccId = null;
+  getLocalizedAppName: function(app) {
+    // If is System App returns label others
+    if (app.manifestURL === Common.SYSTEM_MANIFEST) {
+      return _('data-usage-other-apps');
+    }
+    // Browser app does not exist, we have to provide the localized app name
+    if (app.manifestURL === Common.BROWSER_APP.manifestURL) {
+      return _('data-usage-browser-app');
+    }
+    var manifest = this.getAppManifest(app);
+    var userLang = document.documentElement.lang;
+    var locales = manifest.locales;
+    var localized = locales && locales[userLang] && locales[userLang].name;
 
-      // Load the fist slot with iccId
-      for (var i = 0; i < mobileConnections.length && !iccId; i++) {
-        if (mobileConnections[i]) {
-          iccId = mobileConnections[i].iccId;
-        }
-      }
-      if (!iccId) {
-        console.error('No SIM in the device');
-        (typeof onerror === 'function') && onerror();
-        return;
+    return localized || manifest.name;
+  },
+
+  getAppIcon: function(app) {
+    var manifest = this.getAppManifest(app);
+    var icons = manifest.icons;
+    var defaultImage = '../style/images/app/icons/default.png';
+
+    if (!icons || !Object.keys(icons).length) {
+      return defaultImage;
+    }
+
+    // The preferred size is 30 by the default. If we use HDPI device, we may
+    // use the image larger than 30 * 1.5 = 45 pixels.
+    var preferredIconSize = 30 * (window.devicePixelRatio || 1);
+    var preferredSize = Number.MAX_VALUE;
+    var max = 0;
+
+    for (var size in icons) {
+      size = parseInt(size, 10);
+      if (size > max) {
+        max = size;
       }
 
-      Common.dataSimIccId = iccId;
-      Common.dataSimIccIdLoaded = true;
-      Common.dataSimIcc = Common.getIccInfo(iccId);
-      if (onsuccess) {
-        onsuccess(iccId);
+      if (size >= preferredIconSize && size < preferredSize) {
+        preferredSize = size;
       }
-    };
+    }
+    // If there is an icon matching the preferred size, we return the result,
+    // if there isn't, we will return the maximum available size.
+    if (preferredSize === Number.MAX_VALUE) {
+      preferredSize = max;
+    }
+
+    var url = icons[preferredSize];
+    if (url) {
+      return !(/^(http|https|data):/.test(url)) ? app.origin + url : url;
+    } else {
+      return defaultImage;
+    }
   },
 
   getDataLimit: function _getDataLimit(settings) {
@@ -248,7 +318,6 @@ var Common = {
 
   resetData: function _resetData(mode, onsuccess, onerror) {
     // Get all availabe Interfaces
-    var currentSimcardInterface = Common.getDataSIMInterface();
     var wifiInterface = Common.getWifiInterface();
 
     // Ask reset for all available Interfaces
@@ -270,26 +339,30 @@ var Common = {
       wifiClearRequest = navigator.mozNetworkStats.clearStats(wifiInterface);
       wifiClearRequest.onerror = getOnErrorFor('wi-Fi');
     }
-    if ((mode === 'all' || mode === 'mobile') && currentSimcardInterface) {
-      mobileClearRequest = navigator.mozNetworkStats
-        .clearStats(currentSimcardInterface);
-      mobileClearRequest.onerror = getOnErrorFor('simcard');
-      mobileClearRequest.onsuccess = function _restoreDataLimitAlarm() {
-        ConfigManager.requestSettings(Common.dataSimIccId,
-                                      function _onSettings(settings) {
-          if (settings.dataLimit) {
-            // Restore network alarm
-            addNetworkUsageAlarm(currentSimcardInterface,
-                                 Common.getDataLimit(settings),
-              function _addNetworkUsageAlarmOK() {
-                ConfigManager.setOption({ 'dataUsageNotified': false });
-              });
-          }
-        });
-      };
+    if (mode === 'all' || mode === 'mobile') {
+      SimManager.requestDataSimIcc(function(dataSim) {
+        var currentSimcardInterface = Common.getDataSIMInterface(dataSim.iccId);
+        if (currentSimcardInterface) {
+          mobileClearRequest = navigator.mozNetworkStats
+            .clearStats(currentSimcardInterface);
+          mobileClearRequest.onerror = getOnErrorFor('simcard');
+          mobileClearRequest.onsuccess = function _restoreDataLimitAlarm() {
+            ConfigManager.requestSettings(dataSim.iccId,
+                                          function _onSettings(settings) {
+              if (settings.dataLimit) {
+                // Restore network alarm
+                addNetworkUsageAlarm(currentSimcardInterface,
+                                     Common.getDataLimit(settings),
+                  function _addNetworkUsageAlarmOK() {
+                    ConfigManager.setOption({ 'dataUsageNotified': false });
+                });
+              }
+            });
+          };
+        }
+      });
     }
-
-      // Set last Reset
+    // Set last Reset
     if (mode === 'all') {
       ConfigManager.setOption({ lastCompleteDataReset: new Date() });
     } else {
@@ -338,6 +411,13 @@ var Common = {
         }
       }
       nextReset = new Date(year, month, monthday);
+      if (monthday !== nextReset.getDate()) {
+        var LAST_DAY_OF_PREVIOUS_MONTH = 0;
+        // If monthday is not equal to nextReset day, it means that the selected
+        // reset day does not exist (e.g. 30 Feb). In this case, the reset day
+        // must be the last day of the previous month
+        nextReset.setDate(LAST_DAY_OF_PREVIOUS_MONTH);
+      }
 
     // Recalculate with week period
     } else if (trackingPeriod === 'weekly') {
@@ -358,7 +438,7 @@ var Common = {
 
   localizeWeekdaySelector: function _localizeWeekdaySelector(selector) {
     var weekStartsOnMonday =
-      !!parseInt(navigator.mozL10n.get('weekStartsOnMonday'), 10);
+      parseInt(navigator.mozL10n.get('firstDayOfTheWeek'), 10) === 1;
     debug('Week starts on monday?', weekStartsOnMonday);
     var monday = selector.querySelector('.monday');
     var sunday = selector.querySelector('.sunday');

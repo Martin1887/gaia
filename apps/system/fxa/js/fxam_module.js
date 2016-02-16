@@ -1,8 +1,8 @@
 /* -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- /
 /* vim: set shiftwidth=2 tabstop=2 autoindent cindent expandtab: */
 
-/* global Utils, FxaModuleOverlay, LazyLoader, FxaModuleErrors,
-   FxaModuleErrorOverlay */
+/* global HtmlHelper, FxaModuleOverlay, LazyLoader, FxaModuleErrors,
+   FxaModuleErrorOverlay, BrowserFrame, EntrySheet */
 /* exported FxaModule */
 
 'use strict';
@@ -34,15 +34,57 @@ var FxaModule = (function() {
       var args = [].slice.call(arguments);
       // context to import into is the first argument to importElements
       args.unshift(this);
-      Utils.importElements.apply(null, args);
+      HtmlHelper.importElements.apply(null, args);
     },
 
     showErrorResponse: function fxam_showErrorResponse(response) {
+      // special case: if a network error occurs during FTE,
+      // we show a slightly different error message
+      var resp = response;
+      if (window.location.search.indexOf('isftu') != -1 &&
+          resp == 'OFFLINE_ERROR') {
+        resp = 'CONNECTION_ERROR';
+      }
+
       FxaModuleOverlay.hide();
-      LazyLoader.load('js/fxam_errors.js', function() {
-        var config = FxaModuleErrors.responseToParams(response);
-        FxaModuleErrorOverlay.show(config.title, config.message);
+      LazyLoader.load('js/fxam_errors.js', () => {
+        var config = FxaModuleErrors.responseToParams(resp);
+        FxaModuleErrorOverlay.show(config.title, config.message, resp);
+        if (resp && resp.error === 'COPPA_ERROR') {
+          var link =
+            FxaModuleErrorOverlay.fxaErrorMsgCoppa.querySelector('#coppa-link');
+          link.addEventListener('click', this.onCopaLinkClick);
+        }
       });
+    },
+
+    onCopaLinkClick: function(e) {
+      e.preventDefault();
+      if (this.entrySheet) {
+        this.entrySheet.close();
+        this.entrySheet = null;
+      }
+      var coppaUrl = 'http://www.ftc.gov/news-events/media-resources/' +
+        'protecting-consumer-privacy/kids-privacy-coppa';
+
+      this.entrySheet = new EntrySheet(
+        window.top.document.getElementById('screen'),
+        'URL:' + coppaUrl,
+        new BrowserFrame({
+          url: coppaUrl,
+          oop: true
+        })
+      );
+
+      this.entrySheet.open();
+    },
+
+    hideErrorResponse: function fxam_hideErrorResponse() {
+      var link =
+        FxaModuleErrorOverlay.fxaErrorMsgCoppa.querySelector('#coppa-link');
+      link.removeEventListener('click', this.onCopaLinkClick);
+      FxaModuleErrorOverlay.hide();
+      FxaModuleOverlay.hide();
     }
   };
 

@@ -63,6 +63,7 @@ function FormButton(input, config) {
   this.refresh = this.refresh.bind(this);
   // Update the dropdown when the language changes.
   window.addEventListener('localized', this.refresh);
+  window.addEventListener('timeformatchange', this.refresh);
 }
 
 FormButton.prototype = {
@@ -90,7 +91,22 @@ FormButton.prototype = {
    */
   refresh: function() {
     var value = this.value;
-    this.button.textContent = this.formatLabel(value);
+
+    var label = this.formatLabel(value);
+
+    // In some cases formatLabel returns a Promise that returns l10nId
+    var labelPromise = label.then ? label : Promise.resolve(label);
+
+    return labelPromise.then((l10nId) => {
+      if (typeof l10nId === 'string') {
+        this.button.setAttribute('data-l10n-id', l10nId);
+      } else if (l10nId.raw) {
+        this.button.removeAttribute('data-l10n-id');
+        this.button.textContent = l10nId.raw;
+      } else if (l10nId.id) {
+        document.l10n.setAttributes(this.button, l10nId.id, l10nId.args);
+      }
+    });
   },
 
   /**
@@ -153,11 +169,11 @@ FormButton.prototype = {
    * An overrideable method that is called when updating the textContent
    * of the button.
    *
-   * @return {String} The formatted text to display in the label.
+   * @return {L10nId} The formatted text to display in the label.
    *
    */
   formatLabel: function(value) {
-    return value;
+    return { raw: value };
   },
 
   /**

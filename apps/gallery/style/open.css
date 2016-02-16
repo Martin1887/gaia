@@ -45,7 +45,7 @@ body {
   -moz-user-select: none;
 }
 
-#frame > img {
+#frame > .image-view {
   top: 0;  /* javascript modifies this position with a transform */
   left: 0;
   position: absolute;
@@ -57,5 +57,14 @@ body {
 }
 
 *.hidden {
-  display:none;
+  display: none !important;
+}
+
+#message {
+  word-wrap: break-word;
+}
+
+#filename {
+  /* file name is not directional and stays LTR */
+  direction: ltr;
 }

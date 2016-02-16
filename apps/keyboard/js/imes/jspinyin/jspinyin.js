@@ -1,6 +1,6 @@
 /* -*- Mode: js; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* vim: set shiftwidth=2 tabstop=2 autoindent cindent expandtab: */
-
+/* global KeyEvent, define, InputMethods */
 'use strict';
 
 (function() {
@@ -31,8 +31,9 @@ var debug = function jspinyin_debug(str) {
 };
 
 var assert = function jspinyin_assert(condition, msg) {
-  if (!debugging)
+  if (!debugging) {
     return;
+  }
   if (!condition) {
     var str = typeof msg === 'undefined' ? assert.caller.toString() : msg;
     if (typeof alert === 'function') {
@@ -42,14 +43,6 @@ var assert = function jspinyin_assert(condition, msg) {
     }
   }
 };
-
-/* for non-Mozilla browsers */
-if (!KeyEvent) {
-  var KeyEvent = {
-    DOM_VK_BACK_SPACE: 0x8,
-    DOM_VK_RETURN: 0xd
-  };
-}
 
 var IMEngineBase = function engineBase_constructor() {
   this._glue = {};
@@ -86,13 +79,7 @@ IMEngineBase.prototype = {
      * Sends the input string to the IMEManager.
      * @param {String} str The input string.
      */
-    sendString: function(str) {},
-
-    /**
-     * Change the keyboad
-     * @param {String} keyboard The name of the keyboard.
-     */
-    alterKeyboard: function(keyboard) {}
+    sendString: function(str) {}
   },
 
   /**
@@ -131,6 +118,18 @@ IMEngineBase.prototype = {
   },
 
   /**
+   * Notifies when selection changes
+   */
+  stateChange: function engineBase_stateChange(detail) {
+  },
+
+  /**
+   * Notifies when surrounding text changes
+   */
+  surroundingtextChange: function engineBase_surroundingtextChange(detail) {
+  },
+
+  /**
    * Notifies when the IM is shown
    */
   activate: function engineBase_activate(language, state, options) {
@@ -149,11 +148,13 @@ var emEngineWrapper = {
   _initialized: false,
 
   post: function(id, param, callback) {
-    if (!this._initialized && id != 'init')
+    if (!this._initialized && id != 'init') {
       throw 'Database not ready!';
+    }
 
-    if (!this._callback[id])
+    if (!this._callback[id]) {
       this._callback[id] = [];
+    }
 
     this._callback[id].push(callback);
     this._worker.postMessage({
@@ -184,8 +185,9 @@ var emEngineWrapper = {
         break;
       default:
         var msgCallback = self._callback[data.id].shift();
-        if (msgCallback)
+        if (msgCallback) {
           msgCallback(data.returnValue);
+        }
       }
     };
 
@@ -202,8 +204,9 @@ var emEngineWrapper = {
   },
 
   uninit: function() {
-    if (this._worker)
+    if (this._worker) {
       this._worker.terminate();
+    }
     this._worker = null;
     this._callback = null;
     this._initialized = false;
@@ -217,6 +220,9 @@ var emEngineWrapper = {
 var IMEngine = function engine_constructor() {
   IMEngineBase.call(this);
 };
+
+// We use keycode 65 to represent "'" for pinyin input method
+var SPECIAL_KEYCODE_FOR_DELIMITER = 65;
 
 IMEngine.prototype = {
   // Implements IMEngineBase
@@ -246,9 +252,6 @@ IMEngine.prototype = {
 
   _isActive: false,
   _uninitTimer: null,
-
-  // Current keyboard
-  _keyboard: 'zh-Hans-Pinyin',
 
   _sendPendingSymbols: function engine_sendPendingSymbols() {
     debug('SendPendingSymbol: ' + this._pendingSymbols);
@@ -294,7 +297,7 @@ IMEngine.prototype = {
     var len = candidates.length;
     for (var id = 0; id < len; id++) {
       var cand = candidates[id];
-      if (id == 0) {
+      if (id === 0) {
         this._firstCandidate = cand;
       }
       list.push([cand, id]);
@@ -304,8 +307,9 @@ IMEngine.prototype = {
   },
 
   _start: function engine_start() {
-    if (this._isWorking)
+    if (this._isWorking) {
       return;
+    }
 
     if (!emEngineWrapper.isReady()) {
       debug('emEngineWrapper is not ready!');
@@ -327,8 +331,10 @@ IMEngine.prototype = {
     }
 
     var code = this._keypressQueue.shift();
+    // We use keycode 65 to represent "'" for pinyin input method
+    var realCode = (code === SPECIAL_KEYCODE_FOR_DELIMITER) ? 39 : code;
 
-    if (code == 0) {
+    if (code === 0) {
       // This is a select function operation.
       this._updateCandidatesAndSymbols(this._next.bind(this));
       return;
@@ -350,7 +356,7 @@ IMEngine.prototype = {
 
         // pass the key to IMEManager for default action
         debug('Default action.');
-        this._glue.sendKey(code);
+        this._glue.sendKey(realCode);
         this._next();
       } else {
         this._pendingSymbols = this._pendingSymbols.substring(0,
@@ -385,32 +391,25 @@ IMEngine.prototype = {
       debug('Default action.');
       this.empty();
       if (sendKey) {
-        this._glue.sendKey(code);
+        this._glue.sendKey(realCode);
       }
       this._next();
       return;
     }
 
-    var symbol = String.fromCharCode(code);
-
-    debug('Processing symbol: ' + symbol);
+    debug('Processing symbol: ' + String.fromCharCode(realCode));
 
     // add symbol to pendingSymbols
-    this._appendNewSymbol(code);
+    this._appendNewSymbol(realCode);
     this._updateCandidatesAndSymbols(this._next.bind(this));
   },
 
   _isPinyinKey: function engine_isPinyinKey(code) {
-    if (this._keyboard == 'zh-Hans-Pinyin') {
-      // '
-      if (code == 39) {
-        return true;
-      }
-
-      // a-z
-      if (code >= 97 && code <= 122) {
-        return true;
-      }
+    // keycode 65 is used to represent "'" for pinyin input method
+    // a-z
+    if ((code >= 97 && code <= 122) ||
+        code === SPECIAL_KEYCODE_FOR_DELIMITER) {
+      return true;
     }
 
     return false;
@@ -451,8 +450,9 @@ IMEngine.prototype = {
           var num = returnValue.length;
           var predicts = returnValue.results;
 
-          if (num > numberOfCandidatesPerRow + 1)
+          if (num > numberOfCandidatesPerRow + 1) {
             self._candidatesLength = num;
+          }
 
           self._sendCandidates(predicts);
           callback();
@@ -472,21 +472,14 @@ IMEngine.prototype = {
         var num = returnValue.length;
         var candidates = returnValue.results;
 
-        if (num > numberOfCandidatesPerRow + 1)
+        if (num > numberOfCandidatesPerRow + 1) {
           self._candidatesLength = num;
+        }
 
         self._sendCandidates(candidates);
         callback();
       });
     }
-  },
-
-  _alterKeyboard: function engine_changeKeyboard(keyboard) {
-    this._resetKeypressQueue();
-    this.empty();
-
-    this._keyboard = keyboard;
-    this._glue.alterKeyboard(keyboard);
   },
 
   _resetKeypressQueue: function engine_abortKeypressQueue() {
@@ -516,9 +509,10 @@ IMEngine.prototype = {
 
     request.onsuccess = function opendb_onsuccess(event) {
       var db = event.target.result;
+      var request;
 
       if (action == 'load') {
-        var request = db.transaction([STORE_NAME], 'readonly')
+        request = db.transaction([STORE_NAME], 'readonly')
                         .objectStore(STORE_NAME).get(USER_DICT);
 
         request.onsuccess = function readdb_oncomplete(event) {
@@ -541,7 +535,7 @@ IMEngine.prototype = {
           content: param
         };
 
-        var request = db.transaction([STORE_NAME], 'readwrite')
+        request = db.transaction([STORE_NAME], 'readwrite')
                         .objectStore(STORE_NAME).put(obj);
 
         request.onsuccess = function readdb_oncomplete(event) {
@@ -589,8 +583,9 @@ IMEngine.prototype = {
       this._uninitTimer = null;
     }
 
-    if (emEngineWrapper.isReady())
+    if (emEngineWrapper.isReady()) {
       emEngineWrapper.uninit();
+    }
 
     this._resetKeypressQueue();
     this.empty();
@@ -600,43 +595,10 @@ IMEngine.prototype = {
    *Override
    */
   click: function engine_click(keyCode) {
-    if (this._layoutPage !== LAYOUT_PAGE_DEFAULT) {
-      this._glue.sendKey(keyCode);
-      return;
-    }
-
     IMEngineBase.prototype.click.call(this, keyCode);
 
-    switch (keyCode) {
-      case -11: // Switch to Pinyin Panel
-        this._alterKeyboard('zh-Hans-Pinyin');
-        break;
-      case -20: // Switch to Chinese Symbol Panel, Same page
-      case -21: // Switch to Chinese Symbol Panel, Page 1
-      case -22: // Switch to Chinese Symbol Panel, Page 2
-      case -30: // Switch to English Symbol Panel, Same page
-      case -31: // Switch to English Symbol Panel, Page 1
-      case -32: // Switch to English Symbol Panel, Page 2
-        var index = Math.abs(keyCode);
-        var symbolType = index < 30 ? 'Ch' : 'En';
-        var symbolPage = index % 10;
-        if (!symbolPage)
-          symbolPage = this._keyboard.substr(-1);
-        this._alterKeyboard(
-          'zh-Hans-Pinyin-Symbol-' + symbolType + '-' + symbolPage);
-        break;
-      default:
-        this._keypressQueue.push(keyCode);
-        break;
-    }
-
+    this._keypressQueue.push(keyCode);
     this._start();
-  },
-
-  _layoutPage: LAYOUT_PAGE_DEFAULT,
-
-  setLayoutPage: function engine_setLayoutPage(page) {
-    this._layoutPage = page;
   },
 
   /**
@@ -645,8 +607,9 @@ IMEngine.prototype = {
   select: function engine_select(text, data) {
     IMEngineBase.prototype.select.call(this, text, data);
 
-    if (!emEngineWrapper.isReady())
+    if (!emEngineWrapper.isReady()) {
       return;
+    }
 
     var self = this;
     var nextStep = function(text) {
@@ -691,6 +654,19 @@ IMEngine.prototype = {
   /**
    * Override
    */
+  stateChange: function engine_stateChange(detail) {
+    debug('stateChange');
+
+    if (detail.ownAction) {
+      return;
+    }
+
+    this.empty();
+  },
+
+  /**
+   * Override
+   */
   activate: function engine_activate(language, state, options) {
     IMEngineBase.prototype.activate.call(this, language, state, options);
 
@@ -702,12 +678,6 @@ IMEngine.prototype = {
     var inputType = state.type;
     debug('Activate. Input type: ' + inputType);
 
-    var keyboard = 'zh-Hans-Pinyin';
-    if (inputType == '' || inputType == 'text' || inputType == 'textarea') {
-      keyboard = this._keyboard;
-    }
-
-    this._glue.alterKeyboard(keyboard);
 
     if (!emEngineWrapper.isReady()) {
       var self = this;
@@ -734,8 +704,9 @@ IMEngine.prototype = {
     IMEngineBase.prototype.deactivate.call(this);
     debug('Deactivate.');
 
-    if (!this._isActive)
+    if (!this._isActive) {
       return;
+    }
 
     this._isActive = false;
 
@@ -762,7 +733,7 @@ IMEngine.prototype = {
   },
 
   getMoreCandidates: function engine_getMore(indicator, maxCount, callback) {
-    if (this._candidatesLength == 0) {
+    if (this._candidatesLength === 0) {
       callback(null);
       return;
     }
@@ -789,8 +760,9 @@ IMEngine.prototype = {
 var jspinyin = new IMEngine();
 
 // Expose jspinyin as an AMD module
-if (typeof define === 'function' && define.amd)
+if (typeof define === 'function' && define.amd) {
   define('jspinyin', [], function() { return jspinyin; });
+}
 
 // Expose the engine to the Gaia keyboard
 if (typeof InputMethods !== 'undefined') {

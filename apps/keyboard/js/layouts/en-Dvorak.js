@@ -1,9 +1,11 @@
 Keyboards['en-Dvorak'] = {
   label: 'English - Dvorak',
+  shortLabel: 'En',
   menuLabel: 'Dvorak',
   imEngine: 'latin',
-  types: ['text', 'url', 'email'],
+  types: ['text', 'url', 'email', 'password'],
   autoCorrectLanguage: 'en_us',
+  lang: 'en-US',
   alt: {
     a: 'àáâãäåāæ',
     c: 'çćč',

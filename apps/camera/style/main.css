@@ -1,22 +1,24 @@
 
 /**
- * Shared
+ * External
  */
 
+@import url("../bower_components/gaia-icons/gaia-icons.css");
+@import url("../bower_components/gaia-theme/gaia-theme.css");
+@import url("../shared/style/progress_activity.css");
+@import url("../shared/style/action_menu.css");
 @import url("../shared/style/confirm.css");
 @import url("../shared/style/buttons.css");
-@import url("../shared/style/action_menu.css");
-@import url("../shared/style/headers.css");
-@import url("../shared/style/progress_activity.css");
 
 /**
  * App
  */
 
 @import url("app.css");
-@import url("icons.css");
 @import url("viewfinder.css");
 @import url("focus-ring.css");
+@import url("face.css");
+@import url("faces.css");
 @import url("controls.css");
 @import url("overlay.css");
 @import url("hud.css");
@@ -27,7 +29,7 @@
 @import url("recording-timer.css");
 @import url("preview-gallery.css");
 @import url("VideoPlayer.css");
-@import url("timer.css");
+@import url("countdown.css");
 @import url("zoom-bar.css");
 @import url("indicators.css");
 @import url("notification.css");

@@ -1,12 +1,15 @@
 'use strict';
+/* global MockIntlHelper, MockMozIntl */
 
 suite('Time functions', function() {
   var Utils;
   var MockRequestWakeLock;
 
   suiteSetup(function(done) {
+    window.IntlHelper = MockIntlHelper;
+    window.mozIntl = MockMozIntl;
     require(['utils', 'mocks/mock_request_wake_lock'],
-      function(utils, _MockRequestWakeLock) {
+      function(utils, _MockRequestWakeLock, l10n) {
         Utils = utils;
         MockRequestWakeLock = _MockRequestWakeLock;
         done();
@@ -40,7 +43,7 @@ suite('Time functions', function() {
 
   suite('#dateMath', function() {
     suiteSetup(function() {
-      // The timestamp for "Tue Jul 16 2013 06:00:00" GMT
+      // The timestamp for 'Tue Jul 16 2013 06:00:00' GMT
       this.sixAm = new Date(2013, 5, 16, 6).getTime();
       // Set clock so calls to new Date() and Date.now() will not vary
       // across test locales
@@ -495,86 +498,6 @@ suite('Time functions', function() {
 
   });
 
-  suite('format', function() {
-    suite('hms()', function() {
-      var hms;
-
-      suiteSetup(function() {
-        hms = Utils.format.hms;
-      });
-
-      suite('hms(seconds) ', function() {
-        var fixtures = [
-          { args: [0], expect: '00:00:00' },
-          { args: [1], expect: '00:00:01' },
-          { args: [59], expect: '00:00:59' },
-          { args: [60], expect: '00:01:00' },
-          { args: [3600], expect: '01:00:00' }
-        ];
-
-        fixtures.forEach(function(fixture) {
-          var { args, expect } = fixture;
-          var title = args.map(String).join(', ') + ' => ' + expect + ' ';
-
-          test(title, function() {
-            assert.equal(hms.apply(null, args), expect);
-          });
-        });
-      });
-
-      suite('hms(seconds, format) ', function() {
-        var fixtures = [
-          { args: [0, 'ss'], expect: '00' },
-          { args: [1, 'ss'], expect: '01' },
-          { args: [60, 'ss'], expect: '00' },
-          { args: [0, 'mm:ss'], expect: '00:00' },
-          { args: [59, 'mm:ss'], expect: '00:59' },
-          { args: [60, 'mm:ss'], expect: '01:00' },
-          { args: [3600, 'mm:ss'], expect: '00:00' },
-          { args: [3600, 'hh:mm:ss'], expect: '01:00:00' }
-        ];
-
-        fixtures.forEach(function(fixture) {
-          var { args, expect } = fixture;
-          var title = args.map(String).join(', ') + ' => ' + expect + ' ';
-
-          test(title, function() {
-            assert.equal(hms.apply(null, args), expect);
-          });
-        });
-      });
-    });
-    suite('durationMs()', function() {
-      var durationMs;
-
-      suiteSetup(function() {
-        durationMs = Utils.format.durationMs;
-      });
-
-      suite('duration(ms) ', function() {
-        var fixtures = [
-          { args: [0], expect: '00:00.00' },
-          { args: [10], expect: '00:00.01' },
-          { args: [970], expect: '00:00.97' },
-          { args: [1000 + 670], expect: '00:01.67' },
-          { args: [59000 + 670], expect: '00:59.67' },
-          { args: [60000 + 670], expect: '01:00.67' },
-          { args: [3600 * 1000 + 23000 + 670], expect: '60:23.67' },
-          { args: [2 * 3600 * 1000 + 23000 + 670], expect: '120:23.67' }
-        ];
-
-        fixtures.forEach(function(fixture) {
-          var { args, expect } = fixture;
-          var title = args.map(String).join(', ') + ' => ' + expect + ' ';
-
-          test(title, function() {
-            assert.equal(durationMs.apply(null, args), expect);
-          });
-        });
-      });
-    });
-  });
-
   suite('async', function() {
     test('generators', function() {
       var spy = this.sinon.spy(function() {
@@ -643,6 +566,45 @@ suite('Time functions', function() {
       assert.ok(spy.calledOnce);
       names.testc();
       assert.ok(spy.calledOnce);
+    });
+  });
+
+  suite('summarizeDaysOfWeek', function() {
+    test('weekends', function(done) {
+      Utils.summarizeDaysOfWeek({
+        '0': true, '6': true
+      }).then(result => {
+        assert.equal(result, 'weekends');
+      }).then(done, done);
+    });
+
+    test('never', function(done) {
+      Utils.summarizeDaysOfWeek({
+      }).then(result => {
+        assert.equal(result, 'never');
+      }).then(done, done);
+    });
+    test('weekdays', function(done) {
+      Utils.summarizeDaysOfWeek({
+        '1': true, '2': true, '3': true, '4': true, '5': true
+      }).then(result => {
+        assert.equal(result, 'weekdays');
+      }).then(done, done);
+    });
+    test('everyday', function(done) {
+      Utils.summarizeDaysOfWeek({
+        '0': true, '1': true, '2': true, '3': true,
+        '4': true, '5': true, '6': true
+      }).then(result => {
+        assert.equal(result, 'everyday');
+      }).then(done, done);
+    });
+    test('mon, wed, fri', function(done) {
+      Utils.summarizeDaysOfWeek({
+        '1': true, '3': true, '5': true
+      }).then(result => {
+        assert.deepEqual(result, {raw: 'Mon, Wed, Fri'});
+      }).then(done, done);
     });
   });
 });

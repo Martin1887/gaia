@@ -16,31 +16,32 @@ function SoundPanel(client) {
 module.exports = SoundPanel;
 
 SoundPanel.Selectors = {
-  'vibrateCheckbox': '#sound input[name="vibration.enabled"]',
-  'vibrateLabel': '#sound label.pack-switch',
-  'mediaSlider': '#sound input[name="audio.volume.content"]',
-  'ringerSlider': '#sound input[name="audio.volume.notification"]',
-  'alarmSlider': '#sound input[name="audio.volume.alarm"]',
-  'keypadCheckbox': '#sound input[name="phone.ring.keypad"]',
-  'keypadSpan': '#sound span[data-l10n-id="keypad"]',
-  'cameraShutterCheckbox': '#sound input[name="camera.shutter.enabled"]',
-  'cameraShutterSpan': '#sound span[data-l10n-id="camera-shutter"]',
-  'videoRecordingCheckbox':
-              '#sound input[name="camera.recordingsound.enabled"]',
-  'videoRecordingSpan': '#sound span[data-l10n-id="camera-recordingsound"]',
-  'sentMailCheckbox': '#sound input[name="mail.sent-sound.enabled"]',
-  'sentMailSpan': '#sound span[data-l10n-id="sent-mail"]',
+  'vibrateCheckbox': '#sound gaia-switch[name="vibration.enabled"]',
+  'mediaSlider': '#sound .media input',
+  'ringerSlider': '#sound .notification input',
+  'alarmSlider': '#sound .alarm input',
+  'keypadCheckbox': '#sound [name="phone.ring.keypad"]',
+  'cameraCheckbox': '#sound [name="camera.sound.enabled"]',
   'sentMessageCheckbox':
-              '#sound input[name="message.sent-sound.enabled"]',
-  'sentMessageSpan': '#sound span[data-l10n-id="sent-message"]',
+              '#sound [name="message.sent-sound.enabled"]',
   'unlockScreenCheckbox':
-              '#sound input[name="lockscreen.unlock-sound.enabled"]',
-  'unlockScreenSpan': '#sound span[data-l10n-id="unlock-screen"]'
+              '#sound [name="lockscreen.unlock-sound.enabled"]',
+  'alerttoneButton': '.alert-tone-selection',
+  'alerttoneButtonDesc': '.alert-tone-selection .desc',
+  'ringtoneButton': '.ring-tone-selection',
+  'ringtoneButtonDesc': '.ring-tone-selection .desc',
+  'manageTonesButton': '.manage-tones-button'
 };
 
 SoundPanel.prototype = {
 
   __proto__: Base.prototype,
+
+  isGaiaCheckboxChecked: function(selector) {
+    return this.findElement(selector).scriptWith(function(el) {
+      return el.wrappedJSObject.checked;
+    });
+  },
 
   get isVibrateEnabled() {
     return this.findElement('vibrateCheckbox')
@@ -49,7 +50,7 @@ SoundPanel.prototype = {
   },
 
   tapOnVibration: function() {
-    this.waitForElement('vibrateLabel').tap();
+    this.waitForElement('vibrateCheckbox').tap();
   },
 
   /* Volume */
@@ -79,63 +80,66 @@ SoundPanel.prototype = {
 
   /* Other sounds */
   get isKeypadChecked() {
-    return this.findElement('keypadCheckbox')
-      .getAttribute('checked') &&
+    return this.isGaiaCheckboxChecked('keypadCheckbox') &&
       this.client.settings.get('phone.ring.keypad');
   },
 
   tapOnKeypad: function() {
-    this.waitForElement('keypadSpan').tap();
+    this.waitForElement('keypadCheckbox').tap();
   },
 
-  get isCameraShutterChecked() {
-    return this.findElement('cameraShutterCheckbox')
-      .getAttribute('checked') &&
-      this.client.settings.get('phone.ring.keypad');
+  get isCameraChecked() {
+    return this.isGaiaCheckboxChecked('cameraCheckbox') &&
+      this.client.settings.get('camera.sound.enabled');
   },
 
-  tapOnCameraShutter: function() {
-    this.waitForElement('cameraShutterSpan').tap();
-  },
-
-  get isVideoRecordingChecked() {
-    return this.findElement('videoRecordingCheckbox')
-      .getAttribute('checked') &&
-      this.client.settings.get('camera.recordingsound.enabled');
-  },
-
-  tapOnVideoRecording: function() {
-    this.waitForElement('videoRecordingSpan').tap();
-  },
-
-  get isSentMailChecked() {
-    return this.findElement('sentMailCheckbox')
-      .getAttribute('checked') &&
-      this.client.settings.get('mail.sent-sound.enabled');
-  },
-
-  tapOnSentMail: function() {
-    this.waitForElement('sentMailSpan').tap();
+  tapOnCamera: function() {
+    this.waitForElement('cameraCheckbox').tap();
   },
 
   get isSentMessageChecked() {
-    return this.findElement('sentMessageCheckbox')
-      .getAttribute('checked') &&
+    return this.isGaiaCheckboxChecked('sentMessageCheckbox') &&
       this.client.settings.get('message.sent-sound.enabled');
   },
 
   tapOnSentMessage: function() {
-    this.waitForElement('sentMessageSpan').tap();
+    this.waitForElement('sentMessageCheckbox').tap();
   },
 
   get isUnlockScreenChecked() {
-    return this.findElement('unlockScreenCheckbox')
-      .getAttribute('checked') &&
+    return this.isGaiaCheckboxChecked('unlockScreenCheckbox') &&
       this.client.settings.get('message.sent-sound.enabled');
   },
 
   tapOnUnlockScreen: function() {
-    this.waitForElement('unlockScreenSpan').tap();
-  }
+    this.waitForElement('unlockScreenCheckbox').tap();
+  },
 
+  clickRingToneSelect: function() {
+    this.waitForElement('ringtoneButton').tap();
+  },
+
+  clickAlertToneSelect: function() {
+    this.waitForElement('alerttoneButton').tap();
+  },
+
+  clickManageTones: function() {
+    this.waitForElement('manageTonesButton').tap();
+  },
+
+  get selectedRingtone() {
+    return this.waitForElement('ringtoneButtonDesc').text();
+  },
+
+  get selectedAlertTone() {
+    return this.waitForElement('alerttoneButtonDesc').text();
+  },
+
+  getSelectedTone: function(type) {
+    if (type === 'ringtone') {
+      return this.selectedRingtone;
+    } else if (type === 'alerttone') {
+      return this.selectedAlertTone;
+    }
+  }
 };

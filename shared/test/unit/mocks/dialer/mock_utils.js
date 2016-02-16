@@ -3,7 +3,7 @@
 
 var MockUtils = {
   mCalledPrettyDate: false,
-  mCalledHeaderDate: false,
+  mCalledSetHeaderDate: false,
   mCalledGetDayDate: false,
   mCalledGetPhoneNumberPrimaryInfo: false,
   mCalledGetPhoneNumberAdditionalInfo: false,
@@ -12,8 +12,9 @@ var MockUtils = {
     this.mCalledPrettyDate = true;
   },
 
-  headerDate: function ut_headerDate(time) {
-    this.mCalledHeaderDate = true;
+  setHeaderDate: function ut_headerDate(elem, time) {
+    this.mCalledSetHeaderDate = true;
+    elem.textContent = time;
   },
 
   getDayDate: function re_getDayDate(timestamp) {
@@ -24,11 +25,14 @@ var MockUtils = {
     return startDate.getTime();
   },
 
-  getPhoneNumberAdditionalInfo: function getPhoneNumberAdditionalInfo(
-                                                                matchingTel) {
-    this.mCalledGetPhoneNumberAdditionalInfo = true;
-
-    return matchingTel.value % 2 === 0 ? matchingTel.value : undefined;
+  getPhoneNumberAdditionalInfo:
+  function getPhoneNumberAdditionalInfo(matchingTel) {
+    return {
+      id: matchingTel.type,
+      args: {
+        carrier: matchingTel.carrier
+      }
+    };
   },
 
   addEllipsis: function ut_addEllipsis() {},
@@ -60,6 +64,9 @@ var MockUtils = {
       return matchingTel.value;
     }
     return null;
-  }
+  },
+
+  prettyDuration: function(node, duration, l10nPrefix) {},
+  isPhoneType: function(type) {}
 };
 

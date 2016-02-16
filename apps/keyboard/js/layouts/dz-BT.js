@@ -1,10 +1,13 @@
 Keyboards['dz-BT'] = {
   label: 'Dzongkha',
+  shortLabel: 'Dz',
   menuLabel: 'རྫོང་ཁ',
   alternateLayoutKey: '༡༢༣',
+  specificCssRule: true,
   basicLayoutKey: 'ཀཁག',
   types: ['text', 'url', 'email'],
   width: 12,
+  lang: 'dz',
   keys: [
     [
       { value: 'ཀ' }, { value: 'ཁ' }, { value: 'ག' } , { value: 'ང' },
@@ -19,7 +22,7 @@ Keyboards['dz-BT'] = {
       { value: 'ལ' }, { value: 'ཤ' }, { value: 'ས' }, { value: 'ཧ' }, { value: 'ཨ' },
       { value: '⌫', ratio: 2, keyCode: KeyEvent.DOM_VK_BACK_SPACE }
     ], [
-      { value: '&nbsp', ratio: 6, keyCode: KeyboardEvent.DOM_VK_SPACE },
+      { value: '&nbsp', ratio: 7, keyCode: KeyboardEvent.DOM_VK_SPACE },
       { value: '་', ratio: 2 }, { value: '།' },
       { value: '↵', ratio: 2, keyCode: KeyEvent.DOM_VK_RETURN }
     ]
@@ -61,53 +64,60 @@ Keyboards['dz-BT'] = {
     'ས': 'ྶ',
     'ཧ': 'ྷ',
     'ཨ': 'ྸ ༁',
-    
+
     '་': '࿒',
     '།': '༎'
   },
-  alternateLayout: {
+  pages: [undefined, {
+    needsCommaKey: true,
+    specificCssRule: true,
     alt: {
-      '༡': '1',
-      '༢': '2',
-      '༣': '3',
-      '༤': '4',
-      '༥': '5',
-      '༦': '6',
-      '༧': '7',
-      '༨': '8',
-      '༩': '9',
-      '༠': '0',
-      
-      '༆': '༄ ༅ @',
-      '༉': '࿑ ༊ ࿐ #',
-      '༈': '-',
-      '₨': '$ € £ ¥',
-      '༴': '྾ %',
-      'ཿ': '&',
-      '༷': '༵ *',
-      '༔': '+',
-      '༼': '(',
-      '༽': ')',
+      '༡': ['1'],
+      '༢': ['2'],
+      '༣': ['3'],
+      '༤': ['4'],
+      '༥': ['5'],
+      '༦': ['6'],
+      '༧': ['7'],
+      '༨': ['8'],
+      '༩': ['9'],
+      '༠': ['0'],
 
-      '༃': '༂ !',
-      '༑': "༏ ༐ '",
-      '྅': 'ྊ ྋ \"',
-      'ྈ': ':',
-      'ྉ': ';',
-      '࿙': '/',
-      '྿': '?'
+      '༆': ['༄ ', '༅', '@'],
+      '༉': ['࿑', '༊', '࿐', '#'],
+      '༈': ['-', '_'],
+      '₨': ['$', '€', '£', '¢', '¥'],
+      '༴': ['྾', '%'],
+      'ཿ': ['&'],
+      '༷': [ '༵', '*'],
+      '༔': ['+'],
+      '༼': ['('],
+      '༽': [')'],
+
+      '༃': ['༂ ', '!'],
+      '༑': ['༏', '༐', '\''],
+      '྅': ['ྊ', 'ྋ', '"'],
+      'ྈ': [':'],
+      'ྉ': [';'],
+      '࿙': ['/'],
+      '྿': ['?']
     },
     keys: [
       [
-        { value: '༡' }, { value: '༢' }, { value: '༣' } , { value: '༤' },
-        { value: '༥' } , { value: '༦' }, { value: '༧' } , { value: '༨' },
+        { value: '༡' }, { value: '༢' }, { value: '༣' }, { value: '༤' },
+        { value: '༥' }, { value: '༦' }, { value: '༧' }, { value: '༨' },
         { value: '༩' }, { value: '༠' }
       ], [
         { value: '༆'}, { value: '༉' }, { value: '༈' },
-        { value: '₨' }, { value: '༴' } , { value: 'ཿ' }, { value: '༷' },
+        { value: '₨', className: 'alternate-indicator' }, { value: '༴' },
+        { value: 'ཿ' }, { value: '༷' },
         { value: '༔' }, { value: '༼' }, { value: '༽' }
       ], [
-        { value: 'ALT', ratio: 1.5, keyCode: KeyEvent.DOM_VK_ALT },
+        { value: 'Alt', ratio: 1.5,
+          keyCode: KeyboardEvent.DOM_VK_ALT,
+          className: 'page-switch-key',
+          targetPage: 2
+        },
         { value: '༃' }, { value: '༑' }, { value: '྅' }, { value: 'ྈ' },
         { value: 'ྉ' }, { value: '࿙' }, { value: '྿' },
         { value: '⌫', ratio: 1.5, keyCode: KeyEvent.DOM_VK_BACK_SPACE }
@@ -116,5 +126,5 @@ Keyboards['dz-BT'] = {
         { value: '↵', ratio: 2, keyCode: KeyEvent.DOM_VK_RETURN }
       ]
     ]
-  }
+  } ]
 };

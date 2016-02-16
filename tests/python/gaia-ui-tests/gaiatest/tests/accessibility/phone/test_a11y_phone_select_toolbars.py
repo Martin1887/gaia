@@ -2,7 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from marionette.by import By
 from gaiatest import GaiaTestCase
 from gaiatest.apps.phone.app import Phone
 
@@ -26,7 +25,7 @@ class TestAccessibilityPhoneSelectToolbars(GaiaTestCase):
         self.assertTrue(self.accessibility.is_hidden(self.marionette.find_element(
             *self.phone._contacts_toolbar_locator)))
         # Call log is visible to the screen reader.
-        self.assertFalse(self.accessibility.is_hidden(self.marionette.find_element(
+        self.assertTrue(self.accessibility.is_visible(self.marionette.find_element(
             *self.phone._call_log_toolbar_locator)))
 
         # Screen reader activated contacts button click.
@@ -37,7 +36,7 @@ class TestAccessibilityPhoneSelectToolbars(GaiaTestCase):
         self.assertTrue(self.accessibility.is_hidden(self.marionette.find_element(
             *self.phone._keypad_toolbar_locator)))
         # Contacts is visible to the screen reader.
-        self.assertFalse(self.accessibility.is_hidden(self.marionette.find_element(
+        self.assertTrue(self.accessibility.is_visible(self.marionette.find_element(
             *self.phone._contacts_toolbar_locator)))
         # Call log is hidden from the screen reader.
         self.assertTrue(self.accessibility.is_hidden(self.marionette.find_element(
@@ -47,7 +46,7 @@ class TestAccessibilityPhoneSelectToolbars(GaiaTestCase):
         self.phone.a11y_click_keypad_toolbar_button()
 
         # Keypad is visible to the screen reader.
-        self.assertFalse(self.accessibility.is_hidden(self.marionette.find_element(
+        self.assertTrue(self.accessibility.is_visible(self.marionette.find_element(
             *self.phone._keypad_toolbar_locator)))
         # Contacts is hidden from the screen reader.
         self.assertTrue(self.accessibility.is_hidden(self.marionette.find_element(

@@ -1,15 +1,17 @@
+/* global FxaModuleSigninSuccess, FxaModuleStates,
+          HtmlImports, LoadElementHelper, MocksHelper, MockL10n */
 'use strict';
 
 // Helper for loading the elements
 requireApp('/system/test/unit/fxa_test/load_element_helper.js');
 
 // Real code
-requireApp('system/fxa/js/utils.js');
+require('/shared/js/utilities.js');
 requireApp('system/fxa/js/fxam_module.js');
 requireApp('system/fxa/js/fxam_states.js');
 
 // Mockuped code
-requireApp('/system/test/unit/mock_l10n.js');
+require('/shared/test/unit/mocks/mock_l20n.js');
 
 requireApp('system/fxa/js/fxam_ui.js');
 requireApp('/system/test/unit/fxa_test/mock_fxam_ui.js');
@@ -29,11 +31,10 @@ var mocksHelperForSigninSuccess = new MocksHelper([
 ]);
 
 suite('Screen: Signin Success', function() {
-  var emailTest = 'testuser@testuser.com';
   var realL10n;
   suiteSetup(function(done) {
-    realL10n = navigator.mozL10n;
-    navigator.mozL10n = MockL10n;
+    realL10n = document.l10n;
+    document.l10n = MockL10n;
 
     mocksHelperForSigninSuccess.suiteSetup();
     // Load real HTML
@@ -42,29 +43,17 @@ suite('Screen: Signin Success', function() {
     LoadElementHelper.load('fxa-signin-success.html');
     // Import the element and execute the right init
     HtmlImports.populate(function() {
-      FxaModuleSigninSuccess.init({
-        email: emailTest
-      });
+      FxaModuleSigninSuccess.init();
       done();
     });
   });
 
   suiteTeardown(function() {
-    navigator.mozL10n = realL10n;
+    document.l10n = realL10n;
     document.body.innerHTML = '';
     mocksHelperForSigninSuccess.suiteTeardown();
   });
 
-
-  suite(' > init ', function() {
-    test(' > email shown properly', function() {
-      assert.equal(
-        FxaModuleSigninSuccess.fxaSummaryEmail.innerHTML,
-        emailTest
-      );
-    });
-
-  });
 
   suite(' > onNext ', function() {
     test(' > go to DONE Step', function() {

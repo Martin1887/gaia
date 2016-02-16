@@ -1,59 +1,69 @@
 'use strict';
 
-/* global CallLog */
+/* global CallHandler, CallLog, CallLogDBManager, Contacts, KeypadManager,
+          MockL10n, MockNavigatorMozIccManager,
+          MocksHelper, MockSimSettingsHelper, Notification,
+          CallGroupMenu, Utils, MockMozContacts, Navigation, l10nAssert */
 
-requireApp('communications/dialer/js/call_log.js');
 require('/shared/js/dialer/utils.js');
 
-requireApp('communications/dialer/test/unit/mock_call_log_db_manager.js');
-requireApp('communications/dialer/test/unit/mock_performance_testing_helper.js');
-requireApp('communications/dialer/test/unit/mock_phone_action_menu.js');
+require('/shared/test/unit/mocks/dialer/mock_contacts.js');
+require('/shared/test/unit/mocks/dialer/mock_keypad.js');
 require('/shared/test/unit/mocks/mock_async_storage.js');
 require('/shared/test/unit/mocks/mock_accessibility_helper.js');
+require('/shared/test/unit/mocks/mock_image.js');
+require('/shared/test/unit/mocks/mock_l10n.js');
 require('/shared/test/unit/mocks/mock_lazy_loader.js');
-require('/shared/test/unit/mocks/mock_contact_photo_helper.js');
-require('/shared/test/unit/mocks/mock_sticky_header.js');
+require('/shared/test/unit/mocks/mock_mozContacts.js');
 require('/shared/test/unit/mocks/mock_navigator_moz_icc_manager.js');
-require('/shared/test/unit/mocks/dialer/mock_lazy_l10n.js');
+require('/shared/test/unit/mocks/mock_notification.js');
+require('/shared/test/unit/mocks/mock_sim_settings_helper.js');
+require('/shared/test/unit/mocks/mock_sticky_header.js');
 
-requireApp('communications/shared/test/unit/mocks/mock_notification.js');
+
+require('/dialer/test/unit/mock_navigation.js');
+require('/dialer/test/unit/mock_call_group_menu.js');
+require('/dialer/test/unit/mock_call_handler.js');
+require('/dialer/test/unit/mock_call_log_db_manager.js');
+require('/dialer/test/unit/mock_keypad.js');
+require('/dialer/test/unit/mock_phone_number_action_menu.js');
 
 var mocksHelperForCallLog = new MocksHelper([
   'asyncStorage',
   'CallLogDBManager',
+  'Contacts',
   'AccessibilityHelper',
-  'PhoneNumberActionMenu',
-  'PerformanceTestingHelper',
+  'CallGroupMenu',
   'LazyLoader',
-  'LazyL10n',
-  'ContactPhotoHelper',
-  'StickyHeader'
+  'Notification',
+  'StickyHeader',
+  'CallHandler',
+  'KeypadManager',
+  'SimSettingsHelper',
+  'Navigation'
 ]).init();
 
 suite('dialer/call_log', function() {
   var realL10n;
-  var realCallLogL10n;
-  var realNotification;
   var realMozIccManager;
+  var realMozContacts;
 
   mocksHelperForCallLog.attachTestHelpers();
 
-  suiteSetup(function() {
+  suiteSetup(function(done) {
     realL10n = navigator.mozL10n;
-    navigator.mozL10n = MockMozL10n;
-    realCallLogL10n = CallLog._;
-    CallLog._ = MockMozL10n.get;
-    realNotification = window.Notification;
-    window.Notification = MockNotification;
+    navigator.mozL10n = MockL10n;
     realMozIccManager = navigator.mozIccManager;
     navigator.mozIccManager = MockNavigatorMozIccManager;
+    realMozContacts = navigator.mozContacts;
+    navigator.mozContacts = MockMozContacts;
+    require('/dialer/js/call_log.js', done);
   });
 
   suiteTeardown(function() {
     navigator.mozL10n = realL10n;
-    CallLog._ = realCallLogL10n;
-    window.Notification = realNotification;
     navigator.mozIccManager = realMozIccManager;
+    navigator.mozContacts = realMozContacts;
   });
 
   var noResult;
@@ -63,7 +73,7 @@ suite('dialer/call_log', function() {
       'call-log-container',
       'call-log-edit-mode',
       'call-log-filter',
-      'call-log-icon-close',
+      'edit-mode-header',
       'call-log-icon-edit',
       'call-log-view',
       'deselect-all-threads',
@@ -74,7 +84,8 @@ suite('dialer/call_log', function() {
       'call-log-upgrading',
       'call-log-upgrade-progress',
       'call-log-upgrade-percent',
-      'sticky'
+      'sticky',
+      'edit-mode'
     ];
 
     mainNodes.forEach(function(prop) {
@@ -93,10 +104,19 @@ suite('dialer/call_log', function() {
     });
     document.body.appendChild(noResult);
     document.body.classList.remove('recents-edit');
+
+    /* Assume that the contact cache is valid during the tests and make the
+     * promise used to validaate it return synchronously. */
+    this.sinon.stub(CallLog, '_validateContactsCache', function() {
+      this._contactCache = true;
+      return { then: function(callback) { callback(); } };
+    });
     CallLog.init();
+    Navigation.showCalllog();
   });
 
   teardown(function() {
+    CallLogDBManager.deleteAll(CallLog.render.bind(CallLog));
     noResult.parentNode.removeChild(noResult);
     CallLog._initialized = false;
     MockNavigatorMozIccManager.mTeardown();
@@ -190,6 +210,14 @@ suite('dialer/call_log', function() {
     retryCount: 0
   };
 
+  var noNumberGroup = {
+    id: '123',
+    lastEntryDate: Date.now(),
+    type: 'incoming',
+    status: '',
+    retryCount: 0
+  };
+
   var voicemailGroup = {
     id: '123',
     lastEntryDate: Date.now(),
@@ -241,18 +269,19 @@ suite('dialer/call_log', function() {
     CallLog.render();
     setTimeout(function() {
       var sections = CallLog.callLogContainer.getElementsByTagName('section');
+      var i, groupDOM, doms;
       if (date) {
         assert.equal(sections.length, 1);
-        var groupDOM = sections[0].getElementsByTagName('ol')[0];
-        var doms = groupDOM.getElementsByTagName('li');
-        for (var i = 0; i < count; i++) {
+        groupDOM = sections[0].getElementsByTagName('ol')[0];
+        doms = groupDOM.getElementsByTagName('li');
+        for (i = 0; i < count; i++) {
           checkGroupDOM(doms[i], groups[i], null);
         }
       } else {
         assert.equal(sections.length, count);
-        for (var i = 0; i < count; i++) {
-          var groupDOM = sections[i].getElementsByTagName('ol')[0];
-          var doms = groupDOM.getElementsByTagName('li');
+        for (i = 0; i < count; i++) {
+          groupDOM = sections[i].getElementsByTagName('ol')[0];
+          doms = groupDOM.getElementsByTagName('li');
           checkGroupDOM(doms[0], groups[i], null);
         }
       }
@@ -272,11 +301,6 @@ suite('dialer/call_log', function() {
     var input = label.getElementsByTagName('input');
     assert.ok(input[0], 'Input ok');
     assert.equal(input[0].getAttribute('value'), group.id);
-
-    // Contact photo.
-    var contactPhotoElement = groupDOM.querySelector('.call-log-contact-photo');
-    assert.ok(contactPhotoElement, 'Contact photo element');
-    assert.equal(contactPhotoElement.className, 'call-log-contact-photo');
 
     // Call type.
     if (group.type === 'dialing' || group.type === 'alerting') {
@@ -310,57 +334,72 @@ suite('dialer/call_log', function() {
     var primaryInfoMain = primaryInfo.querySelector('.primary-info-main');
     assert.ok(primaryInfoMain, 'Primary info main ok');
     if (group.contact) {
-      assert.equal(primaryInfoMain.innerHTML, group.contact.primaryInfo);
+      assert.equal(primaryInfoMain.querySelector('bdi').innerHTML,
+                   group.contact.primaryInfo);
     } else {
       // Labels checking
       if (group.voicemail || group.emergency) {
         var expected =
           group.voicemail ? 'voiceMail' :
             (group.emergency ? 'emergencyNumber' : '');
-        assert.equal(primaryInfoMain.innerHTML, expected);
+        assert.equal(primaryInfoMain.getAttribute('data-l10n-id'), expected);
+        assert.isNull(primaryInfoMain.querySelector('bdi'));
+      } else if (group.number) {
+        assert.equal(
+          primaryInfoMain.querySelector('bdi').innerHTML, group.number);
       } else {
-        assert.equal(primaryInfoMain.innerHTML, group.number);
+        assert.equal(
+          primaryInfoMain.querySelector('bdi').getAttribute('data-l10n-id'),
+          'withheld-number'
+        );
       }
     }
 
     // Additional info.
-    var addInfo = groupDOM.querySelector('.call-additional-info');
+    var addInfo = groupDOM.querySelector('.additional-info');
+    var typeCarrier = addInfo.querySelector('.type-carrier');
     var matchingTel;
     if (group.contact &&
         (matchingTel = group.contact.matchingTel) && matchingTel.value) {
       assert.ok(addInfo, 'Additional info ok');
-      var expAddInfo;
+      var l10nArgs = {};
       if (matchingTel.type) {
-        expAddInfo = matchingTel.type;
+        l10nArgs.type = matchingTel.type;
       } else {
-        expAddInfo = 'mobile';
+        l10nArgs.type = 'mobile';
       }
       if (matchingTel.carrier) {
-        expAddInfo += ', ' + matchingTel.carrier;
+        l10nArgs.carrier = matchingTel.carrier;
       } else {
-        expAddInfo += ', ' + matchingTel.value;
+        l10nArgs.carrier = matchingTel.value;
       }
-      assert.equal(addInfo.innerHTML, expAddInfo);
+
+      l10nAssert(typeCarrier, 'phone_type_custom_and_carrier', l10nArgs);
+    } else if (group.voicemail || group.emergency) {
+      assert.equal(typeCarrier.innerHTML, group.number);
     } else {
-      // Labels checking
-      if (group.voicemail || group.emergency) {
-        assert.equal(addInfo.innerHTML, group.number);
-      } else {
-        assert.equal(addInfo, null, 'No additional info');
-      }
+      l10nAssert(typeCarrier, 'unknown');
     }
 
     // Call time.
     var callTime = groupDOM.querySelector('.call-time');
     assert.ok(callTime, 'Call time ok');
-    assert.equal(new Date(Date.parse(callTime.innerHTML)).getSeconds() -
-                 new Date(group.lastEntryDate).getSeconds(), 0);
+    assert.equal(callTime.textContent.trim(),
+      new Date(group.lastEntryDate).toLocaleString(navigator.languages, {
+        hour12: navigator.mozHour12,
+        hour: 'numeric',
+        minute: 'numeric'
+      }));
 
     // Retry count.
     var retryCount = groupDOM.querySelector('.retry-count');
-    assert.ok(retryCount, 'Retry count ok');
     if (group.retryCount > 1) {
-      assert.equal(retryCount.innerHTML, '(' + group.retryCount + ')');
+      assert.isNotNull(retryCount);
+      assert.equal(
+        retryCount.innerHTML,
+        '(' + group.retryCount + ')');
+    } else {
+      assert.isNull(retryCount);
     }
     if (callback) {
       callback();
@@ -377,37 +416,75 @@ suite('dialer/call_log', function() {
     var primaryInfoMain = primaryInfo.querySelector('.primary-info-main');
     assert.ok(primaryInfoMain, 'Primary info main ok');
     if (contact && contact.name) {
-      assert.equal(primaryInfoMain.innerHTML, contact.name);
+      assert.equal(primaryInfoMain.querySelector('bdi').innerHTML,
+                   contact.name);
     } else if (contact && contact.org) {
-      assert.equal(primaryInfoMain.innerHTML, contact.org);
+      assert.equal(primaryInfoMain.querySelector('bdi').innerHTML, contact.org);
     } else if (number) {
-      assert.equal(primaryInfoMain.innerHTML, number);
+      assert.equal(primaryInfoMain.querySelector('bdi').innerHTML, number);
     }
 
     // Additional info.
-    var addInfo = groupDOM.querySelector('.call-additional-info');
+    var addInfo = groupDOM.querySelector('.additional-info');
+    var typeCarrier = addInfo.querySelector('.type-carrier');
     if (contact && contact.matchingTel && contact.matchingTel.value) {
       assert.ok(addInfo, 'Additional info ok');
-      var expAddInfo;
+      var l10nArgs = {};
       if (contact.matchingTel.type) {
-        expAddInfo = contact.matchingTel.type;
+        l10nArgs.type = contact.matchingTel.type;
       } else {
-        expAddInfo = 'mobile';
+        l10nArgs.type = 'mobile';
       }
       if (contact.matchingTel.carrier) {
-        expAddInfo += ', ' + contact.matchingTel.carrier;
+        l10nArgs.carrier = contact.matchingTel.carrier;
       } else {
-        expAddInfo += ', ' + contact.matchingTel.value;
+        l10nArgs.carrier = contact.matchingTel.value;
       }
-      assert.equal(addInfo.innerHTML, expAddInfo);
+      l10nAssert(typeCarrier, 'phone_type_custom_and_carrier', l10nArgs);
     } else {
-      assert.equal(addInfo.innerHTML, '', 'No additional info');
+      l10nAssert(typeCarrier, 'unknown');
     }
 
     if (callback) {
       callback();
     }
   }
+
+  suite('timeformatchange', function() {
+
+    test('update times to new 12/24 timeformat', function(done) {
+      this.sinon.spy(Utils, 'prettyDate');
+      var numEntries = 2;
+      window.navigator.mozHour12 = false;
+
+      // This calls checkGroupDOM which validates the time is there.
+      appendAndCheckGroupDOM(numEntries, null, function() {
+        sinon.assert.callCount(Utils.prettyDate, numEntries);
+        Utils.prettyDate.reset();
+
+        window.navigator.mozHour12 = true;
+        window.dispatchEvent(new CustomEvent('timeformatchange'));
+        sinon.assert.calledWith(Utils.prettyDate, incomingGroup.lastEntryDate);
+        sinon.assert.callCount(Utils.prettyDate, numEntries);
+
+        // Test that when we set it to 12 hr and update, items are updated.
+        var logItems = CallLog.callLogContainer.querySelectorAll('.log-item');
+        var formatter = Intl.DateTimeFormat(navigator.languages, {
+          hour12: navigator.mozHour12,
+          hour: 'numeric',
+          minute: 'numeric'
+        });
+        for (var i = 0; i < logItems.length; i++) {
+          var logItemElt = logItems[i];
+          var callTime = logItemElt.querySelector('.call-time');
+          var timestamp = logItemElt.getAttribute('data-timestamp');
+          assert.equal(callTime.textContent, formatter.format(timestamp));
+        }
+
+        done();
+      });
+    });
+  });
 
   suite('createGroup', function() {
     test('Incoming call', function(done) {
@@ -424,6 +501,10 @@ suite('dialer/call_log', function() {
 
     test('No contact group', function(done) {
       checkGroupDOM(CallLog.createGroup(noContactGroup), noContactGroup, done);
+    });
+
+    test('No number group', function(done) {
+      checkGroupDOM(CallLog.createGroup(noNumberGroup), noNumberGroup, done);
     });
 
     test('Voicemail group', function(done) {
@@ -447,14 +528,7 @@ suite('dialer/call_log', function() {
     var renderSeveralDaysSpy;
 
     setup(function() {
-        renderSeveralDaysSpy = this.sinon.spy(CallLog, 'renderSeveralDays');
-    });
-
-    teardown(function(done) {
-      CallLogDBManager.deleteAll(function() {
-        CallLog.render();
-        setTimeout(done);
-      });
+      renderSeveralDaysSpy = this.sinon.spy(CallLog, 'renderSeveralDays');
     });
 
     test('Below first render threshold same day', function(done) {
@@ -513,14 +587,15 @@ suite('dialer/call_log', function() {
       grp.date = 1;
       CallLogDBManager.add(grp);
       // Day 2 - 100 groups
-      for (var i = 2; i < 102; i++) {
+      var i;
+      for (i = 2; i < 102; i++) {
         grp = JSON.parse(JSON.stringify(incomingGroup));
         grp.id = i;
         grp.date = 2;
         CallLogDBManager.add(grp);
       }
       // Day 3 - 10 group
-      for (var i = 102; i < 112; i++) {
+      for (i = 102; i < 112; i++) {
         grp = JSON.parse(JSON.stringify(incomingGroup));
         grp.id = i;
         grp.date = 3;
@@ -583,8 +658,6 @@ suite('dialer/call_log', function() {
   });
 
   suite('notifications', function() {
-    var notifs;
-    var notificationSpy;
 
     setup(function() {
       var notificationGetStub = function notificationGet() {
@@ -600,14 +673,21 @@ suite('dialer/call_log', function() {
         };
       };
       this.sinon.stub(Notification, 'get', notificationGetStub);
-      notifs = Notification.get();
-      notificationSpy =
-        this.sinon.spy(MockNotification.prototype, 'close');
+      this.sinon.spy(Notification.prototype, 'close');
     });
 
-    test('call log should close notifications', function() {
-      CallLog.cleanNotifications();
-      sinon.assert.callCount(notificationSpy, 2);
+    test('notifications are closed when opening the call log', function() {
+      CallLog._initialized = false;
+      CallLog.init();
+      sinon.assert.callCount(Notification.prototype.close, 2);
+    });
+
+    test('notifications should not be closed when keypad becomes visible',
+         function() {
+      Navigation.showKeypad();
+      var visibilityEvent = new CustomEvent('visibilitychange');
+      document.dispatchEvent(visibilityEvent);
+      sinon.assert.notCalled(Notification.prototype.close);
     });
   });
 
@@ -618,8 +698,13 @@ suite('dialer/call_log', function() {
         CallLog.showEditMode();
       });
 
+      teardown(function() {
+        CallLog.hideEditMode();
+      });
+
       test('should fill the header', function() {
-        assert.equal(CallLog.headerEditModeText.textContent, 'edit');
+        assert.equal(CallLog.headerEditModeText.getAttribute('data-l10n-id'),
+                     'edit');
       });
 
       test('should disable the delete button at first', function() {
@@ -633,7 +718,8 @@ suite('dialer/call_log', function() {
       });
 
       test('should fill the select all button', function() {
-        assert.equal(CallLog.selectAllThreads.textContent, 'selectAll');
+        assert.equal(CallLog.selectAllThreads.getAttribute('data-l10n-id'),
+                     'selectAll');
       });
 
       test('should enable the select all button', function() {
@@ -649,15 +735,13 @@ suite('dialer/call_log', function() {
 
     suite('Exiting edit mode', function() {
       setup(function() {
-        CallLog.callLogContainer.innerHTML = '' +
-         '<input type="checkbox" checked>' +
-         '<input type="checkbox" checked>' +
-         '<input type="checkbox" checked>';
+        CallLog.callLogContainer.innerHTML =
+         `<input type="checkbox" checked>
+          <input type="checkbox" checked>
+          <input type="checkbox" checked>`;
+        CallLog.callLogIconEdit.removeAttribute('disabled');
         CallLog.showEditMode();
         CallLog.hideEditMode();
-      });
-
-      teardown(function() {
       });
 
       test('should put the body out of recents-edit mode', function() {
@@ -671,6 +755,27 @@ suite('dialer/call_log', function() {
           var checkbox = checkboxes[i];
           assert.isFalse(checkbox.checked);
         }
+      });
+
+      test('should display all entries if filtering is disabled',
+      function() {
+        this.sinon.spy(CallLog, 'unfilter');
+
+        CallLog.callLogIconEdit.removeAttribute('disabled');
+        CallLog.showEditMode();
+        CallLog.hideEditMode();
+        sinon.assert.calledOnce(CallLog.unfilter);
+      });
+
+      test('should filter out non-missed entries if filtering is enabled',
+      function() {
+        this.sinon.spy(CallLog, 'filter');
+
+        CallLog.callLogIconEdit.removeAttribute('disabled');
+        CallLog.showEditMode();
+        CallLog.callLogContainer.classList.add('filter');
+        CallLog.hideEditMode();
+        sinon.assert.calledOnce(CallLog.filter);
       });
     });
   });
@@ -697,35 +802,35 @@ suite('dialer/call_log', function() {
 
   suite('Opening contact details', function() {
     var groupDOM;
-    var phoneNumberActionMenuSpy;
+    var callGroupMenuSpy;
 
     setup(function() {
-      phoneNumberActionMenuSpy = this.sinon.spy(PhoneNumberActionMenu, 'show');
+      callGroupMenuSpy = this.sinon.spy(CallGroupMenu, 'show');
     });
 
     test('regular number', function() {
       groupDOM = CallLog.createGroup(incomingGroup);
-      CallLog.handleEvent({target: groupDOM});
+      CallLog.handleEvent({target: groupDOM, preventDefault: function() {}});
 
       sinon.assert.calledWith(
-        phoneNumberActionMenuSpy,
-        incomingGroup.contact.id,
+        callGroupMenuSpy,
+        incomingGroup.contact.primaryInfo,
         incomingGroup.contact.matchingTel.value,
-        null,
-        false
+        incomingGroup.lastEntryDate.toString(),
+        incomingGroup.type
       );
     });
 
     test('missed number', function() {
       groupDOM = CallLog.createGroup(missedGroup);
-      CallLog.handleEvent({target: groupDOM});
+      CallLog.handleEvent({target: groupDOM, preventDefault: function() {}});
 
       sinon.assert.calledWith(
-        phoneNumberActionMenuSpy,
-        incomingGroup.contact.id,
-        incomingGroup.contact.matchingTel.value,
-        null,
-        true
+        callGroupMenuSpy,
+        missedGroup.contact.primaryInfo,
+        missedGroup.contact.matchingTel.value,
+        missedGroup.lastEntryDate.toString(),
+        missedGroup.type
       );
     });
   });
@@ -735,14 +840,51 @@ suite('dialer/call_log', function() {
       CallLog._initialized = false;
     });
 
-    suite('One SIM', function() {
-      setup(function() {
-        MockNavigatorMozIccManager.addIcc('12345', {'cardState': 'ready'});
-        CallLog.init();
+    var simulateClick = function(button) {
+      var ev = new MouseEvent('click', {
+        view: window,
+        bubbles: true,
+        cancelable: true
       });
+      button.dispatchEvent(ev);
+    };
 
-      test('should not put the dual sim class on the container', function() {
-        assert.isFalse(CallLog.callLogContainer.classList.contains('dual-sim'));
+    var simulateContextMenu = function(button) {
+      var ev = document.createEvent('MouseEvents');
+      ev.initMouseEvent('contextmenu', true, false, window, 0, 0, 0, 0, 0,
+                        false, false, false, false, 2, null);
+      button.dispatchEvent(ev);
+    };
+
+    var longPressShouldShowActionMenu = function() {
+      var showSpy = this.sinon.spy(CallGroupMenu, 'show');
+      simulateContextMenu(CallLog.appendGroup(missedGroup));
+      sinon.assert.calledWith(
+        showSpy, missedGroup.contact.primaryInfo, missedGroup.number);
+    };
+
+    [0, 1].forEach(function(cardIndex) {
+      suite('One SIM in slot ' + cardIndex, function() {
+        setup(function() {
+          MockNavigatorMozIccManager.addIcc('12345', {'cardState': 'ready'});
+          MockSimSettingsHelper._defaultCards.outgoingCall = cardIndex;
+          CallLog.init();
+        });
+
+        test('should not put the dual sim class on the container', function() {
+          assert.isFalse(
+            CallLog.callLogContainer.classList.contains('dual-sim'));
+        });
+
+        test('tapping the entry should place call immediately', function() {
+          var callSpy = this.sinon.spy(CallHandler, 'call');
+          simulateClick(CallLog.appendGroup(missedGroup));
+          sinon.assert.calledWith(callSpy, missedGroup.number,
+            MockSimSettingsHelper._defaultCards.outgoingCall);
+        });
+
+        test('long pressing the entry should show action menu',
+             longPressShouldShowActionMenu);
       });
     });
 
@@ -751,10 +893,117 @@ suite('dialer/call_log', function() {
         MockNavigatorMozIccManager.addIcc('12345', {'cardState': 'ready'});
         MockNavigatorMozIccManager.addIcc('3232', {'cardState': 'ready'});
         CallLog.init();
+        Navigation.showCalllog();
       });
 
       test('should put the dual sim class on the container', function() {
         assert.isTrue(CallLog.callLogContainer.classList.contains('dual-sim'));
+      });
+
+      test('tapping the entry should switch to keypad view', function() {
+        var updateSpy = this.sinon.spy(KeypadManager, 'updatePhoneNumber');
+        assert.notEqual(Navigation.currentView, 'keypad');
+        assert.notEqual(KeypadManager.phoneNumber(), missedGroup.number);
+        simulateClick(CallLog.appendGroup(missedGroup));
+        assert.equal(Navigation.currentView, 'keypad');
+        assert.equal(KeypadManager.phoneNumber(), missedGroup.number);
+        sinon.assert.calledWith(updateSpy, missedGroup.number);
+      });
+
+      test('long pressing the entry should show action menu',
+           longPressShouldShowActionMenu);
+    });
+  });
+
+  suite('oncontactchange', function() {
+    suite('contact removed', function() {
+      var allLogs;
+
+      setup(function() {
+        // Insert two groups with same contact
+        var grp = JSON.parse(JSON.stringify(incomingGroup));
+        grp.id = 1;
+        grp.date = 1;
+        CallLogDBManager.add(grp);
+
+        grp = JSON.parse(JSON.stringify(incomingGroup));
+        grp.id = 2;
+        grp.date = 2;
+        CallLogDBManager.add(grp);
+
+        CallLog.render();
+
+        this.sinon.stub(Contacts, 'findByNumber');
+
+        var contactEvent = {
+          reason: 'remove',
+          contactID: incomingGroup.contact.id
+        };
+        navigator.mozContacts.oncontactchange(contactEvent);
+
+        allLogs = document.body.getElementsByClassName('log-item');
+      });
+
+      suite('no new matching contact', function() {
+        setup(function() {
+          Contacts.findByNumber.yield();
+        });
+
+        test('all groups have no contact-id', function() {
+          for (var log of allLogs) {
+            assert.isUndefined(log.dataset.contactId);
+          }
+        });
+
+        test('all groups display the number', function() {
+          for (var log of allLogs) {
+            var primaryInfo = log.querySelector('.primary-info');
+            var primaryInfoMain =
+              primaryInfo.querySelector('.primary-info-main');
+            assert.equal(primaryInfoMain.textContent, incomingGroup.number);
+          }
+        });
+
+        test('all groups display "Unknown" type', function() {
+          for (var log of allLogs) {
+            var type = log.querySelector('.additional-info .type-carrier');
+            assert.equal(type.getAttribute('data-l10n-id'), 'unknown');
+          }
+        });
+      });
+
+      suite('find new matching contacts', function() {
+        var newContact;
+        var matchingTel;
+
+        setup(function() {
+          matchingTel = {
+            value: '111222333',
+            type: 'Mobile',
+            carrier: 'Telefonica'
+          };
+          newContact = {
+            id: '2131245135413',
+            name: 'other contact',
+            matchingTel: matchingTel
+          };
+          Contacts.findByNumber.yield(newContact, matchingTel);
+        });
+
+        test('all groups have the new contact-id', function() {
+          for (var log of allLogs) {
+            assert.equal(log.dataset.contactId, newContact.id);
+          }
+        });
+
+        test('all groups have the new contact name', function() {
+          for (var log of allLogs) {
+            var primaryInfo = log.querySelector('.primary-info');
+            var primaryInfoMain =
+              primaryInfo.querySelector('.primary-info-main');
+            assert.equal(primaryInfoMain.textContent, newContact.name);
+          }
+        });
       });
     });
   });

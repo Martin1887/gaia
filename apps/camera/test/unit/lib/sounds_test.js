@@ -6,7 +6,6 @@ var mocksHelperForSounds = new MocksHelper([
 
 suite('Sounds', function() {
   /*jshint maxlen:false*/
-  /*global req*/
   'use strict';
 
   /**
@@ -16,26 +15,31 @@ suite('Sounds', function() {
   var Sounds;
   var list = [
     {
-      name: 'camera',
-      setting: 'camera.shutter.enabled',
-      url: 'resources/sounds/shutter.ogg'
+      name: 'shutter',
+      url: 'resources/sounds/shutter.opus',
+      setting: 'camera.sound.enabled'
+    },
+    {
+      name: 'countdown',
+      url: 'resources/sounds/countdown.opus',
+      setting: 'camera.sound.enabled'
     },
     {
       name: 'recordingStart',
       url: 'resources/sounds/camcorder_start.opus',
-      setting: 'camera.recordingsound.enabled'
+      setting: 'camera.sound.enabled'
     },
     {
       name: 'recordingEnd',
       url: 'resources/sounds/camcorder_end.opus',
-      setting: 'camera.recordingsound.enabled'
+      setting: 'camera.sound.enabled'
     }
   ];
 
   mocksHelperForSounds.attachTestHelpers();
 
   suiteSetup(function(done) {
-    req(['lib/sounds'], function(sounds) {
+    requirejs(['lib/sounds'], function(sounds) {
       Sounds = sounds;
       done();
     });
@@ -49,8 +53,8 @@ suite('Sounds', function() {
     // A sound to pass to APIs
     this.mockSound = {
       name: 'camera',
-      setting: 'camera.shutter.enabled',
-      url: 'resources/sounds/shutter.ogg'
+      url: 'resources/sounds/shutter.opus',
+      setting: 'camera.sound.enabled'
     };
 
     // Keep reference of
@@ -91,7 +95,9 @@ suite('Sounds', function() {
       this.sounds.add(list[0]);
       this.sounds.add(list[1]);
       this.sounds.add(list[2]);
-      assert.ok(this.sounds.items.camera);
+      this.sounds.add(list[3]);
+      assert.ok(this.sounds.items.shutter);
+      assert.ok(this.sounds.items.countdown);
       assert.ok(this.sounds.items.recordingStart);
       assert.ok(this.sounds.items.recordingEnd);
     });
@@ -104,7 +110,7 @@ suite('Sounds', function() {
     test('Should call `setEnabled` with the result of `isEnabled`', function() {
       var setEnabled = this.sounds.setEnabled;
       this.sounds.add(list[0]);
-      assert.ok(setEnabled.calledWith(this.sounds.items.camera, true));
+      assert.ok(setEnabled.calledWith(this.sounds.items.shutter, true));
     });
   });
 

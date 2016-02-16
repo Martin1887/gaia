@@ -1,4 +1,4 @@
-/* global AppWindow, BrowserFrame, OrientationManager */
+/* global AppWindow, BrowserFrame, Service */
 'use strict';
 
 (function(exports) {
@@ -86,7 +86,9 @@
     this.publish('created');
   };
 
-  ActivityWindow.prototype.__proto__ = AppWindow.prototype;
+  ActivityWindow.prototype = Object.create(AppWindow.prototype);
+
+  ActivityWindow.prototype.constructor = ActivityWindow;
 
   ActivityWindow.prototype.eventPrefix = 'activity';
 
@@ -98,8 +100,8 @@
    */
   ActivityWindow.prototype._DEBUG = false;
 
-  ActivityWindow.prototype.openAnimation = 'slideup';
-  ActivityWindow.prototype.closeAnimation = 'slidedown';
+  ActivityWindow.prototype.openAnimation = 'fade-in';
+  ActivityWindow.prototype.closeAnimation = 'fade-out';
 
   /**
    * ActivityWindow's fullscreen state is copying from the caller
@@ -113,10 +115,10 @@
       return this._fullscreen;
     }
 
-    this._fullscreen = this.rearWindow ?
-                       this.rearWindow.isFullScreen() :
-                       this.manifest ?
+    this._fullscreen = (this.manifest && !!this.manifest.fullscreen) ?
                        !!this.manifest.fullscreen :
+                       this.rearWindow ?
+                       this.rearWindow.isFullScreen() :
                        false;
     return this._fullscreen;
   };
@@ -133,7 +135,7 @@
                             this.config.manifest.orientation : null;
         var orientation3 = (this.rearWindow.manifest) ?
                             this.rearWindow.manifest.orientation : null;
-        var orientation4 = OrientationManager.globalOrientation;
+        var orientation4 = Service.query('globalOrientation');
 
         var orientation = orientation1 ||
                           orientation2 ||
@@ -162,26 +164,32 @@
     };
 
   ActivityWindow.prototype.view = function acw_view() {
-    this.instanceID = _id;
-    return '<div class="appWindow activityWindow inline-activity' +
-            '" id="activity-window-' + _id++ + '">' +
-            '<div class="screenshot-overlay"></div>' +
-            '<div class="fade-overlay"></div>' +
-            '</div>';
+    this.instanceID = this.CLASS_NAME + '_' + _id;
+    _id++;
+    return `<div id="${this.instanceID}"
+            class="appWindow activityWindow inline-activity">
+            <div class="fade-overlay"></div>
+            <div class="browser-container">
+             <div class="screenshot-overlay"></div>
+            </div>
+            </div>`;
   };
 
   ActivityWindow.SUB_COMPONENTS = {
-    'transitionController': window.AppTransitionController,
-    'modalDialog': window.AppModalDialog,
-    'authDialog': window.AppAuthenticationDialog,
-    'contextmenu': window.BrowserContextMenu,
-    'childWindowFactory': window.ChildWindowFactory
+    'transitionController': 'AppTransitionController',
+    'modalDialog': 'AppModalDialog',
+    'valueSelector': 'ValueSelector',
+    'authDialog': 'AppAuthenticationDialog',
+    'childWindowFactory': 'ChildWindowFactory',
+    'statusbar': 'AppStatusbar',
+    'textSelectionDialog': 'AppTextSelectionDialog'
   };
 
-  ActivityWindow.REGISTERED_EVENTS =
-    ['mozbrowserclose', 'mozbrowsererror', 'mozbrowservisibilitychange',
-      'mozbrowserloadend', 'mozbrowseractivitydone', 'mozbrowserloadstart',
-      '_localized', '_opened', '_closing', 'acitivityclosing', 'popupclosing'];
+  ActivityWindow.SUB_MODULES = {
+    'contextmenu': 'BrowserContextMenu'
+  };
+
+  ActivityWindow.REGISTERED_EVENTS = AppWindow.REGISTERED_EVENTS;
 
   ActivityWindow.prototype._handle_mozbrowseractivitydone =
     function aw__handle_mozbrowseractivitydone() {
@@ -204,8 +212,10 @@
     };
     this.browser = new BrowserFrame(this.browser_config);
     this.element =
-      document.getElementById('activity-window-' + this.instanceID);
-    this.element.insertBefore(this.browser.element, this.element.childNodes[0]);
+      document.getElementById(this.instanceID);
+
+    this.browserContainer = this.element.querySelector('.browser-container');
+    this.browserContainer.appendChild(this.browser.element);
     this.frame = this.element;
     this.iframe = this.browser.element;
     this.screenshotOverlay = this.element.querySelector('.screenshot-overlay');

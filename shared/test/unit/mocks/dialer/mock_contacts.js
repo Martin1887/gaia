@@ -43,6 +43,7 @@ var MockContacts = {
   findListByNumber: function cm_getContactData(number, maxitems, callback) {
     callback(this.mResult);
   },
+  getRevision: function cm_getRevision(callback) { callback(0); },
   mId: 'id',
   mPhoto: null,
   mName: null,
@@ -54,5 +55,6 @@ var MockContacts = {
     this._calledWith = null;
     this.mCarrier = 'carrier';
     this.mType = 'type';
+    this.mResult = [];
   }
 };

@@ -1,36 +1,53 @@
-/* global PermissionManager, MocksHelper, MockL10n*/
+/* global PermissionManager, Applications, MocksHelper, MockL10n,
+          MockApplications, MockAppWindow, MockService, applications */
 'use strict';
 
-mocha.globals(['PermissionManager', 'dispatchEvent']);
-
 require('/shared/test/unit/load_body_html_helper.js');
-require('/shared/js/template.js');
+require('/shared/js/sanitizer.js');
 require('/shared/test/unit/mocks/mock_lazy_loader.js');
-requireApp('system/test/unit/mock_l10n.js');
+require('/shared/test/unit/mocks/mock_l20n.js');
+require('/shared/test/unit/mocks/mock_service.js');
+require('/test/unit/mock_applications.js');
+require('/test/unit/mock_app_window.js');
+require('/shared/test/unit/mocks/mock_manifest_helper.js');
 
 // to emulate permission events
-function sendChromeEvent(evt_type, evt_permission) {
+function sendChromeEvent(evt_type, evt_permission, remember) {
   var permissions = {};
   permissions[evt_permission] = [''];
   var detail = {'type': evt_type, 'permissions': permissions,
-                'origin': 'test', 'isApp': false };
+                'origin': 'test', 'isApp': false, 'remember': remember,
+                'id': 'perm1' };
   var evt = new CustomEvent('mozChromeEvent', { detail: detail });
   window.dispatchEvent(evt);
 }
 
+function createMediaEvent(evt_type, evt_permissions, isApp, isGranted) {
+  return {
+    'type': evt_type,
+    'permissions': evt_permissions,
+    'origin': 'test',
+    'isApp': isApp || false,
+    'remember': true,
+    'isGranted': isGranted || false,
+    'manifestURL': isApp ? 'app://uitest.gaiamobile.org/manifest.webapp' : null,
+    'id': 'perm1'
+  };
+}
+
 // to emulate getUserMedia events
-function sendMediaEvent(evt_type, evt_permissions) {
-  var detail = {'type': evt_type,
-                'permissions': evt_permissions,
-                'origin': 'test', 'isApp': false
-               };
+function sendMediaEvent(evt_type, evt_permissions, app, isGranted) {
+  var detail = createMediaEvent(evt_type, evt_permissions, app, isGranted);
   var evt = new CustomEvent('mozChromeEvent', { detail: detail });
   window.dispatchEvent(evt);
 }
 
 
 var mocksForLazyLoader = new MocksHelper([
-    'LazyLoader'
+    'LazyLoader',
+    'Applications',
+    'ManifestHelper',
+    'Service'
   ]).init();
 
 suite('system/permission manager', function() {
@@ -41,20 +58,23 @@ suite('system/permission manager', function() {
 
   suiteSetup(function(done) {
     loadBodyHTML('/index.html');
-    realL10n = navigator.mozL10n;
-    navigator.mozL10n = MockL10n;
+    realL10n = document.l10n;
+    document.l10n = MockL10n;
 
     requireApp('system/js/permission_manager.js', function() {
       permissionManager = new PermissionManager();
       done();
     });
+
+    window.applications = Applications;
   });
 
   suiteTeardown(function() {
-    navigator.mozL10n = realL10n;
+    document.l10n = realL10n;
   });
 
   setup(function() {
+    MockService.mockQueryWith('getTopMostWindow', new MockAppWindow());
     permissionManager.start();
   });
 
@@ -62,11 +82,55 @@ suite('system/permission manager', function() {
     permissionManager.stop();
   });
 
+  test('dispatch event when hidden', function() {
+    var dispatched = false;
+    window.addEventListener('permissiondialoghide', function onhide() {
+      window.removeEventListener('permissiondialoghide', onhide);
+      dispatched = true;
+    });
+    permissionManager.hidePermissionPrompt();
+    assert.isTrue(dispatched);
+  });
+
+  test('.permission-promt class added and removed from screen', function() {
+    assert(!permissionManager.screen.classList.contains('permission-prompt'),
+      'screen starts with no permission-prompt class');
+    sendChromeEvent('permission-prompt', 'test');
+    assert(permissionManager.screen.classList.contains('permission-prompt'),
+      'showing permission prompt adds appropriate css class');
+    permissionManager.hidePermissionPrompt();
+    assert(!permissionManager.screen.classList.contains('permission-prompt'),
+      'hiding permission prompt removes css class');
+  });
+
+  suite('`Remember my choice`', function() {
+    test('`Remember my choice` is hidden for non-app content', function() {
+      var rememberSection =
+        document.getElementById('permission-remember-section');
+      sendChromeEvent('permission-prompt', 'geolocation');
+      assert.equal(rememberSection.style.display, 'none');
+    });
+
+    test('`Remember my choice` is displayed for app content', function() {
+      this.sinon.stub(applications, 'getByManifestURL').returns(
+        { name: 'UITest' }
+      );
+
+      var rememberSection =
+        document.getElementById('permission-remember-section');
+
+      sendMediaEvent(
+        'permission-prompt', {'geolocation': [''] },/* isapp */  true
+      );
+
+      assert.equal(rememberSection.style.display, 'block');
+    });
+  });
+
   suite('default value', function() {
     test('default values', function() {
-      assert.equal(permissionManager.fullscreenRequest, undefined);
+      assert.equal(permissionManager.isFullscreenRequest, false);
       assert.equal(permissionManager.pending, '');
-      assert.equal(permissionManager.nextRequestID, 0);
       assert.equal(permissionManager.currentRequestId, undefined);
       assert.equal(permissionManager.currentOrigin, undefined);
       assert.equal(permissionManager.permissionType, undefined);
@@ -74,226 +138,367 @@ suite('system/permission manager', function() {
   });
 
   suite('permission-prompt Handler', function() {
-    var stubPrompt;
-
     setup(function() {
-      stubPrompt = this.sinon.stub(permissionManager, 'handlePermissionPrompt');
+      this.sinon.spy(permissionManager, 'handlePermissionPrompt');
       sendChromeEvent('permission-prompt', 'test');
-    });
-
-    teardown(function() {
-      stubPrompt.restore();
     });
 
     test('permission-prompt', function() {
       assert.equal(permissionManager.overlay.dataset.type, 'test');
-      assert.isTrue(stubPrompt.called);
+      assert.isTrue(permissionManager.handlePermissionPrompt.called);
     });
   });
 
-  suite('cancel-permission-prompt Handler', function() {
-    var stubDiscard;
-
+  suite('permission-prompt queue (when requesting more than one)', function() {
     setup(function() {
-      stubDiscard = this.sinon.stub(permissionManager,
-        'discardPermissionRequest');
+      this.sinon.spy(permissionManager, 'handlePermissionPrompt');
+      this.sinon.spy(permissionManager, 'queuePrompt');
+
+      sendChromeEvent('permission-prompt', 'test');
+      sendChromeEvent('permission-prompt', 'test');
+      sendChromeEvent('permission-prompt', 'test');
+    });
+
+    test('permission-prompt queue must be 2 elements length', function() {
+      assert.equal(permissionManager.overlay.dataset.type, 'test');
+      assert.isTrue(permissionManager.handlePermissionPrompt.calledOnce);
+      assert.isTrue(permissionManager.queuePrompt.calledTwice);
+      assert.equal(permissionManager.pending.length, 2);
+
+    });
+
+    test('dispatchEvent must be called 3 times', function(done) {
+      var i = 0;
+      this.sinon.stub(permissionManager, 'dispatchResponse', function() {
+        if (++i === 3) {
+          assert.equal(permissionManager.dispatchResponse.callCount, 3);
+          done();
+        }
+      });
+      // Click on the first 'allow' prompt
+      permissionManager.clickHandler({target: permissionManager.yes});
+    });
+  });
+
+
+  suite('cancel-permission-prompt Handler', function() {
+    setup(function() {
+      this.sinon.stub(permissionManager, 'discardPermissionRequest');
       sendChromeEvent('cancel-permission-prompt', '');
     });
 
-    teardown(function() {
-      stubDiscard.restore();
-    });
-
     test('cancel-permission-prompt', function() {
-      assert.isTrue(stubDiscard.called);
+      assert.isTrue(permissionManager.discardPermissionRequest.called);
     });
   });
 
+  suite('attentionopening Handler', function() {
+    setup(function() {
+      this.sinon.stub(permissionManager, 'discardPermissionRequest');
+    });
+
+    test('discardPermissionRequest is called', function() {
+      var evt = document.createEvent('CustomEvent');
+      evt.initCustomEvent('attentionopening', true, true, {origin: ''});
+      permissionManager.currentOrigin = 'app://fakecall.com';
+      window.dispatchEvent(evt);
+      assert.isTrue(permissionManager.discardPermissionRequest.called);
+    });
+
+    test('discardPermissionRequest should not be called' +
+      ' if it comes from the same origin', function() {
+        var evt = document.createEvent('CustomEvent');
+        evt.initCustomEvent('attentionopening', true, true,
+          {origin: 'app://fakecall.com'});
+        permissionManager.currentOrigin = 'app://fakecall.com';
+        window.dispatchEvent(evt);
+        assert.isFalse(permissionManager.discardPermissionRequest.called);
+      });
+  });
+
+  suite('attentionopened Handler', function() {
+    setup(function() {
+      this.sinon.stub(permissionManager, 'discardPermissionRequest');
+    });
+
+    test('discardPermissionRequest is called', function() {
+      var evt = document.createEvent('CustomEvent');
+      evt.initCustomEvent('attentionopened', true, true, {origin: ''});
+      permissionManager.currentOrigin = 'app://fakecall.com';
+      window.dispatchEvent(evt);
+      assert.isTrue(permissionManager.discardPermissionRequest.called);
+    });
+
+    test('discardPermissionRequest should not be called' +
+      ' if it comes from the same origin', function() {
+        var evt = document.createEvent('CustomEvent');
+        evt.initCustomEvent('attentionopened', true, true,
+          {origin: 'app://fakecall.com'});
+        permissionManager.currentOrigin = 'app://fakecall.com';
+        window.dispatchEvent(evt);
+        assert.isFalse(permissionManager.discardPermissionRequest.called);
+      });
+  });
+
   suite('fullscreenoriginchange Handler', function() {
-    var stubChange;
+    function sendFullscreenRequest() {
+      var detail = {
+        type: 'fullscreenoriginchange',
+        fullscreenorigin: 'http://www.foo.com'
+      };
+      var evt = new CustomEvent('mozChromeEvent', { detail: detail });
+      window.dispatchEvent(evt);
+    }
 
     setup(function() {
-      stubChange = this.sinon.stub(permissionManager,
-        'handleFullscreenOriginChange');
-      sendChromeEvent('fullscreenoriginchange', '');
+      MockService.mockQueryWith('getTopMostWindow', {
+        origin: ''
+      });
+
+      this.sinon.spy(permissionManager, 'cleanDialog');
+      this.sinon.spy(permissionManager, 'handleFullscreenOriginChange');
+      this.sinon.spy(permissionManager, 'cancelRequest');
+      this.sinon.spy(permissionManager, 'showPermissionPrompt');
+      this.sinon.spy(permissionManager, 'handlePermissionPrompt');
     });
 
     teardown(function() {
-      stubChange.restore();
+      permissionManager.cancelRequest('fullscreen');
+      permissionManager.isFullscreenRequest = false;
     });
 
-    test('fullscreenoriginchange', function() {
-      assert.isTrue(stubChange.called);
+    test('fullscreenoriginchange handlers are called', function() {
+      sendFullscreenRequest();
+      // We clean the dialog and we must call the right handler
+      assert.isTrue(permissionManager.cleanDialog.calledOnce);
+      assert.isTrue(permissionManager.handleFullscreenOriginChange.calledOnce);
+      assert.isTrue(permissionManager.showPermissionPrompt.calledOnce);
+    });
+
+    test('showPermissionPrompt should be called with id "fullscreen"',
+      function() {
+      sendFullscreenRequest();
+      assert.equal(
+        permissionManager.showPermissionPrompt.args[0][0].id,
+        'fullscreen'
+      );
+    });
+
+    test('showPermissionPrompt must use the right strings', function() {
+      sendFullscreenRequest();
+      var l10nAttrs =
+        document.l10n.getAttributes(permissionManager.message);
+      assert.equal(l10nAttrs.id, 'fullscreen-request');
+
+      var detail = permissionManager.showPermissionPrompt.args[0][0];
+      assert.deepEqual(l10nAttrs.args, {
+        origin: detail.fullscreenorigin
+      });
+      // No "more info" string should be translated
+      var strings = permissionManager.getStrings(detail);
+
+      // "More info" should be empty
+      assert.isTrue(!strings.moreInfoText);
+    });
+
+    test('previous dialog should be cancelled', function() {
+      // Send a first dialog
+      sendFullscreenRequest();
+      assert.isFalse(permissionManager.cancelRequest.called);
+      // A new dialog must cancel the previous one
+      sendFullscreenRequest();
+      assert.isTrue(permissionManager.cancelRequest.calledOnce);
+      assert.isTrue(permissionManager.cancelRequest.calledWith('fullscreen'));
+      assert.isTrue(permissionManager.isFullscreenRequest);
+    });
+
+    test('other permission (e.g. geolocation) after fullscreen',
+      function(done) {
+      // Send a first dialog based on fullscreen (for example youtube video)
+      sendFullscreenRequest();
+      assert.isFalse(permissionManager.cancelRequest.called);
+      permissionManager.yes.callback = function() {
+        // If after the fullscreen scenario we have a new prompt, this must
+        // be rendered properly
+        var geolocationDetail =
+          {
+            'type': 'permission-prompt',
+            'permission': 'geolocation'
+          };
+        var evt =
+          new CustomEvent('mozChromeEvent', { detail: geolocationDetail });
+        window.dispatchEvent(evt);
+        assert.isTrue(permissionManager.handlePermissionPrompt.called);
+        assert.isFalse(permissionManager.isFullscreenRequest);
+        done();
+      };
+      permissionManager.clickHandler({target: permissionManager.yes});
+
+    });
+  });
+
+  suite('lockscreen-appopened Handler', function() {
+    setup(function() {
+      this.sinon.stub(permissionManager, 'discardPermissionRequest');
+    });
+
+    test('discardPermissionRequest is called', function() {
+      var evt = document.createEvent('CustomEvent');
+      evt.initCustomEvent('lockscreen-appopened', true, true, {});
+      permissionManager.currentRequestId = 'fullscreen';
+      window.dispatchEvent(evt);
+      assert.isTrue(permissionManager.discardPermissionRequest.called);
+    });
+
+    test('discardPermissionRequest should not be called ' +
+        'if currentRequestId is not \'fullscreen\'', function() {
+
+      var evt = document.createEvent('CustomEvent');
+      evt.initCustomEvent('lockscreen-appopened', true, true, {});
+      permissionManager.currentRequestId = 123;
+      window.dispatchEvent(evt);
+      assert.isFalse(permissionManager.discardPermissionRequest.called);
     });
   });
 
   suite('discardPermissionRequest', function() {
-    var stubResponse;
-    var stunPrompt;
-
     setup(function() {
-      stubResponse = this.sinon.stub(permissionManager,
-        'dispatchResponse');
-      stunPrompt = this.sinon.stub(permissionManager,
-        'hidePermissionPrompt');
-    });
-
-    teardown(function() {
-      stubResponse.restore();
-      stunPrompt.restore();
+      this.sinon.stub(permissionManager, 'dispatchResponse');
+      this.sinon.stub(permissionManager, 'hidePermissionPrompt');
     });
 
     test('no currentRequestId', function() {
       permissionManager.discardPermissionRequest();
-      assert.isFalse(stubResponse.called);
-      assert.isFalse(stunPrompt.called);
+      assert.isFalse(permissionManager.dispatchResponse.called);
+      assert.isFalse(permissionManager.hidePermissionPrompt.called);
     });
 
     test('has currentRequestId', function() {
       permissionManager.currentRequestId = 123;
       permissionManager.discardPermissionRequest();
-      assert.isTrue(stubResponse.called);
-      assert.isTrue(stunPrompt.called);
+      assert.isTrue(permissionManager.dispatchResponse.called);
+      assert.isTrue(permissionManager.hidePermissionPrompt.called);
+    });
+
+    test('currentRequestId is \'fullscreen\'', function() {
+      permissionManager.currentRequestId = 'fullscreen';
+      permissionManager.isFullscreenRequest = true;
+      permissionManager.no.callback = this.sinon.stub();
+      permissionManager.discardPermissionRequest();
+      assert.isTrue(permissionManager.no.callback.called);
+      assert.isFalse(permissionManager.isFullscreenRequest);
     });
   });
 
   suite('handlePermissionPrompt', function() {
-    var detail = {'type': 'permission-prompt', 'permission': 'geolocation'};
-    var stubReq;
+    var detail;
     setup(function() {
-      stubReq = this.sinon.stub(permissionManager, 'requestPermission');
-      sendChromeEvent('permission-prompt', 'test');
+      detail = {'type': 'permission-prompt', 'permission': 'geolocation'};
+      this.sinon.spy(permissionManager, 'handlePermissionPrompt');
     });
 
     teardown(function() {
-      stubReq.restore();
+      permissionManager.discardPermissionRequest();
+      detail = null;
     });
 
     test('permission-prompt', function() {
-      permissionManager.handlePermissionPrompt(detail);
+      sendChromeEvent('permission-prompt', 'test');
 
       assert.equal(permissionManager.remember.checked, false);
-      assert.isTrue(stubReq.called);
+      assert.isTrue(permissionManager.handlePermissionPrompt.called);
+    });
+
+    test('permission-prompt remember', function() {
+      sendChromeEvent(
+        'permission-prompt',
+        'test',
+        true
+      );
+      assert.equal(permissionManager.remember.checked, true);
+      assert.isTrue(permissionManager.handlePermissionPrompt.called);
     });
   });
 
   suite('dispatchResponse', function() {
-    var stubDispatchEvent;
     setup(function() {
-      stubDispatchEvent = this.sinon.stub(window, 'dispatchEvent');
-    });
-
-    teardown(function() {
-      stubDispatchEvent.restore();
+      this.sinon.stub(window, 'dispatchEvent');
     });
 
     test('permission-allow', function() {
       permissionManager.dispatchResponse(123, 'permission-allow', true);
       assert.equal(permissionManager.responseStatus, 'permission-allow');
-      assert.isTrue(stubDispatchEvent.called);
+      assert.isTrue(window.dispatchEvent.called);
     });
 
     test('permission-deny', function() {
       permissionManager.dispatchResponse(123, 'permission-deny', true);
       assert.equal(permissionManager.responseStatus, 'permission-deny');
-      assert.isTrue(stubDispatchEvent.called);
+      assert.isTrue(window.dispatchEvent.called);
     });
   });
 
   suite('bug 907075 dismiss same permissions request from same origin',
    function() {
-    var spyPrompt;
-    var spyReq;
-    var spyNext;
-    var spyResponse;
-
     setup(function() {
-      spyPrompt = this.sinon.spy(permissionManager, 'handlePermissionPrompt');
-      spyReq = this.sinon.spy(permissionManager, 'requestPermission');
-      spyNext = this.sinon.spy(permissionManager, 'showNextPendingRequest');
-      spyResponse = this.sinon.spy(permissionManager,
-        'dispatchResponse');
+      this.sinon.spy(permissionManager, 'handlePermissionPrompt');
+      this.sinon.spy(permissionManager, 'queuePrompt');
+      this.sinon.spy(permissionManager, 'showNextPendingRequest');
+      this.sinon.spy(permissionManager, 'dispatchResponse');
       sendMediaEvent('permission-prompt', {'audio-capture': ['']});
       sendMediaEvent('permission-prompt', {'audio-capture': ['']});
     });
 
-    teardown(function() {
-      spyResponse.restore();
-      spyNext.restore();
-      spyReq.restore();
-      spyPrompt.restore();
-    });
-
-    test('prompt called twice', function() {
-      assert.equal(permissionManager.currentOrigin, 'test');
-      assert.equal(permissionManager.permissionType, 'audio-capture');
-
-      assert.isTrue(spyPrompt.calledTwice);
-      assert.isTrue(spyReq.called);
-      assert.equal(permissionManager.pending.length, 2);
-    });
-
-    test('handle pending', function() {
+    test('handle repeated prompt must be rendered once', function() {
+      // We stablish 'remember me' in the first prompt, but we
+      // have other 'pending' prompt waiting in the queue
       permissionManager.remember.checked = true;
-      permissionManager.clickHandler({target: permissionManager.yes});
       assert.equal(permissionManager.pending.length, 1);
-    });
-
-    test('dismiss same permissions request from same origin', function() {
-      permissionManager.remember.checked = true;
+      assert.isFalse(permissionManager.showNextPendingRequest.calledOnce);
+      // We accept the permission prompt with 'remember me', so next
+      // one must not be shown
       permissionManager.clickHandler({target: permissionManager.yes});
-      assert.isTrue(spyNext.called);
-      assert.isTrue(spyResponse.called);
+      assert.isTrue(permissionManager.showNextPendingRequest.calledTwice);
+
+      // Based on than, handlePermissionPrompt must be called once
+      assert.isTrue(permissionManager.handlePermissionPrompt.calledOnce);
+
+      // Now the queue must be empty
+      assert.equal(permissionManager.pending.length, 0);
     });
   });
 
   // bug 935557 compatibility with old permission
   suite('compatibility with old detail.permission', function() {
-    var spyReq;
     setup(function() {
-      spyReq = this.sinon.spy(permissionManager, 'requestPermission');
+      this.sinon.spy(permissionManager, 'showPermissionPrompt');
 
       var detail = {'type': 'permission-prompt',
                 'permission': 'geolocation',
-                'origin': 'test', 'isApp': false };
+                'origin': 'test', 'isApp': false, id: 'perm1' };
       var evt = new CustomEvent('mozChromeEvent', { detail: detail });
       window.dispatchEvent(evt);
     });
 
-    teardown(function() {
-      spyReq.restore();
-    });
-
-    test('permission-prompt', function() {
-      assert.equal(permissionManager.permissionType, 'geolocation');
-    });
-
     test('permission id matched', function() {
-      assert.isTrue(spyReq.calledWithMatch('test', 'geolocation',
-        sinon.match.string, 'perm-geolocation-more-info'));
+      assert.equal(permissionManager.permissionType, 'geolocation');
     });
   });
 
   // bug 952244 compatibility with old audio permission
   suite('compatibility with old audio detail.permission', function() {
-    var spyReq;
     setup(function() {
-      spyReq = this.sinon.spy(permissionManager, 'requestPermission');
+      this.sinon.spy(permissionManager, 'handlePermissionPrompt');
 
       var detail = {'type': 'permission-prompt',
                 'permission': 'audio-capture',
-                'origin': 'test', 'isApp': false };
+                'origin': 'test', 'isApp': false, id: 'perm1' };
       var evt = new CustomEvent('mozChromeEvent', { detail: detail });
       window.dispatchEvent(evt);
     });
 
-    teardown(function() {
-      spyReq.restore();
-    });
-
     test('permission id matched', function() {
-      assert.isTrue(spyReq.calledWithMatch('test', 'audio-capture',
-        sinon.match.string, 'perm-audio-capture-more-info'));
+      assert.equal(permissionManager.permissionType, 'audio-capture');
     });
 
     test('not show remember my choice option', function() {
@@ -303,28 +508,66 @@ suite('system/permission manager', function() {
 
   // test getUserMedia related permissions
   suite('audio capture permission', function() {
-    var spyReq;
-    setup(function() {
-      spyReq = this.sinon.spy(permissionManager, 'requestPermission');
+    var detail;
+    var appMock = {
+      'isActivity': false,
+      'url': 'app://uitest.gaiamobile.org/manifest.webapp',
+      'name': 'UITest',
+      'manifestURL': 'app://uitest.gaiamobile.org/manifest.webapp',
+      'origin': 'app://uitest.gaiamobile.org/',
+      'manifest': {
+        'name': 'UITest',
+        'role': 'UITest',
+      },
+      target: {}
+    };
 
+    setup(function() {
+      MockApplications.mRegisterMockApp(appMock);
+      this.sinon.spy(permissionManager, 'handlePermissionPrompt');
       sendMediaEvent('permission-prompt', {'audio-capture': ['']});
     });
 
     teardown(function() {
-      spyReq.restore();
+      MockApplications.mTeardown();
     });
 
     test('permission-prompt', function() {
       assert.equal(permissionManager.permissionType, 'audio-capture');
     });
 
-    test('permission id matched', function() {
-      assert.isTrue(spyReq.calledWithMatch('test', 'audio-capture',
-        sinon.match.string, 'perm-audio-capture-more-info'));
+    test('Web: All strings are matching', function() {
+      detail = createMediaEvent(
+        'permission-prompt',
+        {'audio-capture': ['']},
+        false
+      );
+      var strings = permissionManager.getStrings(detail);
+      // l10n must be Web related
+      assert.equal(strings.message.id, 'perm-audio-capture-webRequest');
+      // In this case we will take the origin of the requester
+      assert.deepEqual(strings.message.args, {
+        site: detail.origin
+      });
     });
 
-    test('not show remember my choice option', function() {
-      assert.equal(permissionManager.rememberSection.style.display, 'none');
+    test('App: All strings are matching', function() {
+      detail = createMediaEvent(
+        'permission-prompt',
+        {'audio-capture': ['']},
+        true
+      );
+      var strings = permissionManager.getStrings(detail);
+      // l10n must be APP related
+      assert.equal(strings.message.id, 'perm-audio-capture-appRequest');
+      // In this case we will take the origin of the requester
+      assert.deepEqual(strings.message.args, {
+        app: appMock.manifest.name
+      });
+    });
+
+    test('Remember me is disabled by default', function() {
+      assert.isFalse(permissionManager.remember.checked);
     });
 
     test('default choice', function() {
@@ -334,72 +577,217 @@ suite('system/permission manager', function() {
         '');
     });
 
+    test('not show remember my choice option', function() {
+      assert.equal(permissionManager.rememberSection.style.display, 'none');
+    });
   });
 
   suite('video capture permission', function() {
-    var spyReq;
-    setup(function() {
-      spyReq = this.sinon.spy(permissionManager, 'requestPermission');
+    var detail;
+    var appMock = {
+      'isActivity': false,
+      'url': 'app://uitest.gaiamobile.org/manifest.webapp',
+      'name': 'UITest',
+      'manifestURL': 'app://uitest.gaiamobile.org/manifest.webapp',
+      'origin': 'app://uitest.gaiamobile.org/',
+      'manifest': {
+        'name': 'UITest',
+        'role': 'UITest',
+      },
+      target: {}
+    };
 
-      sendMediaEvent('permission-prompt',
-        {'video-capture': ['back', 'front']});
+    setup(function() {
+      MockApplications.mRegisterMockApp(appMock);
+      this.sinon.spy(permissionManager, 'handlePermissionPrompt');
+      sendMediaEvent(
+        'permission-prompt',
+        {'video-capture': ['back', 'front']}
+      );
     });
 
     teardown(function() {
-      spyReq.restore();
+      MockApplications.mTeardown();
     });
 
     test('permission-prompt', function() {
       assert.equal(permissionManager.permissionType, 'video-capture');
     });
 
-    test('permission id matched', function() {
-      assert.isTrue(spyReq.calledWithMatch('test', 'video-capture',
-        sinon.match.string, 'perm-video-capture-more-info'));
+
+    test('Web: All strings are matching', function() {
+      detail = createMediaEvent(
+        'permission-prompt',
+        {'audio-capture': ['']},
+        false
+      );
+      var strings = permissionManager.getStrings(detail);
+      // l10n must be Web related
+      assert.equal(strings.message.id, 'perm-video-capture-webRequest');
+      // In this case we will take the origin of the requester
+      assert.deepEqual(strings.message.args, {
+        site: detail.origin
+      });
     });
 
-    test('not show remember my choice option', function() {
-      assert.equal(permissionManager.rememberSection.style.display, 'none');
+    test('App: All strings are matching', function() {
+      detail = createMediaEvent(
+        'permission-prompt',
+        {'audio-capture': ['']},
+        true
+      );
+      var strings = permissionManager.getStrings(detail);
+      // l10n must be APP related
+      assert.equal(strings.message.id, 'perm-video-capture-appRequest');
+      // In this case we will take the origin of the requester
+      assert.deepEqual(strings.message.args, {
+        app: appMock.manifest.name
+      });
+    });
+
+    test('Remember me is disabled by default', function() {
+      assert.isFalse(permissionManager.remember.checked);
     });
 
     test('default choice', function() {
       assert.equal(permissionManager.currentChoices['video-capture'],
         'back');
     });
+
+    test('not show remember my choice option', function() {
+      assert.equal(permissionManager.rememberSection.style.display, 'none');
+    });
   });
 
-  suite('media capture permission', function() {
-    var spyReq;
-    setup(function() {
-      spyReq = this.sinon.spy(permissionManager, 'requestPermission');
+  suite('camera selector dialog', function() {
+    // the general is identical to normal video-capture,
+    // only UI changed
+    var appMock = {
+      'isActivity': false,
+      'url': 'app://uitest.gaiamobile.org/manifest.webapp',
+      'name': 'UITest',
+      'manifestURL': 'app://uitest.gaiamobile.org/manifest.webapp',
+      'origin': 'app://uitest.gaiamobile.org/',
+      'manifest': {
+        'name': 'UITest',
+        'role': 'UITest',
+      },
+      target: {}
+    };
 
-      sendMediaEvent('permission-prompt',
-        {
-          'video-capture': ['front', 'back'],
-          'audio-capture': ['']
-        });
+
+    setup(function() {
+      MockApplications.mRegisterMockApp(appMock);
+      sendMediaEvent(
+        'permission-prompt',
+        {'video-capture': ['back', 'front']},
+        true,
+        true
+      );
     });
 
     teardown(function() {
-      spyReq.restore();
+      MockApplications.mTeardown();
+    });
+
+    test('is camera selector', function() {
+      assert.equal(permissionManager.isCamSelector, true);
+    });
+
+    test('permission selector is shown', function() {
+      assert.equal(permissionManager.buttons.dataset.items, 1);
+      assert.equal(permissionManager.rememberSection.style.display, 'none');
+      assert.equal(permissionManager.no.style.display, 'none');
+    });
+
+    test('permission-prompt', function() {
+      assert.equal(permissionManager.permissionType, 'video-capture');
+    });
+
+    test('default choice', function() {
+      assert.equal(permissionManager.currentChoices['video-capture'],
+        'back');
+    });
+
+    test('remember my choice option is checked in app mode', function() {
+      assert.equal(permissionManager.remember.checked, true);
+    });
+  });
+
+  suite('media capture permission', function() {
+    var detail;
+    var appMock = {
+      'isActivity': false,
+      'url': 'app://uitest.gaiamobile.org/manifest.webapp',
+      'name': 'UITest',
+      'manifestURL': 'app://uitest.gaiamobile.org/manifest.webapp',
+      'origin': 'app://uitest.gaiamobile.org/',
+      'manifest': {
+        'name': 'UITest',
+        'role': 'UITest',
+      },
+      target: {}
+    };
+    setup(function() {
+      MockApplications.mRegisterMockApp(appMock);
+      sendMediaEvent(
+        'permission-prompt',
+        {
+          'video-capture': ['front', 'back'],
+          'audio-capture': ['']
+        }
+      );
+    });
+
+    teardown(function() {
+      MockApplications.mTeardown();
     });
 
     test('permission-prompt', function() {
       assert.equal(permissionManager.permissionType, 'media-capture');
     });
 
-    test('permission id matched', function() {
-      assert.isTrue(spyReq.calledWithMatch('test', 'media-capture',
-        sinon.match.string, 'perm-media-capture-more-info'));
+    test('Web: All strings are matching', function() {
+      detail = createMediaEvent(
+        'permission-prompt',
+        {'audio-capture': ['']},
+        false
+      );
+      var strings = permissionManager.getStrings(detail);
+      // l10n must be Web related
+      assert.equal(strings.message.id, 'perm-media-capture-webRequest');
+      // In this case we will take the origin of the requester
+      assert.deepEqual(strings.message.args, {
+        site: detail.origin
+      });
+    });
+
+    test('App: All strings are matching', function() {
+      detail = createMediaEvent(
+        'permission-prompt',
+        {'audio-capture': ['']},
+        true
+      );
+      var strings = permissionManager.getStrings(detail);
+      // l10n must be APP related
+      assert.equal(strings.message.id, 'perm-media-capture-appRequest');
+      // In this case we will take the origin of the requester
+      assert.deepEqual(strings.message.args, {
+        app: appMock.manifest.name
+      });
+    });
+
+    test('default choice', function() {
+      assert.equal(permissionManager.currentChoices['video-capture'], 'front');
+      assert.equal(permissionManager.currentChoices['audio-capture'], '');
     });
 
     test('not show remember my choice option', function() {
       assert.equal(permissionManager.rememberSection.style.display, 'none');
     });
 
-    test('default choice', function() {
-      assert.equal(permissionManager.currentChoices['video-capture'], 'front');
-      assert.equal(permissionManager.currentChoices['audio-capture'], '');
+    test('remember my choice option is unchecked in web mode', function() {
+      assert.equal(permissionManager.remember.checked, false);
     });
   });
 
@@ -419,28 +807,60 @@ suite('system/permission manager', function() {
     });
   });
 
+  suite('bug 1013509 Permission Prompt Never Hides',
+   function() {
+    setup(function() {
+      this.sinon.stub(permissionManager, 'discardPermissionRequest');
+      sendMediaEvent('permission-prompt', {'audio-capture': ['']});
+    });
+
+    test('should discard permission request when requester killed', function() {
+      assert.equal(permissionManager.currentOrigin, 'test');
+      assert.equal(permissionManager.permissionType, 'audio-capture');
+      var event = new CustomEvent('appterminated',
+                                  { 'detail': { 'origin': 'test'} });
+      window.dispatchEvent(event);
+
+      assert.isTrue(permissionManager.discardPermissionRequest.called);
+    });
+  });
+
+  suite('when screenoff it should hide the prompt', function() {
+    var evt;
+    setup(function() {
+      this.sinon.stub(permissionManager, 'discardPermissionRequest');
+      MockService.mockQueryWith('locked', true);
+      evt = {
+        type: 'screenchange',
+        detail: {
+          screenEnabled: false
+        }
+      };
+    });
+
+    test('screenoff', function() {
+      permissionManager.handleEvent(evt);
+      assert.isTrue(permissionManager.discardPermissionRequest.called);
+    });
+
+    teardown(function() {
+      delete window.Service;
+    });
+  });
+
   suite('Toggle more/hide info in permission dialog',
     function() {
-      var spyToggleInfo;
-      var spyHidePermissionPrompt;
-
       setup(function() {
-        spyToggleInfo = this.sinon.spy(permissionManager, 'toggleInfo');
-        spyHidePermissionPrompt = this.sinon.spy(permissionManager,
-                                  'hidePermissionPrompt');
-      });
-
-      teardown(function() {
-        spyToggleInfo.restore();
-        spyHidePermissionPrompt.restore();
+        this.sinon.spy(permissionManager, 'toggleInfo');
+        this.sinon.spy(permissionManager, 'hidePermissionPrompt');
       });
 
       test('should toggle info when more info is clicked', function() {
         permissionManager.clickHandler({
           target: permissionManager.moreInfoLink
         });
-        assert.isTrue(spyToggleInfo.called);
-        assert.isFalse(spyHidePermissionPrompt.called);
+        assert.isTrue(permissionManager.toggleInfo.called);
+        assert.isFalse(permissionManager.hidePermissionPrompt.called);
         assert.isFalse(
           permissionManager.moreInfoBox.classList.contains('hidden'));
       });
@@ -449,11 +869,59 @@ suite('system/permission manager', function() {
         permissionManager.clickHandler({
           target: permissionManager.hideInfoLink
         });
-        assert.isTrue(spyToggleInfo.called);
-        assert.isFalse(spyHidePermissionPrompt.called);
+        assert.isTrue(permissionManager.toggleInfo.called);
+        assert.isFalse(permissionManager.hidePermissionPrompt.called);
         assert.isTrue(
           permissionManager.moreInfoBox.classList.contains('hidden'));
       });
-  });
+
+      test('should not handle click event when dialog is hidden',
+        function(done) {
+          this.sinon.spy(permissionManager, 'clickHandler');
+          window.addEventListener('permissiondialoghide', function onhide() {
+            window.removeEventListener('permissiondialoghide', onhide);
+            permissionManager.moreInfoLink.click();
+            assert.isFalse(permissionManager.clickHandler.called);
+            permissionManager.hideInfoLink.click();
+            assert.isFalse(permissionManager.clickHandler.called);
+            done();
+          });
+          permissionManager.hidePermissionPrompt();
+      });
+
+      test('should "More info..." be hidden when we accept/deny the prompt',
+        function() {
+          this.sinon.stub(permissionManager, 'getStrings').returns({
+              message: 'message',
+              moreInfoText: 'moreInfoText'
+            }
+          );
+
+          // Launch
+          sendMediaEvent('permission-prompt', {'audio-capture': ['']});
+          assert.isFalse(
+            permissionManager.moreInfo.classList.contains('hidden'));
+
+          permissionManager.clickHandler({
+            target: permissionManager.yes
+          });
+          assert.isTrue(
+            permissionManager.moreInfo.classList.contains('hidden'));
+      });
+    });
+
+    test('"More info..." must not be shown if there is not text',
+      function() {
+        this.sinon.stub(permissionManager, 'getStrings').returns({
+            message: 'message',
+            moreInfoText: null
+          }
+        );
+
+        sendMediaEvent('permission-prompt', {'audio-capture': ['']});
+        assert.isTrue(
+          permissionManager.moreInfo.classList.contains('hidden'));
+      }
+    );
 
 });

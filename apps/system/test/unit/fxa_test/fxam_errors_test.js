@@ -1,39 +1,58 @@
+/* global FxaModuleErrors, MockL10n */
 'use strict';
 
-requireApp('system/test/unit/mock_l10n.js');
+require('/shared/test/unit/mocks/mock_l20n.js');
 requireApp('system/fxa/js/fxam_errors.js');
 
 suite('Error manager', function() {
   var errorsObject = {
-    'ACCOUNT_DOES_NOT_EXIST': 'account-does-not-exist',
-    'CANNOT_CREATE_ACCOUNT': 'cannot-create',
-    'RESET_PASSWORD_ERROR': 'reset-password-error',
-    'RESET_PASSWORD_IN_SETTINGS': 'reset-password-in-settings',
-    'INVALID_EMAIL': 'invalid-email',
-    'INVALID_PASSWORD': 'invalid-password',
-    'ALREADY_SIGNED_IN_USER': 'already-signed-in',
-    'INTERNAL_ERROR_INVALID_USER': 'generic-error',
-    'SERVER_ERROR': 'generic-error',
-    'NO_TOKEN_SESSION': 'generic-error',
-    'GENERIC_ERROR': 'generic-error',
-    'UNKNOWN': 'unknown-error',
-    'COPPA_ERROR': 'coppa-failure-error'
+    CONNECTION_ERROR: {
+      title: 'fxa-connection-error-title',
+      message: 'fxa-connection-error-message'
+    },
+    RESET_PASSWORD_ERROR: {
+      title: 'fxa-reset-password-error-title',
+      message: 'fxa-reset-password-error-message'
+    },
+    INVALID_EMAIL: {
+      title: 'fxa-invalid-email-title',
+      message: 'fxa-invalid-email-message'
+    },
+    INVALID_PASSWORD: {
+      title: 'fxa-invalid-password-title',
+      message: 'fxa-invalid-password-message'
+    },
+    COPPA_ERROR: {
+      title: 'fxa-coppa-failure-error-title',
+      message: 'fxa-coppa-failure-error-message3'
+    },
+    COPPA_FTU_ERROR: {
+      title: 'fxa-coppa-failure-error-title',
+      message: 'fxa-coppa-ftu-error-message'
+    },
+    OFFLINE: {
+      title: 'fxa-offline-error-title',
+      message: 'fxa-offline-error-message'
+    },
+    UNKNOWN: {
+      title: 'fxa-unknown-error-title',
+      message: 'fxa-unknown-error-message'
+    }
   };
   var response;
   var realL10n;
   suiteSetup(function() {
-    realL10n = navigator.mozL10n;
-    navigator.mozL10n = MockL10n;
+    realL10n = document.l10n;
+    document.l10n = MockL10n;
   });
 
   suiteTeardown(function() {
-    navigator.mozL10n = realL10n;
+    document.l10n = realL10n;
   });
 
 
   setup(function() {
     response = {};
-    this.sinon.spy(navigator.mozL10n, 'get');
   });
 
   teardown(function() {
@@ -42,18 +61,15 @@ suite('Error manager', function() {
 
   Object.keys(errorsObject).forEach(function(key) {
     test('Test ' + key, function() {
-      sinon.spy(navigator.mozL10n.get);
       response.error = key;
-      FxaModuleErrors.responseToParams(response);
+      var resp = FxaModuleErrors.responseToParams(response);
 
-      sinon.assert.calledWith(
-        navigator.mozL10n.get,
-        'fxa-' + errorsObject[key] + '-title'
-      );
-      sinon.assert.calledWith(
-        navigator.mozL10n.get,
-        'fxa-' + errorsObject[key] + '-message'
-      );
+      var message = errorsObject[key].message;
+
+      assert.deepEqual(resp, {
+        title: errorsObject[key].title,
+        message: message
+      });
     });
   });
 

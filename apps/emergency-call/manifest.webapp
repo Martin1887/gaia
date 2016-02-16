@@ -11,58 +11,30 @@
   "orientation": "default",
   "fullscreen": true,
   "permissions": {
-    "telephony":{},
-    "mobileconnection":{},
-    "phonenumberservice": {}
+    "audio-channel-notification":{},
+    "audio-channel-system":{},
+    "themeable":{},
+    "telephony": {},
+    "mobileconnection": {},
+    "phonenumberservice": {},
+    "settings": { "access": "readonly" },
+    "contacts": { "access": "readonly" },
+    "moz-extremely-unstable-and-will-change-webcomponents":{}
+  },
+  "datastores-access": {
+    "ice_contacts": {
+      "readonly": true,
+      "description": "Contains references to in case of emergency contacts"
+    }
   },
   "locales": {
-    "ar": {
-      "name": "EmergencyCall",
-      "description": "Web app template"
-    },
-    "de": {
-      "name": "EmergencyCall",
-      "description": "Web app template"
-    },
-    "el": {
-      "name": "EmergencyCall",
-      "description": "Web app template"
-    },
     "en-US": {
-      "name": "EmergencyCall",
-      "description": "Web app template"
-    },
-    "es": {
-      "name": "EmergencyCall",
-      "description": "Web app template"
-    },
-    "fr": {
-      "name": "EmergencyCall",
-      "description": "Web app template"
-    },
-    "it": {
-      "name": "EmergencyCall",
-      "description": "Web app template"
-    },
-    "pt-BR": {
-      "name": "EmergencyCall",
-      "description": "Web app template"
-    },
-    "ru": {
-      "name": "EmergencyCall",
-      "description": "Web app template"
-    },
-    "tr": {
-      "name": "EmergencyCall",
-      "description": "Web app template"
-    },
-    "zh-TW": {
       "name": "EmergencyCall",
       "description": "Web app template"
     }
   },
   "default_locale": "en-US",
   "icons": {
-    "128": "/style/icons/Blank.png"
+    "126": "/style/icons/dialer_126.png"
   }
 }

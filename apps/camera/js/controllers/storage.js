@@ -27,8 +27,8 @@ function StorageController(app) {
   this.camera = app.camera;
   this.settings = app.settings;
   this.storage = app.storage || new Storage();
-  this.configure();
   this.bindEvents();
+  this.configure();
   debug('initialized');
 }
 
@@ -44,6 +44,7 @@ function StorageController(app) {
  * @private
  */
 StorageController.prototype.configure = function() {
+  this.storage.configure();
   this.camera.createVideoFilepath = this.storage.createVideoFilepath;
   this.updateMaxFileSize();
 };
@@ -66,6 +67,7 @@ StorageController.prototype.bindEvents = function() {
   this.app.on('visible', this.storage.check);
 
   // Storage
+  this.storage.on('volumechanged', this.app.firer('storage:volumechanged'));
   this.storage.on('itemdeleted', this.app.firer('storage:itemdeleted'));
   this.storage.on('changed', this.onChanged);
   this.storage.on('checked', this.onChecked);
@@ -118,26 +120,24 @@ StorageController.prototype.storePicture = function(picture) {
   var memoryBlob = picture.blob;
   var self = this;
 
-  this.storage.addPicture(memoryBlob, function(filepath, abspath, fileBlob) {
-    picture.blob = fileBlob;
-    picture.filepath = filepath;
-    debug('stored picture', picture);
-    self.app.emit('newmedia', picture);
+  this.storage.addPicture(
+    memoryBlob,
+    function(error, filepath, abspath, fileBlob) {
+      picture.blob = fileBlob;
+      picture.filepath = filepath;
+      debug('stored picture', picture);
+      self.app.emit('newmedia', picture);
   });
 };
 
 /**
  * Store a video.
  *
- * Store the poster image,
- * then emit the app 'newvideo'
- * event. This signifies the video
- * fully ready.
- *
  * We don't store the video blob like
  * we do for images, as it is recorded
  * directly to the final location.
- * This is for memory reason.
+ * This is for memory reason. The poster
+ * is also automatically created.
  *
  * @param  {Object} video
  */
@@ -151,15 +151,16 @@ StorageController.prototype.storeVideo = function(video) {
   video.isVideo = true;
 
   this.storage.addPicture(
-    poster.blob, { filepath: poster.filepath },
-    function(path, absolutePath, fileBlob) {
+    poster.blob,
+    { filepath: poster.filepath },
+    function(error, path, absolutePath, fileBlob) {
       // Replace the memory-backed Blob with the DeviceStorage file-backed File.
-      // Note that "video" references "poster", so video previews will use this
-      // File.
+      // Note that "video" has a reference to "poster", so video previews will
+      // use this File.
       poster.blob = fileBlob;
       debug('new video', video);
       self.app.emit('newmedia', video);
-    });
+  });
 };
 
 /**
@@ -170,15 +171,21 @@ StorageController.prototype.storeVideo = function(video) {
  * isn't enough space left in storage
  * to accomodate a new picture.
  *
+ * It is very unlikely that a JPEG file will have a file size that is
+ * more than half a byte per pixel. There is some fixed EXIF overhead
+ * that is the same for small and large pictures, however, so we add
+ * an additional 25,000 bytes of padding.
+ *
  * @private
  */
 StorageController.prototype.updateMaxFileSize = function() {
-  var exif = 4096;
   var pictureSize = this.settings.pictureSizes.selected('data');
-  var bytes = (pictureSize.width * pictureSize.height * 3);
-  var total = bytes + exif;
-  this.storage.setMaxFileSize(total);
-  debug('maxFileSize updated %s', total);
+  /* Depending on when we get loaded, we may not have a picture size yet. */
+  if (pictureSize) {
+    var bytes = (pictureSize.width * pictureSize.height / 2) + 25000;
+    this.storage.setMaxFileSize(bytes);
+    debug('maxFileSize updated %s', bytes);
+  }
 };
 
 });

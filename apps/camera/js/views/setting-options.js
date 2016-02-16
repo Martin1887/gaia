@@ -6,8 +6,8 @@ define(function(require, exports, module) {
  */
 
 var debug = require('debug')('view:setting-options');
-var attach = require('vendor/attach');
-var View = require('vendor/view');
+var attach = require('attach');
+var View = require('view');
 
 /**
  * Exports
@@ -18,7 +18,7 @@ module.exports = View.extend({
 
   initialize: function(options) {
     this.model = options.model;
-    this.l10n = options.l10n || navigator.mozL10n;
+    this.l10n = options.l10n || document.l10n;
     this.on('destroy', this.onDestroy);
     attach(this.el, 'click', 'li', this.onOptionClick);
     attach(this.el, 'click', '.js-back', this.firer('click:back'));
@@ -47,35 +47,60 @@ module.exports = View.extend({
     this.selectedKey = data.selected;
     this.el.innerHTML = this.template(data);
     this.els.ul = this.find('.js-list');
-    data.options.forEach(this.renderOption);
+
+    // we need to pass a boolean flag indicating if the
+    // options should be localized
+    var localizable = data.optionsLocalizable === false ? false : true;
+    data.options.forEach(this.renderOption.bind(this, localizable));
+
+    // Clean up
+    delete this.template;
+
+    debug('rendered');
     return this;
   },
 
-  renderOption: function(option) {
+  renderOption: function(localizable, option) {
     var li = document.createElement('li');
     var isSelected = option.key === this.selectedKey;
 
-    li.textContent = this.localize(option.title);
+    if (localizable) {
+      li.setAttribute('data-l10n-id', option.title);
+      this.l10n.formatValue(option.title).then((title) => {
+        li.setAttribute('aria-label', title);
+      });
+    } else {
+      li.textContent = option.title;
+      li.setAttribute('aria-label', option.title);
+    }
     li.setAttribute('data-key', option.key);
-    li.className = 'setting-option icon-tick';
+    // The settings options list is a listbox (list of actionable items) thus
+    // each iteam must have an 'option' role.
+    li.setAttribute('role', 'option');
+    li.className = 'setting-option';
+    li.dataset.icon = 'tick';
     this.els.ul.appendChild(li);
     this.els[option.key] = li;
 
     if (isSelected) {
       li.classList.add('selected');
+      // Make sure selected semantics is conveyed to the screen reader.
+      li.setAttribute('aria-selected', true);
       this.els.selected = li;
     }
   },
 
-  localize: function(value) {
-    return this.l10n.get(value) || value;
-  },
-
   template: function(data) {
     return '<div class="inner">' +
-      '<h2 class="settings_title icon-back-arrow js-back">' +
-      this.localize(data.header) + '</h2>' +
-      '<div class="settings_items"><ul class="inner js-list"></ul></div>' +
+      '<div class="settings_header">' +
+        '<div class="settings-back-btn js-back" ' +
+          'data-icon="left" role="button" data-l10n-id="back-button"></div>' +
+        '<h2 aria-level="1" class="settings_title" data-l10n-id="' +
+          data.header + '"></h2>' +
+      '</div>' +
+      '<div class="settings_items">' +
+        '<ul role="listbox" class="inner js-list"></ul>' +
+      '</div>' +
     '</div>';
   }
 });

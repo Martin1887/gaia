@@ -12,9 +12,21 @@ var MockCommon = function(config) {
 
   return {
     COST_CONTROL_APP: 'app://costcontrol.gaiamobile.org',
+
+    BROWSER_APP: {
+      manifestURL: 'app://browser.gaiamobile.org/manifest.webapp',
+      origin: '',
+      manifest: {
+        icons: {
+          '84': '/shared/resources/branding/browser_84.png'
+        },
+        name: 'browser'
+      }
+    },
+
+    SYSTEM_MANIFEST: 'app://system.gaiamobile.org/manifest.webapp',
+
     allNetworkInterfaces: {},
-    dataSimIccId: null,
-    dataSimIcc: null,
     localize: function (element, label, args) {
       element.textContent = label;
     },
@@ -24,12 +36,21 @@ var MockCommon = function(config) {
     startFTE: function(mode) {
       var iframe = document.getElementById('fte_view');
       iframe.classList.remove('non-ready');
+      if (config && config.activateFTEListener) {
+        window.addEventListener('dataSlotChange', function _onDataSimChange() {
+          window.removeEventListener('dataSlotChange', _onDataSimChange);
+          // Close FTE if change the SimCard for data connections
+          Common.closeFTE();
+        });
+      }
       var event = new CustomEvent('ftestarted', { detail: mode });
       window.dispatchEvent(event);
     },
     closeFTE: function() {
       var iframe = document.getElementById('fte_view');
       iframe.classList.add('non-ready');
+      var event = new CustomEvent('fteClosed');
+      window.dispatchEvent(event);
     },
     startApp: function() {
       var event = new CustomEvent('appstarted');
@@ -44,7 +65,7 @@ var MockCommon = function(config) {
       window.dispatchEvent(event);
       console.log('Alert: ' + msg);
     },
-    getDataSIMInterface: function getDataSIMInterface() {
+    getDataSIMInterface: function getDataSIMInterface(iccId) {
       var dataSimCard = allInterfacesFake[1];
       return dataSimCard;
     },
@@ -52,7 +73,6 @@ var MockCommon = function(config) {
       var wifiInterface = allInterfacesFake[0];
       return wifiInterface;
     },
-    getIccInfo: function() { return;},
     loadNetworkInterfaces: function(onsuccess, onerror) {
       setTimeout(function() {
         Common.allNetworkInterfaces = allInterfacesFake;
@@ -69,7 +89,7 @@ var MockCommon = function(config) {
     },
     localizeWeekdaySelector: function _localizeWeekdaySelector(selector) {
       var weekStartsOnMonday =
-        !!parseInt(navigator.mozL10n.get('weekStartsOnMonday'), 10);
+        parseInt(navigator.mozL10n.get('firstDayOfTheWeek'), 10) === 1;
 
       var monday = selector.querySelector('.monday');
       var sunday = selector.querySelector('.sunday');
@@ -86,6 +106,8 @@ var MockCommon = function(config) {
       var multiplier = (settings.dataLimitUnit === 'MB') ?
                        1000000 : 1000000000;
       return settings.dataLimitValue * multiplier;
-    }
+    },
+    updateNextReset: function() {},
+    resetData : function() {}
   };
 };

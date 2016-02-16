@@ -1,11 +1,10 @@
 suite('controllers/settings', function() {
   /*jshint maxlen:false*/
-  /*global req*/
   'use strict';
 
   suiteSetup(function(done) {
     var self = this;
-    req([
+    requirejs([
       'controllers/settings',
       'lib/settings',
       'lib/setting',
@@ -29,7 +28,8 @@ suite('controllers/settings', function() {
     var self = this;
 
     this.app = sinon.createStubInstance(this.App);
-    this.app.l10n = { get: sinon.stub() };
+    this.app.require = sinon.stub();
+    this.app.require.callsArgWith(1, this.SettingsView);
 
     // Settings
     this.app.el = {};
@@ -57,8 +57,17 @@ suite('controllers/settings', function() {
       view.render.returns(view);
       view.appendTo.returns(view);
       view.on.returns(view);
+      view.fadeOut.callsArg(0);
       return view;
     });
+
+    document.l10n = {
+      formatValue: key => {
+        return {
+          then(fn) { fn('LOCALIZED'); }
+        };
+      }
+    };
 
     // Shortcut
     this.notification = this.app.views.notification;
@@ -68,14 +77,13 @@ suite('controllers/settings', function() {
     this.controller = new this.SettingsController(this.app);
   });
 
+  teardown(function() {
+    delete document.l10n;
+  });
+
   suite('SettingsController()', function() {
     test('Should setup aliases for `recorderProfiles`, `pictureSizes` and `flashModes`', function() {
-      var aliases = this.controller.aliases;
-      var alias = this.settings.alias;
-
-      assert.isTrue(alias.calledWith('recorderProfiles', aliases.recorderProfiles));
-      assert.isTrue(alias.calledWith('pictureSizes', aliases.pictureSizes));
-      assert.isTrue(alias.calledWith('flashModes', aliases.flashModes));
+      sinon.assert.calledThrice(this.settings.alias);
     });
 
     test('Should toggle the settings menu on \'settings:toggle\'', function() {
@@ -106,12 +114,26 @@ suite('controllers/settings', function() {
         .withArgs('exclude')
         .returns(this.exclude);
 
-      this.app.l10n.get
-        .withArgs('mp')
-        .returns('mp');
+      this.settings.pictureSizes.current = sinon.stub()
+        .returns(this.settings.pictureSizesBack);
+
+      document.l10n = {
+        formatValue: function(id, args) {
+          return Promise.resolve();
+        }
+      };
+
+      this.settings.pictureSizes.get
+        .withArgs('options')
+        .returns([]);
 
       // Run it
-      this.controller.configurePictureSizes(this.pictureSizes);
+      this.controller.configurePictureSizes({
+        pictureSize: { height: 1536, width: 2048 },
+        capabilities: {
+          pictureSizes: this.pictureSizes
+        }
+      });
     });
 
     test('Should format the raw pictureSizes list', function() {
@@ -129,64 +151,75 @@ suite('controllers/settings', function() {
 
     test('Should pass the `exclude`', function() {
       var options = this.app.formatPictureSizes.args[0][1];
-
       assert.equal(options.exclude, this.exclude);
     });
   });
 
-suite('SettingsController#configureRecorderProfiles()', function() {
-  setup(function() {
-    this.recorderProfiles = {};
-    this.formatted = ['a', 'b', 'c'];
-    this.exclude = ['1080p'];
+  suite('SettingsController#configureRecorderProfiles()', function() {
+    setup(function() {
+      this.recorderProfiles = {};
+      this.formatted = ['1080p', '720p', '480p'];
+      this.exclude = ['1080p'];
 
-    this.app.formatRecorderProfiles
-      .returns(this.formatted);
+      this.newCamera = {
+        recorderProfile: '720p',
+        pictureSize: { height: 1536, width: 2048 },
+        capabilities: {
+          recorderProfiles: this.recorderProfiles
+        }
+      };
 
-    this.settings.recorderProfiles.get
-      .withArgs('exclude')
-      .returns(this.exclude);
+      this.app.formatRecorderProfiles
+        .returns(this.formatted);
 
-    // Run it
-    this.controller.configureRecorderProfiles(this.recorderProfiles);
+      this.settings.recorderProfiles.get
+        .withArgs('exclude')
+        .returns(this.exclude);
+
+      this.settings.recorderProfiles.current = sinon.stub()
+        .returns(this.settings.recorderProfilesBack);
+
+      // Run it
+      this.controller.configureRecorderProfiles(this.newCamera);
+    });
+
+    test('Should format the raw recorderProfiles list', function() {
+      assert.isTrue(this.app.formatRecorderProfiles.calledWith(this.recorderProfiles));
+    });
+
+    test('Should reset recorderProfiles options with formatted list', function() {
+      var resetOptions = this.settings.recorderProfiles.resetOptions;
+      assert.isTrue(resetOptions.calledWith(this.formatted));
+    });
+
+    test('Should pass the raw recorderProfiles into formatRecorderProfiles', function() {
+      var arg1 = this.app.formatRecorderProfiles.args[0][0];
+      assert.equal(arg1, this.recorderProfiles);
+    });
+
+    test('Should pass `exclude` option to formatRecorderProfiles', function() {
+      var options = this.app.formatRecorderProfiles.args[0][1];
+      assert.equal(options.exclude, this.exclude);
+    });
+
+    test('Should pick the last formatted recorderProfile if `maxFileSize` is defined', function() {
+      this.settings.recorderProfiles.resetOptions.reset();
+
+      this.settings.recorderProfiles.get
+        .withArgs('maxFileSizeBytes')
+        .returns(100);
+
+      this.controller.configureRecorderProfiles(this.newCamera);
+      var arg = this.settings.recorderProfiles.resetOptions.args[0][0];
+
+      assert.deepEqual(arg, ['480p']);
+    });
   });
-
-  test('Should format the raw recorderProfiles list', function() {
-    assert.isTrue(this.app.formatRecorderProfiles.calledWith(this.recorderProfiles));
-  });
-
-  test('Should reset recorderProfiles options with formatted list', function() {
-    assert.isTrue(this.settings.recorderProfiles.resetOptions.calledWith(this.formatted));
-  });
-
-  test('Should pass the raw recorderProfiles into formatRecorderProfiles', function() {
-    var arg1 = this.app.formatRecorderProfiles.args[0][0];
-    assert.equal(arg1, this.recorderProfiles);
-  });
-
-  test('Should pass `exclude` option to formatRecorderProfiles', function() {
-    var options = this.app.formatRecorderProfiles.args[0][1];
-    assert.equal(options.exclude, this.exclude);
-  });
-
-  test('Should pick the last formatted recorderProfile if `maxFileSize` is defined', function() {
-    this.settings.recorderProfiles.resetOptions.reset();
-
-    this.settings.recorderProfiles.get
-      .withArgs('maxFileSizeBytes')
-      .returns(100);
-
-    this.controller.configureRecorderProfiles(this.recorderProfiles);
-    var arg = this.settings.recorderProfiles.resetOptions.args[0][0];
-
-    assert.deepEqual(arg, ['c']);
-  });
-});
 
   suite('SettingsController#onOptionTap()', function() {
     setup(function() {
       this.setting = sinon.createStubInstance(this.Setting);
-      sinon.stub(this.controller, 'closeSettings');
+      sinon.stub(this.controller, 'closeSettings').callsArg(0);
       sinon.stub(this.controller, 'notify');
     });
 
@@ -200,20 +233,27 @@ suite('SettingsController#configureRecorderProfiles()', function() {
       assert.isTrue(this.controller.closeSettings.called);
     });
 
-    test('Should notify', function() {
+    test('It shows a notification after the settings have closed', function() {
       this.controller.onOptionTap('the-key', this.setting);
-      assert.isTrue(this.controller.notify.called);
+      assert.isTrue(this.controller.notify.calledAfter(this.controller.closeSettings));
     });
   });
 
   suite('SettingsController#notify()', function() {
     setup(function() {
       this.setting = sinon.createStubInstance(this.Setting);
+      this.setting.selected.withArgs('title').returns('l10n-key');
     });
 
     test('Should display a notification', function() {
       this.controller.notify(this.setting);
       assert.isTrue(this.notification.display.called);
+    });
+
+    test('Should not display a notification if flagged `false`', function() {
+      this.setting.get.withArgs('notifications').returns(false);
+      this.controller.notify(this.setting);
+      sinon.assert.notCalled(this.notification.display);
     });
   });
 
@@ -237,34 +277,50 @@ suite('SettingsController#configureRecorderProfiles()', function() {
 
   suite('SettingsController#onNewCamera()', function() {
     setup(function() {
-      this.capabilities = {
-        hdr: ['on', 'off'],
-        pictureSizes: [],
-        recorderProfiles: [],
-        flashModes: []
+      this.newCamera = {
+        recorderProfile: '720p',
+        pictureSize: { height: 1536, width: 2048 },
+        capabilities: {
+          hdr: ['on', 'off'],
+          pictureSizes: [],
+          recorderProfiles: [],
+          flashModes: []
+        }
       };
+
+      this.settings.pictureSizes.current = sinon.stub()
+        .returns(this.settings.pictureSizesBack);
+
+      this.settings.recorderProfiles.current = sinon.stub()
+        .returns(this.settings.recorderProfilesBack);
+
+      this.app.settings.pictureSizes.get.returns([]);
+      this.app.formatRecorderProfiles
+        .returns(['1080p', '720p', '480p' ]);
     });
 
     test('Should filter both \'picture\' and \'video\' flashModes', function() {
       var picture = this.settings.flashModesPicture;
       var video = this.settings.flashModesVideo;
+      var capabilities = this.newCamera.capabilities;
 
-      this.controller.onNewCamera(this.capabilities);
+      this.controller.onNewCamera(this.newCamera);
 
-      assert.ok(picture.filterOptions.calledWith(this.capabilities.flashModes));
-      assert.ok(video.filterOptions.calledWith(this.capabilities.flashModes));
+      assert.ok(picture.filterOptions.calledWith(capabilities.flashModes));
+      assert.ok(video.filterOptions.calledWith(capabilities.flashModes));
     });
 
     test('Should filter hdr', function() {
-      this.controller.onNewCamera(this.capabilities);
-      assert.ok(this.settings.hdr.filterOptions.calledWith(this.capabilities.hdr));
+      var capabilities = this.newCamera.capabilities;
+      this.controller.onNewCamera(this.newCamera);
+      assert.ok(this.settings.hdr.filterOptions.calledWith(capabilities.hdr));
     });
 
     test('Should reset pictureSizes and recorderProfiles options', function() {
       var recorderProfiles = this.settings.recorderProfiles;
       var pictureSizes = this.settings.pictureSizes;
 
-      this.controller.onNewCamera(this.capabilities);
+      this.controller.onNewCamera(this.newCamera);
 
       assert.ok(recorderProfiles.resetOptions.called);
       assert.ok(pictureSizes.resetOptions.called);
@@ -331,8 +387,10 @@ suite('SettingsController#configureRecorderProfiles()', function() {
 
   suite('SettingsController#closeSettings()', function() {
     setup(function() {
-      this.view = { destroy: sinon.spy() };
-      this.controller.view = this.view;
+      // Open settings first so we have a view
+      sinon.stub(this.controller, 'menuItems').returns(this.menuItems);
+      this.controller.openSettings();
+      this.view = this.controller.view;
     });
 
     test('Should not do anything if no view exists', function() {
@@ -352,9 +410,8 @@ suite('SettingsController#configureRecorderProfiles()', function() {
     });
   });
 
-
   suite('SettingsController#formatPictureSizeTitles()', function() {
-    setup(function() {
+    setup(function(done) {
       this.options = [
         {
           key: '400x300',
@@ -389,15 +446,16 @@ suite('SettingsController#configureRecorderProfiles()', function() {
         .withArgs('options')
         .returns(this.options);
 
-      this.app.localized.returns(true);
-      this.controller.localize.withArgs('mp').returns('MP');
+      document.l10n = {
+        formatValue: function(id, args) {
+          return Promise.resolve('MP');
+        }
+      };
 
       // Call the test subject
-      this.controller.formatPictureSizeTitles();
-    });
-
-    test('Should include the apect ratio', function() {
-      assert.ok(this.options[0].title.indexOf('4:3') > -1);
+      this.controller.formatPictureSizeTitles().then(() => {
+        done();
+      });
     });
 
     test('Should include MP value for > 1MP', function() {
@@ -410,20 +468,14 @@ suite('SettingsController#configureRecorderProfiles()', function() {
     });
 
     test('Should use localized \'MP\' string', function() {
-      this.controller.localize
-        .withArgs('mp')
-        .returns('MP-LOCALIZED');
+      document.l10n = {
+        formatValue: function(id, args) {
+          return Promise.resolve('MP');
+        }
+      };
 
       this.controller.formatPictureSizeTitles();
-      assert.isTrue(this.options[2].title.indexOf('MP-LOCALIZED') > -1, this.options[2].title);
-    });
-
-    test('Should not run if app isn\'t localized yet', function() {
-      this.app.localized.returns(false);
-      delete this.options[0].title;
-
-      this.controller.formatPictureSizeTitles();
-      assert.equal(this.options[0].title, undefined);
+      assert.isTrue(this.options[2].title.indexOf('MP') > -1, this.options[2].title);
     });
   });
 

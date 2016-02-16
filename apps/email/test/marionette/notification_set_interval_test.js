@@ -1,3 +1,4 @@
+'use strict';
 /*jshint node: true */
 /*global marionette, setup, test */
 
@@ -11,10 +12,7 @@ var SHARED_PATH = __dirname + '/../../../../shared/test/integration';
 marionette('email notifications, set interval', function() {
   var app,
       client = marionette.client({
-        settings: {
-          // disable keyboard ftu because it blocks our display
-          'keyboard.ftu.enabled': false
-        }
+        desiredCapabilities: { raisesAccessibilityExceptions: false }
       }),
       server1 = serverHelper.use({
                   credentials: {
@@ -22,6 +20,7 @@ marionette('email notifications, set interval', function() {
                     password: 'testy1'
                   }
                 }, this);
+
 
   function getAlarms(client) {
     var alarms;

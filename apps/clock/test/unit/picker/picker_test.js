@@ -1,10 +1,15 @@
 'use strict';
-mocha.setup({ globals: ['GestureDetector'] });
+/* global MockIntlHelper */
 
 suite('Picker', function() {
   var Picker, Spinner;
 
   suiteSetup(function(done) {
+    window.IntlHelper = MockIntlHelper;
+    window.IntlHelper.define('digit-nopadding', 'number', {
+      style: 'decimal',
+      useGrouping: false
+    });
     require(['picker/picker', 'picker/spinner'],
             function(picker, spinner) {
         Picker = picker;
@@ -15,8 +20,8 @@ suite('Picker', function() {
 
   test('shape:prototype ', function() {
     assert.ok(Picker);
-    assert.include(Picker.prototype, 'reset');
-    assert.include(Picker.prototype, 'value');
+    assert.typeOf(Picker.prototype.reset, 'function');
+    assert.typeOf(Picker.prototype.value, 'null');
     assert.isNull(Picker.prototype.value);
   });
 
@@ -42,15 +47,15 @@ suite('Picker', function() {
   });
 
   test('shape:instance ', function() {
-    assert.include(picker, 'nodes');
-    assert.include(picker, 'spinners');
-    assert.include(picker, 'pickers');
+    assert.typeOf(picker.nodes, 'object');
+    assert.typeOf(picker.spinners, 'object');
+    assert.typeOf(picker.pickers, 'Array');
 
-    assert.include(picker.nodes, 'hours');
-    assert.include(picker.nodes, 'minutes');
+    assert.notEqual(typeof picker.nodes.hours, 'undefined');
+    assert.notEqual(typeof picker.nodes.minutes, 'undefined');
 
-    assert.include(picker.spinners, 'hours');
-    assert.include(picker.spinners, 'minutes');
+    assert.notEqual(typeof picker.spinners.hours, 'undefined');
+    assert.notEqual(typeof picker.spinners.hours, 'undefined');
 
     assert.deepEqual(picker.pickers, ['hours', 'minutes']);
   });
@@ -66,7 +71,7 @@ suite('Picker', function() {
     assert.equal(spinners.minutes.values[59], 59);
     assert.equal(spinners.minutes.values[60], undefined);
 
-    assert.equal(picker.value, '0:00');
+    assert.equal(picker.value, '0:0');
   });
 
   test('get and set value ', function() {

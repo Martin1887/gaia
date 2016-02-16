@@ -6,6 +6,9 @@ var MockMozL10n = {
     if (key === 'magnitude') {
       return args.value + ' ' + args.unit;
     }
+    if (key === 'currency') {
+      return args.value + ' ' + args.currency;
+    }
     if (key === 'day-hour-format') {
       return args.day + ', ' + args.time;
     }
@@ -19,7 +22,7 @@ var MockMozL10n = {
         return 'just now';
       }
     }
-    if (key === 'weekStartsOnMonday') {
+    if (key === 'firstDayOfTheWeek') {
       return '0';
     }
     return key;
@@ -29,32 +32,4 @@ var MockMozL10n = {
       cb();
     }
   },
-  translate: function translate() {
-
-  },
-  DateTimeFormat: function() {
-
-  },
-  localize: function localize(element, id, args) {
-    element.textContent = id;
-  }
-};
-
-MockMozL10n.DateTimeFormat.prototype = {
-  localeFormat: function(date, format) {
-    var formattedDate = date.toISOString() + '|' + format;
-    if (format === 'shortTimeFormat') {
-      var options = {hour12: 'true', hour: 'numeric', minute: '2-digit'};
-      formattedDate = date.toLocaleTimeString('en-US', options);
-    }
-    if (format === 'short-date-format') {
-      var optionsSDF = {month: 'short', day: 'numeric'};
-      formattedDate = date.toLocaleTimeString('en-US', optionsSDF);
-    }
-    if (format === '%a') {
-      var optionsWD = {weekday: 'short'};
-      formattedDate = date.toLocaleDateString('en-US', optionsWD);
-    }
-    return formattedDate;
-  }
 };

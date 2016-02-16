@@ -4,15 +4,20 @@
 
 function MockCall(aNumber, aState, aServiceId) {
   this._eventListeners = {
-    'statechange': [],
-    'disconnected': []
+    'connected': [],
+    'disconnected': [],
+    'statechange': []
   };
 
-  this.number = aNumber;
+  this.id = { number: aNumber };
   this.serviceId = (aServiceId === undefined) ? 1 : aServiceId;
   this.state = aState;
+  this.switchable = true; // The call can be put on hold by default
+  this.mergeable = true; // The call can be merged by default
 
-  this.answer = function() {};
+  this.answer = function() {
+    this._connect();
+  };
   this.hangUp = function() {
     this._disconnect();
   };
@@ -20,10 +25,10 @@ function MockCall(aNumber, aState, aServiceId) {
   this.resume = function() {};
 
   this.mEmergencyNumbers = ['112', '911'];
-  this.emergency = this.mEmergencyNumbers.indexOf(this.number) >= 0;
+  this.emergency = this.mEmergencyNumbers.indexOf(aNumber) >= 0;
 
   this.mVoicemailNumbers = ['123'];
-  this.voicemail = this.mVoicemailNumbers.indexOf(this.number) >= 0;
+  this.voicemail = this.mVoicemailNumbers.indexOf(aNumber) >= 0;
 
   this.addEventListener = (function(type, handler) {
     if (this._eventListeners[type]) {
@@ -38,6 +43,9 @@ function MockCall(aNumber, aState, aServiceId) {
     }
   }).bind(this);
 
+  this.triggerEvent = function(type) {
+    this._mTriggerEventListeners(type);
+  },
 
   // Mocking the events
   this.mChangeState = (function(state) {
@@ -53,12 +61,10 @@ function MockCall(aNumber, aState, aServiceId) {
   }).bind(this);
 
   this._hold = (function() {
-    this.mChangeState('holding');
     this.mChangeState('held');
   }).bind(this);
 
   this._resume = (function() {
-    this.mChangeState('resuming');
     this.mChangeState('connected');
   }).bind(this);
 

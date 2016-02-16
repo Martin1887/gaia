@@ -1,4 +1,4 @@
-/* global AutoSettings, BalanceLowLimitView, Common, ConfigManager,
+/* global AutoSettings, BalanceLowLimitView, Common, ConfigManager, SimManager,
           dataLimitConfigurer, LazyLoader, debug, ViewManager */
 
 /*
@@ -20,6 +20,7 @@
     var SCRIPTS_NEEDED = [
       'js/utils/debug.js',
       'js/utils/toolkit.js',
+      'js/sim_manager.js',
       'js/common.js',
       'js/config/config_manager.js',
       'js/views/BalanceLowLimitView.js',
@@ -27,7 +28,7 @@
       'js/settings/autosettings.js'
     ];
     LazyLoader.load(SCRIPTS_NEEDED, function onScriptsLoaded() {
-      Common.loadDataSIMIccId(setupFTE);
+      setupFTE();
       parent.postMessage({
         type: 'fte_ready',
         data: ''
@@ -40,6 +41,13 @@
   var wizard, vmanager;
   var toStep2, step = 0;
   function setupFTE() {
+    if (SimManager.isMultiSim()) {
+      window.addEventListener('dataSlotChange', function _onDataSimChange() {
+        window.removeEventListener('dataSlotChange', _onDataSimChange);
+        // Close FTE if change the SimCard for data connections
+        Common.closeFTE();
+      });
+    }
     ConfigManager.requestAll(function _onSettings(configuration, settings) {
       wizard = document.getElementById('firsttime-view');
       vmanager = new ViewManager();
@@ -131,9 +139,9 @@
       document.getElementById('non2-select-weekday'));
 
     function _setResetTimeToDefault(evt) {
-      var firstWeekDay = parseInt(navigator.mozL10n.get('weekStartsOnMonday'),
-                                  10);
-      var defaultResetTime = (evt.target.value === 'weekly') ? firstWeekDay : 1;
+      var today = new Date();
+      var defaultResetTime = (evt.target.value === 'weekly') ?
+        today.getDay() : today.getDate();
       ConfigManager.setOption({ resetTime: defaultResetTime });
     }
 
@@ -150,9 +158,9 @@
 
     if (window.location.hash === '#PREPAID' ||
         window.location.hash === '#POSTPAID') {
-      wizard.querySelector('.authed-sim').setAttribute('aria-hidden', false);
+      wizard.querySelector('.authed-sim').hidden = false;
     } else {
-      wizard.querySelector('.nonauthed-sim').setAttribute('aria-hidden', false);
+      wizard.querySelector('.nonauthed-sim').hidden = false;
     }
   }
 
@@ -187,11 +195,6 @@
   // NAVIGATION
 
   function reset(track) {
-    // Set wizard progess section
-    wizard.classList.add('total-steps-' + track.length);
-    wizard.classList.remove('step-' + (step + 1));
-    wizard.classList.add('step-1');
-
     // Reposition screens
     var currentScreen = document.getElementById(currentTrack[step]);
     var newStartScreen = document.getElementById(track[0]);
@@ -200,7 +203,7 @@
     newStartScreen.dataset.viewport = 'right';
     delete newStartScreen.dataset.viewport;
 
-    for (var i = 1; i < track.lenght; i += 1) {
+    for (var i = 1; i < track.length; i += 1) {
       var id = track[i];
       if (id) {
         var screen = document.getElementById(id);
@@ -228,10 +231,6 @@
     delete nextScreen.dataset.viewport;
     currentScreen.dataset.viewport = 'left';
 
-    // Advance progress bar
-    wizard.classList.remove('step-' + (step + 1));
-    wizard.classList.add('step-' + (step + 2));
-
     step += 1;
 
     // Validate when in step 2 in order to restore buttons and errors
@@ -255,23 +254,21 @@
     delete prevScreen.dataset.viewport;
     currentScreen.dataset.viewport = 'right';
 
-    // Back progress bar
-    wizard.classList.remove('step-' + (step + 1));
-    wizard.classList.add('step-' + step);
-
     step -= 1;
   }
 
   function onFinish(evt) {
     evt.target.disabled = true;
-    ConfigManager.requestSettings(Common.dataSimIccId,
-                                  function _onSettings(settings) {
-      ConfigManager.setOption({ fte: false }, function _returnToApp() {
-        Common.updateNextReset(settings.trackingPeriod, settings.resetTime,
-          function _returnToTheApplication() {
-            Common.startApp();
-          }
-        );
+    SimManager.requestDataSimIcc(function(dataSim) {
+      ConfigManager.requestSettings(dataSim.iccId,
+                                    function _onSettings(settings) {
+        ConfigManager.setOption({ fte: false }, function _returnToApp() {
+          Common.updateNextReset(settings.trackingPeriod, settings.resetTime,
+            function _returnToTheApplication() {
+              Common.startApp();
+            }
+          );
+        });
       });
     });
   }

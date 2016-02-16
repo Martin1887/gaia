@@ -1,24 +1,27 @@
-/* global MocksHelper, AppWindowFactory, MockApplications,
-          MockAppWindowManager, AppWindow, HomescreenLauncher */
+/* global MocksHelper,
+   AppWindowFactory,
+   MockApplications,
+   AppWindow,
+   HomescreenLauncher,
+   appWindowFactory,
+   MockAppWindow,
+   MockService
+ */
+
 'use strict';
-/* global MocksHelper, MockApplications, MockAppWindowManager,
-          AppWindow, HomescreenLauncher, AppWindowFactory, appWindowFactory */
 
-mocha.globals(['AppWindowManager', 'applications',
-      'ManifestHelper', 'AppWindow', 'System', 'AppWindowFactory',
-      'BrowserConfigHelper', 'homescreenLauncher', 'appWindowFactory']);
-
+requireApp('system/shared/test/unit/mocks/mock_service.js');
 requireApp('system/shared/test/unit/mocks/mock_manifest_helper.js');
 requireApp('system/test/unit/mock_applications.js');
-requireApp('system/test/unit/mock_app_window_manager.js');
 requireApp('system/test/unit/mock_app_window.js');
 requireApp('system/test/unit/mock_homescreen_window.js');
 requireApp('system/test/unit/mock_homescreen_launcher.js');
 requireApp('system/shared/test/unit/mocks/mock_manifest_helper.js');
+requireApp('system/shared/test/unit/mocks/mock_service.js');
 
 var mocksForAppWindowFactory = new MocksHelper([
-  'AppWindow', 'AppWindowManager', 'HomescreenLauncher',
-  'HomescreenWindow', 'Applications', 'ManifestHelper'
+  'AppWindow', 'HomescreenLauncher',
+  'HomescreenWindow', 'Applications', 'ManifestHelper', 'Service'
 ]).init();
 
 suite('system/AppWindowFactory', function() {
@@ -104,6 +107,33 @@ suite('system/AppWindowFactory', function() {
     target: {}
   };
 
+  var fakeLaunchConfig7 = {
+    'isActivity': false,
+    'url': 'app://search.gaiamobile.org/index.html',
+    'name': 'search',
+    'manifestURL': 'app://search.gaiamobile.org/manifest.webapp',
+    'origin': 'app://search.gaiamobile.org',
+    'manifest': {
+      'name': 'Search',
+      'role': 'search',
+    },
+    target: {}
+  };
+
+  var fakeLaunchConfig8 = {
+    'isActivity': false,
+    'showApp': false,
+    'url': 'app://findmydevice.gaiamobile.org/index.html',
+    'name': 'Find my device',
+    'manifestURL': 'app://findmydevice.gaiamobile.org/manifest.webapp',
+    'origin': 'app://findmydevice.gaiamobile.org',
+    'manifest': {
+      'name': 'Find my device',
+      'role': 'system',
+    },
+    target: {}
+  };
+
   var realApplications;
 
   setup(function(done) {
@@ -118,14 +148,12 @@ suite('system/AppWindowFactory', function() {
 
     stubById = this.sinon.stub(document, 'getElementById');
     stubById.returns(document.createElement('div'));
-    window.homescreenLauncher = new HomescreenLauncher().start();
+    window.homescreenLauncher = new HomescreenLauncher();
+    window.homescreenLauncher.start();
 
-    requireApp('system/js/system.js');
     requireApp('system/js/browser_config_helper.js');
     requireApp('system/js/app_window_factory.js', function() {
       window.appWindowFactory = new AppWindowFactory();
-      window.appWindowFactory.start();
-
       done();
     });
   });
@@ -139,7 +167,187 @@ suite('system/AppWindowFactory', function() {
     realApplications = null;
   });
 
+  suite('isLaunchingWindow', function() {
+    var app;
+    setup(function() {
+      app = new MockAppWindow();
+      this.sinon.stub(window, 'AppWindow').returns(app);
+      window.applications.ready = true;
+      window.appWindowFactory.start();
+    });
+
+    test('Launching app', function() {
+      window.dispatchEvent(new CustomEvent('webapps-launch',
+        {detail: fakeLaunchConfig1}));
+      assert.isTrue(window.appWindowFactory.isLaunchingWindow());
+      app.element.dispatchEvent(new CustomEvent('_opened', {
+        detail: app
+      }));
+      assert.isFalse(window.appWindowFactory.isLaunchingWindow());
+    });
+
+    test('Ignore background app', function() {
+      window.dispatchEvent(new CustomEvent('open-app',
+        {detail: fakeLaunchConfig8}));
+      assert.isFalse(window.appWindowFactory.isLaunchingWindow());
+    });
+  });
+
+  suite('_findBrowserInstance', function() {
+    var mockApp, mockApp2, unpinnedApps;
+
+    setup(function() {
+      mockApp = {
+        requestOpen: this.sinon.stub(),
+        isBrowser: function() {},
+        launchTime: 1
+      };
+
+      mockApp2 = {
+        requestOpen: this.sinon.stub(),
+        isBrowser: function() {},
+        launchTime: 2
+      };
+
+      unpinnedApps = [mockApp, mockApp2];
+      this.sinon.stub(MockService, 'query', function(key) {
+        switch (key) {
+          case 'AppWindowManager.getUnpinnedWindows':
+            return unpinnedApps;
+          case 'AppWindowManager.getActiveApp':
+            return mockApp;
+        }
+      });
+    });
+
+    test('returns nothing if not trying to open the Browser', function() {
+      this.sinon.stub(appWindowFactory, '_isSearch').returns(false);
+      var instance = appWindowFactory._findBrowserInstance();
+      assert.isFalse(!!(instance));
+    });
+
+    test('returns nothing if the Browser is already active', function() {
+      this.sinon.stub(appWindowFactory, '_isSearch').returns(true);
+      this.sinon.stub(mockApp, 'isBrowser').returns(true);
+      var instance = appWindowFactory._findBrowserInstance();
+      assert.isFalse(!!(instance));
+    });
+
+    test('returns the last used unpinned page', function() {
+      this.sinon.stub(appWindowFactory, '_isSearch').returns(true);
+      this.sinon.stub(mockApp, 'isBrowser').returns(false);
+      var instance = appWindowFactory._findBrowserInstance();
+      assert.equal(instance, mockApp2);
+    });
+  });
+
+  suite('check for open-app queueing', function() {
+    var applicationsReady;
+    var eventHandlerSpy, preEventHandlerSpy, queuePendingEventSpy;
+    var openAppEvent;
+
+    setup(function() {
+      openAppEvent = new CustomEvent('open-app', {'detail': {}});
+      applicationsReady = window.applications.ready;
+      eventHandlerSpy =
+        this.sinon.spy(window.appWindowFactory, 'handleEvent');
+      preEventHandlerSpy =
+        this.sinon.spy(window.appWindowFactory, 'preHandleEvent');
+      queuePendingEventSpy =
+        this.sinon.spy(window.appWindowFactory, '_queuePendingEvent');
+    });
+
+    teardown(function() {
+      window.applications.ready = applicationsReady;
+    });
+
+    suite('open-app delivered, applications.ready is false', function() {
+      setup(function() {
+        window.applications.ready = false;
+        window.appWindowFactory.start();
+        window.dispatchEvent(openAppEvent);
+      });
+
+      test('handleEvent not called', function() {
+        sinon.assert.notCalled(eventHandlerSpy);
+      });
+
+      test('preHandleEvent called', function() {
+        sinon.assert.called(preEventHandlerSpy);
+      });
+
+      test('_queuePendingEvent called', function() {
+        sinon.assert.calledOnce(queuePendingEventSpy);
+      });
+    });
+
+    suite('open-app delivered, applications.ready is true', function() {
+      setup(function() {
+        window.applications.ready = true;
+        window.appWindowFactory.start();
+        window.dispatchEvent(openAppEvent);
+      });
+
+      test('preHandleEvent called', function() {
+        sinon.assert.called(preEventHandlerSpy);
+      });
+
+      test('handleEvent called after open-app',
+        function() {
+          sinon.assert.calledWithExactly(eventHandlerSpy, openAppEvent);
+        });
+    });
+
+    suite('open-app delivered, applicationready event', function() {
+      var handlePendingSpy;
+      setup(function() {
+        window.applications.ready = false;
+        window.appWindowFactory.start();
+        window.dispatchEvent(openAppEvent);
+        handlePendingSpy =
+          this.sinon.spy(window.appWindowFactory, '_handlePendingEvents');
+        window.dispatchEvent(new CustomEvent('applicationready'));
+      });
+
+      test('preHandleEvent called', function() {
+        sinon.assert.called(preEventHandlerSpy);
+      });
+
+      test('_queuePendingEvent called', function() {
+        sinon.assert.calledOnce(queuePendingEventSpy);
+      });
+
+      test('_handlePendingEvents called', function() {
+        sinon.assert.calledOnce(handlePendingSpy);
+      });
+
+      test('handleEvent called', function() {
+        sinon.assert.called(eventHandlerSpy);
+      });
+
+      test('pending events cleared', function() {
+        assert.equal(0, window.appWindowFactory._queueEvents.length);
+      });
+    });
+  });
+
   suite('handle event', function() {
+     setup(function() {
+      window.appWindowFactory.start();
+    });
+
+    test('call event without manifestURL/url', function() {
+      var stubBrowserConfigHelper = this.sinon.stub(window,
+        'BrowserConfigHelper');
+      appWindowFactory.handleEvent({
+        detail: {
+          url: null,
+          manifestURL: null
+        }
+      });
+      assert.isFalse(stubBrowserConfigHelper.calledWithNew());
+    });
+
     test('classic app launch', function() {
       var stubDispatchEvent = this.sinon.stub(window, 'dispatchEvent');
       appWindowFactory.handleEvent({
@@ -164,6 +372,30 @@ suite('system/AppWindowFactory', function() {
         fakeLaunchConfig2.url);
     });
 
+    test('redirect applaunch', function() {
+      var stubDispatchEvent = this.sinon.stub(window, 'dispatchEvent');
+      appWindowFactory.handleEvent({
+        type: 'appopenwindow',
+        detail: fakeLaunchConfig2
+      });
+      assert.isTrue(stubDispatchEvent.called);
+      assert.equal(stubDispatchEvent.getCall(0).args[0].type, 'launchapp');
+      assert.equal(stubDispatchEvent.getCall(0).args[0].detail.url,
+        fakeLaunchConfig2.url);
+    });
+
+    test('open a new window', function() {
+      var stubDispatchEvent = this.sinon.stub(window, 'dispatchEvent');
+      appWindowFactory.handleEvent({
+        type: 'openwindow',
+        detail: fakeLaunchConfig2
+      });
+      assert.isTrue(stubDispatchEvent.called);
+      assert.equal(stubDispatchEvent.getCall(0).args[0].type, 'launchapp');
+      assert.equal(stubDispatchEvent.getCall(0).args[0].detail.url,
+        fakeLaunchConfig2.url);
+    });
+
     test('opening from a system message', function() {
       var stubDispatchEvent = this.sinon.stub(window, 'dispatchEvent');
       appWindowFactory.handleEvent({
@@ -176,6 +408,22 @@ suite('system/AppWindowFactory', function() {
         fakeLaunchConfig3.url);
     });
 
+    test('app launch with multiscreen.enabled', function() {
+      this.sinon.stub(MockService, 'query', function(key) {
+        return key == 'MultiScreenController.enabled';
+      });
+      this.sinon.stub(MockService, 'request', function() {
+        return Promise.resolve(1);
+      });
+      appWindowFactory.handleEvent({
+        type: 'webapps-launch',
+        detail: fakeLaunchConfig1
+      });
+      assert.isTrue(MockService.request.calledWith('chooseDisplay'));
+      assert.equal(MockService.request.getCall(0).args[1].url,
+        fakeLaunchConfig1.url);
+    });
+
     test('opening a first activity', function() {
       var stubDispatchEvent = this.sinon.stub(window, 'dispatchEvent');
       appWindowFactory.handleEvent({
@@ -186,6 +434,17 @@ suite('system/AppWindowFactory', function() {
       assert.equal(stubDispatchEvent.getCall(0).args[0].type, 'launchactivity');
       assert.equal(stubDispatchEvent.getCall(0).args[0].detail.url,
         fakeLaunchConfig4.url);
+    });
+
+    test('webapps-close with search app', function() {
+      var stubPublish = this.sinon.stub(appWindowFactory, 'publish');
+      appWindowFactory.handleEvent({
+        type: 'webapps-close',
+        detail: fakeLaunchConfig5
+      });
+      assert.isTrue(stubPublish.calledOnce);
+      assert.equal(stubPublish.getCall(0).args[0], 'killapp');
+      assert.equal(stubPublish.getCall(0).args[1].url, fakeLaunchConfig5.url);
     });
 
     test('opening a second activity', function() {
@@ -210,15 +469,40 @@ suite('system/AppWindowFactory', function() {
     });
 
     test('launch an already-running app', function() {
-      var spy = this.sinon.stub(MockAppWindowManager, 'getApp');
       var app = new AppWindow();
       var stubReviveBrowser = this.sinon.stub(app, 'reviveBrowser');
-      spy.returns(app);
+      MockService.mockQueryWith('getApp', app);
       appWindowFactory.handleEvent({
         type: 'open-app',
         detail: fakeLaunchConfig5
       });
       assert.isTrue(stubReviveBrowser.called);
+    });
+
+    test('open-app with search app', function() {
+      var stubDispatchEvent = this.sinon.stub(window, 'dispatchEvent');
+      this.sinon.stub(appWindowFactory, '_findBrowserInstance').returns(null);
+      appWindowFactory.launch(fakeLaunchConfig7);
+      assert.ok(stubDispatchEvent.notCalled);
+
+      fakeLaunchConfig7.url = 'app://search.gaiamobile.org/newtab.html';
+      appWindowFactory.launch(fakeLaunchConfig7);
+      assert.ok(stubDispatchEvent.calledOnce);
+    });
+
+    test('open-app with search app and unpinned instance', function() {
+      var stubDispatchEvent = this.sinon.stub(window, 'dispatchEvent');
+      var app = {
+        requestOpen: this.sinon.stub()
+      };
+      this.sinon.stub(appWindowFactory, '_findBrowserInstance').returns(app);
+      appWindowFactory.launch(fakeLaunchConfig7);
+      assert.ok(stubDispatchEvent.notCalled);
+
+      fakeLaunchConfig7.url = 'app://search.gaiamobile.org/newtab.html';
+      appWindowFactory.launch(fakeLaunchConfig7);
+      assert.ok(stubDispatchEvent.notCalled);
+      assert.ok(app.requestOpen);
     });
   });
 });

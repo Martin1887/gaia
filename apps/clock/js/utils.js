@@ -1,7 +1,8 @@
 define(function(require) {
 'use strict';
+/* global mozIntl, IntlHelper */
 
-var mozL10n = require('l10n');
+var constants = require('constants');
 
 var Utils = {};
 // Maintain references to millisecond multipliers
@@ -13,6 +14,21 @@ var dateMultipliers = {
   milliseconds: 1
 };
 var units = Object.keys(dateMultipliers);
+
+IntlHelper.define('weekday-short', 'datetime', {
+  weekday: 'short'
+});
+
+IntlHelper.define('time-html', 'mozdatetime', {
+  dayperiod: true,
+  hour: 'numeric',
+  minute: 'numeric',
+});
+
+IntlHelper.define('time-text', 'datetime', {
+  hour: 'numeric',
+  minute: 'numeric',
+});
 
 /**
  * Define a singleton method that returns a unified instance
@@ -180,45 +196,6 @@ Utils.extend = function(initialObject, extensions) {
   return initialObject;
 };
 
-/**
- * RequestAnimationFrame after a delay.
- *
- * @param {function} fn - The function to evaluate
- *        in a future delayed animation frame.
- * @param {number} time - The number of milliseconds
- *        to delay (using setTimeout) before we
- *        request an animation frame.
- *
- * @return {object} an object that can be passed to
- *         `Utils.cancelAnimationAfter`.
- */
-Utils.requestAnimationAfter = function(fn, time) {
-  var ret = {};
-  if (time <= 0) {
-    ret.raf = requestAnimationFrame(fn);
-  } else {
-    ret.timeout = setTimeout(function() {
-      delete this.timeout;
-      this.raf = requestAnimationFrame(fn);
-    }.bind(ret), time);
-  }
-  return ret;
-};
-
-/**
- * Cancel a scheduled requestAnimationAfter.
- *
- * @param {object} id - the value returned from `requestAnimationAfter`.
- */
-Utils.cancelAnimationAfter = function(id) {
-  if (id && typeof id.raf !== 'undefined') {
-    cancelAnimationFrame(id.raf);
-  }
-  if (id && typeof id.timeout !== 'undefined') {
-    clearTimeout(id.timeout);
-  }
-};
-
 Utils.escapeHTML = function(str, escapeQuotes) {
   var span = document.createElement('span');
   span.textContent = str;
@@ -230,14 +207,15 @@ Utils.escapeHTML = function(str, escapeQuotes) {
 };
 
 Utils.getLocalizedTimeHtml = function(date) {
-  var f = new mozL10n.DateTimeFormat();
-  var shortFormat = mozL10n.get('shortTimeFormat');
-  return f.localeFormat(date, shortFormat.replace('%p', '<small>%p</small>'));
+  var f = IntlHelper.get('time-html');
+  return f.format(date, {
+    dayperiod: '<small>$&</small>'
+  });
 };
 
 Utils.getLocalizedTimeText = function(date) {
-  var f = new mozL10n.DateTimeFormat();
-  return f.localeFormat(date, mozL10n.get('shortTimeFormat'));
+  var f = IntlHelper.get('time-text');
+  return f.format(date);
 };
 
 Utils.changeSelectByValue = function(selectElement, value) {
@@ -344,63 +322,6 @@ Utils.safeWakeLock = function(opts, fn) {
     throw err;
   }
 };
-
-Utils.repeatString = function rep(str, times) {
-  var built = [], cur = str;
-  for (var i = 0, j = 1; j <= times; i++) {
-    if ((times & j) > 0) {
-      built.push(cur);
-    }
-    cur = cur + cur;
-    j = j << 1;
-  }
-  return built.join('');
-};
-
-Utils.format = {
-  hms: function(sec, format) {
-    var hour = 0;
-    var min = 0;
-
-    if (sec >= 3600) {
-      hour = Math.floor(sec / 3600);
-      sec -= hour * 3600;
-    }
-
-    if (sec >= 60) {
-      min = Math.floor(sec / 60);
-      sec -= min * 60;
-    }
-
-    hour = (hour < 10) ? '0' + hour : hour;
-    min = (min < 10) ? '0' + min : min;
-    sec = (sec < 10) ? '0' + sec : sec;
-
-    if (typeof format !== 'undefined') {
-      format = format.replace('hh', hour);
-      format = format.replace('mm', min);
-      format = format.replace('ss', sec);
-
-      return format;
-    }
-    return hour + ':' + min + ':' + sec;
-  },
-  durationMs: function(ms) {
-    var dm = Utils.dateMath.fromMS(ms, {
-      unitsPartial: ['minutes', 'seconds', 'milliseconds']
-    });
-    var puts = function(x, n) {
-      x = String(x);
-      return Utils.repeatString('0', Math.max(0, n - x.length)) + x;
-    };
-    return [
-      puts(dm.minutes, 2), ':',
-      puts(dm.seconds, 2), '.',
-      puts((dm.milliseconds / 10) | 0, 2)
-    ].join('');
-  }
-};
-
 
 Utils.async = {
 
@@ -596,6 +517,52 @@ Utils.addEventListenerOnce = function(element, type, fn, useCapture) {
   };
   element.addEventListener(type, handler, useCapture);
 };
+
+Utils.summarizeDaysOfWeek = function(repeat) {
+  var days = [];
+  if (repeat) {
+    for (var day in repeat) {
+      if (repeat[day]) {
+        days.push(day);
+      }
+    }
+  }
+
+  if (days.length === 7) {
+    return Promise.resolve('everyday');
+  } else if (days.length === 5 &&
+             days.indexOf('6') === -1 && // Saturday
+             days.indexOf('0') === -1) { // Sunday
+    return Promise.resolve('weekdays');
+  } else if (days.length === 2 &&
+             days.indexOf('6') !== -1 && // Saturday
+             days.indexOf('0') !== -1) { // Sunday
+    return Promise.resolve('weekends');
+  } else if (days.length === 0) {
+    return Promise.resolve('never');
+  } else {
+    var formatter = IntlHelper.get('weekday-short');
+
+    var repeatStrings = [];
+
+    for (var i = 0; i < 7; i++) {
+      if (days.indexOf(i.toString()) !== -1) {
+        var dayDate = new Date(constants.KNOWN_SUNDAY); 
+        dayDate.setDate(constants.KNOWN_SUNDAY.getDate() + i);
+        repeatStrings.push(formatter.format(dayDate));
+      }
+      
+    }
+
+    return mozIntl.formatList(repeatStrings).then(listString => {
+      return { raw: listString };
+    });
+  }
+};
+
+
+
+
 
 return Utils;
 

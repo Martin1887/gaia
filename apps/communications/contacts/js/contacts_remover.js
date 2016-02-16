@@ -1,4 +1,4 @@
-/* globals mozContact, fb */
+/* globals mozContact, ContactsService */
 'use strict';
 
 /*
@@ -17,7 +17,6 @@ function contactsRemover() {
   /*jshint validthis:true */
   var self = this;
   var ids;
-  var fbData = Object.create(null);
 
   this.init = function(cIds, cb) {
     if (cIds === null || cIds.length === 0) {
@@ -25,21 +24,7 @@ function contactsRemover() {
     }
     ids = cIds;
 
-    // In order to properly delete FB Contacts we need to obtain their data
-    // Take into account that we are querying all FB Contacts but we don't know
-    // beforehand if there will be any of them to be deleted
-    var req = fb.utils.getAllFbContacts();
-    req.onsuccess = function() {
-      var fbContacts = req.result;
-      fbContacts.forEach(function(aFbContact) {
-        fbData[aFbContact.id] = aFbContact;
-      });
-      cb();
-    };
-    req.onerror = function() {
-      console.error('Error while retrieving FB Contacts: ', req.error.name);
-      cb();
-    };
+    if (cb && typeof cb === 'function') { cb(); }
   };
 
   this.start = function() {
@@ -68,15 +53,19 @@ function contactsRemover() {
       }
       return;
     }
-    var request = deleteContact(currentId);
-    request.onSuccess = function() {
-      totalRemoved++;
-      notifyDeleted(currentId);
-      continueCb(ids);
-    };
-    request.onError = function() {
-      notifyError();
-    };
+
+    deleteContact(
+      currentId,
+      function(e) {
+        if (e) {
+          notifyError();
+          return;
+        }
+        totalRemoved++;
+        notifyDeleted(currentId);
+        continueCb(ids);
+      }
+    );
   }
 
   function notifyError() {
@@ -103,25 +92,14 @@ function contactsRemover() {
     }
   }
 
-  function deleteContact(currentID) {
-    var request;
-    var outreq = {onSuccess: null, onError: null};
+  function deleteContact(currentID, callback) {
     var contact = new mozContact();
     contact.id = currentID;
 
-    if (fbData[contact.id]) {
-      var fbContact = new fb.Contact(fbData[contact.id]);
-      request = fbContact.remove();
-    } else {
-      request = navigator.mozContacts.remove(contact);
-    }
-    request.onsuccess = function() {
-      outreq.onSuccess();
-    };
-    request.onerror = function() {
-      outreq.onError();
-    };
-    return outreq;
+    ContactsService.remove(
+      contact,
+      callback
+    );
   }
 }
 

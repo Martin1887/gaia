@@ -1,4 +1,7 @@
-MockThumbnailGroup = function(item) {
+'use strict';
+/* exported MockThumbnailGroup */
+
+function MockThumbnailGroup(item) {
   var counter = 0;
   var dummyNode = document.createElement('div');
   dummyNode.textContent = MockThumbnailGroup._GroupID;
@@ -17,11 +20,14 @@ MockThumbnailGroup = function(item) {
     thumbnails.pop({data: item.name});
   }
 
+  function localize() {}
+
   MockThumbnailGroup._GroupMap[MockThumbnailGroup._GroupID] = {
     // api
     addItem: addItem,
-    getCount: function() {return counter},
+    getCount: function() {return counter;},
     removeItem: removeItem,
+    localize: localize,
     // properties.
     groupID: MockThumbnailGroup._GroupID,
     htmlNode: dummyNode,
@@ -29,7 +35,7 @@ MockThumbnailGroup = function(item) {
   };
 
   return MockThumbnailGroup._GroupMap[MockThumbnailGroup._GroupID];
-};
+}
 
 MockThumbnailGroup.getGroupID = function(video) {
   return MockThumbnailGroup._GroupID;
@@ -45,4 +51,3 @@ MockThumbnailGroup.reset = function() {
   MockThumbnailGroup._GroupMap = {};
   delete MockThumbnailGroup._GroupID;
 };
-

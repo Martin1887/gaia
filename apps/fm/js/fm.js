@@ -1,4 +1,6 @@
 'use strict';
+/* global
+  AirplaneModeHelper */
 
 function $(id) {
   return document.getElementById(id);
@@ -134,8 +136,9 @@ var mozFMRadio = navigator.mozFM || navigator.mozFMRadio || {
 (function(aGlobal) {
   aGlobal.SpeakerManager = aGlobal.SpeakerManager || aGlobal.MozSpeakerManager;
 
-  if (aGlobal.SpeakerManager)
+  if (aGlobal.SpeakerManager) {
     return;
+  }
 
   function SpeakerManager() {
     this.speakerforced = false;
@@ -155,35 +158,32 @@ var mozFMRadio = navigator.mozFM || navigator.mozFMRadio || {
   aGlobal.SpeakerManager = SpeakerManager;
 })(window);
 
-function updateFreqUI() {
-  historyList.add(mozFMRadio.frequency);
-  frequencyDialer.setFrequency(mozFMRadio.frequency);
-  var frequency = frequencyDialer.getFrequency();
-  favoritesList.select(frequency);
-  $('bookmark-button').dataset.bookmarked = favoritesList.contains(frequency);
-}
-
+var enabling = false;
 function updatePowerUI() {
   var enabled = mozFMRadio.enabled;
+  var powerSwitch = $('power-switch');
   if (enabled) {
-    PerformanceTestingHelper.dispatch('fm-radio-enabled');
-    PerformanceTestingHelper.dispatch('startup-path-done');
+    window.performance.mark('fmRadioEnabled');
+    // ACCESSIBILITY - Must set data-l10n-id to reflect Off switch
+    powerSwitch.setAttribute('data-l10n-id', 'power-switch-off');
+  } else {
+    // ACCESSIBILITY - Must set data-l10n-id to reflect On switch
+    powerSwitch.setAttribute('data-l10n-id', 'power-switch-on');
   }
   console.log('Power status: ' + (enabled ? 'on' : 'off'));
-  var powerSwitch = $('power-switch');
   powerSwitch.dataset.enabled = enabled;
   powerSwitch.dataset.enabling = enabling;
 }
 
-function updateAntennaUI() {
-  $('antenna-warning').hidden = mozFMRadio.antennaAvailable;
-}
-
-function updateAirplaneModeUI() {
+var airplaneModeEnabled = false;
+function updateWarningModeUI() {
   $('airplane-mode-warning').hidden = !airplaneModeEnabled;
+  $('antenna-warning').hidden = mozFMRadio.antennaAvailable ||
+    airplaneModeEnabled;
+  $('container').classList.toggle('hidden-block', airplaneModeEnabled ||
+    !mozFMRadio.antennaAvailable);
 }
 
-var enabling = false;
 function updateFrequencyBarUI() {
   var frequencyBar = $('frequency-bar');
   if (enabling) {
@@ -199,10 +199,10 @@ function updateEnablingState(enablingState) {
   updateFrequencyBarUI();
 }
 
-var airplaneModeEnabled = false;
 function enableFMRadio(frequency) {
-  if (airplaneModeEnabled)
+  if (airplaneModeEnabled) {
     return;
+  }
 
   var request = mozFMRadio.enable(frequency);
   // Request might fail, see bug862672
@@ -244,7 +244,7 @@ var frequencyDialer = {
 
   init: function() {
     // First thing is to show a warning if there    // is not antenna.
-    updateAntennaUI();
+    updateWarningModeUI();
 
     this._initUI();
     this.setFrequency(mozFMRadio.frequency);
@@ -350,7 +350,23 @@ var frequencyDialer = {
       document.body.addEventListener('touchend', fd_body_touchend, false);
     }
 
-    $('dialer-container').addEventListener('touchstart', fd_touchstart, false);
+    function fd_key(event) {
+      if (event.keyCode === event.DOM_VK_UP) {
+        tunedFrequency = self._currentFreqency + 0.1;
+      } else if (event.keyCode === event.DOM_VK_DOWN) {
+        tunedFrequency = self._currentFreqency - 0.1;
+      } else {
+        return;
+      }
+
+      tunedFrequency = self.setFrequency(toFixed(tunedFrequency));
+      cancelSeekAndSetFreq(tunedFrequency);
+    }
+
+    var dialerContainer = $('dialer-container');
+    dialerContainer.addEventListener('touchstart', fd_touchstart, false);
+    // ACCESSIBILITY - Add keypress event for screen reader
+    dialerContainer.addEventListener('keypress', fd_key, false);
   },
 
   _initUI: function() {
@@ -378,14 +394,13 @@ var frequencyDialer = {
     this._space = this._dialerWidth /
                     (this._maxFrequency - this._minFrequency);
 
-    for (var i = 0; i < _dialerUnits.length; i++) {
+    for (i = 0; i < _dialerUnits.length; i++) {
       _dialerUnits[i].style.left = i * _dialerUnitWidth + 'px';
     }
   },
 
   _addDialerUnit: function(start, end) {
     var markStart = start - start % this.unit;
-    var html = '';
 
     // At the beginning and end of the dial, some of the notches should be
     // hidden. To do this, we use an absolutely positioned div mask.
@@ -406,40 +421,51 @@ var frequencyDialer = {
       }
     }
 
-    html += '    <div class="dialer-unit-mark-box">';
-    if (startMaskWidth > 0) {
-      html += '<div class="dialer-unit-mark-mask-start" style="width: ' +
-              startMaskWidth + 'px"></div>';
-    }
-    if (endMaskWidth > 0) {
-      html += '<div class="dialer-unit-mark-mask-end" style="width: ' +
-              endMaskWidth + 'px"></div>';
-    }
-    html += '    </div>';
+    var container = document.createElement('div');
+    container.classList.add('dialer-unit-mark-box');
 
-    var width = 'width: ' + (100 / this.unit) + '%';
+    if (startMaskWidth > 0) {
+      var markEl = document.createElement('div');
+      markEl.classList.add('dialer-unit-mark-mask-start');
+      markEl.style.width = startMaskWidth + 'px';
+
+      container.appendChild(markEl);
+    }
+
+    if (endMaskWidth > 0) {
+      var markEnd = document.createElement('div');
+      markEnd.classList.add('dialer-unit-mark-mask-end');
+      markEnd.style.width = endMaskWidth + 'px';
+
+      container.appendChild(markEnd);
+    }
+
+    var width = (100 / this.unit) + '%';
     // Show the frequencies on dialer
     for (var j = 0; j < this.unit; j++) {
       var frequency = Math.floor(markStart) + j;
       var showFloor = frequency >= start && frequency <= end;
-      if (showFloor) {
-        html += '<div class="dialer-unit-floor" style="' + width + '">' +
-          frequency + '</div>';
-      } else {
-        html += '  <div class="dialer-unit-floor hidden-block" style="' +
-          width + '">' + frequency + '</div>';
+
+      var unit = document.createElement('div');
+      unit.classList.add('dialer-unit-floor');
+      if (!showFloor) {
+        unit.classList.add('hidden-block');
       }
+      unit.style.width = width;
+      unit.appendChild(document.createTextNode(frequency));
+      container.appendChild(unit);
     }
 
-    html += '  </div>';
-    var unit = document.createElement('div');
-    unit.className = 'dialer-unit';
-    unit.innerHTML = html;
-    $('frequency-dialer').appendChild(unit);
+    var dialerUnit = document.createElement('div');
+    dialerUnit.className = 'dialer-unit';
+    dialerUnit.appendChild(container);
+    $('frequency-dialer').appendChild(dialerUnit);
   },
 
   _updateUI: function(frequency, ignoreDialer) {
-    $('frequency').textContent = frequency.toFixed(1);
+    document.l10n.setAttributes($('frequency'), 'frequency-MHz', {
+      value: frequency.toFixed(1)
+    });
     if (true !== ignoreDialer) {
       this._translateX = (this._minFrequency - frequency) * this._space;
       var dialer = $('frequency-dialer');
@@ -448,6 +474,7 @@ var frequencyDialer = {
         dialer.childNodes[i].style.MozTransform =
           'translateX(' + this._translateX + 'px)';
       }
+      $('dialer-container').setAttribute('aria-valuenow', frequency);
     }
   },
 
@@ -509,15 +536,17 @@ var historyList = {
    * @param {freq} frequency to add.
    */
   add: function hl_add(freq) {
-    if (freq == null)
+    if (freq == null) {
       return;
+    }
     var self = this;
     self._historyList.push({
       name: freq + '',
       frequency: freq
     });
-    if (self._historyList.length > self.SIZE)
+    if (self._historyList.length > self.SIZE) {
       self._historyList.shift();
+    }
     self._save();
   },
 
@@ -527,7 +556,7 @@ var historyList = {
    * @return {freq} the last frequency tuned.
    */
   last: function hl_last() {
-    if (this._historyList.length == 0) {
+    if (this._historyList.length === 0) {
       return null;
     }
     else {
@@ -591,15 +620,21 @@ var favoritesList = {
     var elem = document.createElement('div');
     elem.id = this._getUIElemId(item);
     elem.className = 'fav-list-item';
-    var html = '';
-    html += '<div class="fav-list-frequency">';
-    html += item.frequency.toFixed(1);
-    html += '</div>';
-    html += '<div class="fav-list-remove-button"></div>';
-    elem.innerHTML = html;
+    elem.setAttribute('role', 'option');
+
+    var subElem = document.createElement('div');
+    subElem.className = 'fav-list-frequency';
+    document.l10n.setAttributes(subElem, 'fav-frequency-MHz', {
+      value: item.frequency.toFixed(1)
+    });
+    elem.appendChild(subElem);
+
+    subElem = document.createElement('div');
+    subElem.className = 'fav-list-remove-button';
+    elem.appendChild(subElem);
 
     // keep list ascending sorted
-    if (container.childNodes.length == 0) {
+    if (container.childNodes.length === 0) {
       container.appendChild(elem);
     } else {
       var childNodes = container.childNodes;
@@ -635,9 +670,9 @@ var favoritesList = {
   },
 
   _getElemFreq: function(elem) {
-    var isParentListItem = elem.parentNode.classList.contains('fav-list-item');
-    var listItem = isParentListItem ? elem.parentNode : elem;
-    return parseFloat(listItem.id.substring(listItem.id.indexOf('-') + 1));
+    // ensure we get the closest list-item.
+    elem = elem.closest('.fav-list-item');
+    return parseFloat(elem.id.substring(elem.id.indexOf('-') + 1));
   },
 
   forEach: function(callback) {
@@ -673,7 +708,8 @@ var favoritesList = {
       this._save();
 
       // show the item in favorites list.
-      this._addItemToListUI(this._favList[freq]).scrollIntoView();
+      var elem = this._addItemToListUI(this._favList[freq]);
+      window.scrollTo(0, elem.offsetTop);
     }
   },
 
@@ -698,20 +734,31 @@ var favoritesList = {
       var item = items[i];
       if (this._getElemFreq(item) == freq) {
         item.classList.add('selected');
+        item.setAttribute('aria-selected', true);
       } else {
         item.classList.remove('selected');
+        item.setAttribute('aria-selected', false);
       }
     }
   }
 };
 
-function init() {
-  PerformanceTestingHelper.dispatch('start');
+function updateFreqUI() {
+  historyList.add(mozFMRadio.frequency);
+  frequencyDialer.setFrequency(mozFMRadio.frequency);
+  var frequency = frequencyDialer.getFrequency();
+  favoritesList.select(frequency);
+  var bookmarkButton = $('bookmark-button');
+  bookmarkButton.dataset.bookmarked = favoritesList.contains(frequency);
+  bookmarkButton.setAttribute('aria-pressed',
+    favoritesList.contains(frequency));
+}
 
+function init() {
   frequencyDialer.init();
 
-  var seeking = false;
   function onclick_seekbutton(event) {
+    /* jshint validthis: true */
     var seekButton = this;
     var powerSwitch = $('power-switch');
     var seeking = !!powerSwitch.getAttribute('data-seeking');
@@ -764,13 +811,15 @@ function init() {
     updateFreqUI();
   }, false);
 
-  var speakerManager = new SpeakerManager();
+  var speakerManager = new window.SpeakerManager();
   $('speaker-switch').addEventListener('click', function toggle_speaker() {
     speakerManager.forcespeaker = !speakerManager.speakerforced;
   }, false);
 
   speakerManager.onspeakerforcedchange = function onspeakerforcedchange() {
-    $('speaker-switch').dataset.speakerOn = speakerManager.speakerforced;
+    var speakerSwitch = $('speaker-switch');
+    speakerSwitch.dataset.speakerOn = speakerManager.speakerforced;
+    speakerSwitch.setAttribute('aria-pressed', speakerManager.speakerforced);
   };
 
   mozFMRadio.onfrequencychange = updateFreqUI;
@@ -782,7 +831,7 @@ function init() {
   };
 
   mozFMRadio.onantennaavailablechange = function onAntennaChange() {
-    updateAntennaUI();
+    updateWarningModeUI();
     if (mozFMRadio.antennaAvailable) {
       // If the FM radio is enabled or enabling when the antenna is unplugged,
       // turn the FM radio on again.
@@ -798,20 +847,22 @@ function init() {
   };
 
   // Disable the power button and the fav list when the airplane mode is on.
-  updateAirplaneModeUI();
+  updateWarningModeUI();
 
   AirplaneModeHelper.addEventListener('statechange', function(status) {
     airplaneModeEnabled = status === 'enabled';
-    updateAirplaneModeUI();
+    updateWarningModeUI();
   });
 
+  // Load the fav list and enable the FM radio if an antenna is available.
   historyList.init(function hl_ready() {
     if (mozFMRadio.antennaAvailable) {
       // Enable FM immediately
-      if (historyList.last() && historyList.last().frequency)
+      if (historyList.last() && historyList.last().frequency) {
         enableFMRadio(historyList.last().frequency);
-      else
+      } else {
         enableFMRadio(mozFMRadio.frequencyLowerBound);
+      }
 
       favoritesList.init(updateFreqUI);
     } else {
@@ -819,21 +870,52 @@ function init() {
       // so the FM radio be enabled automatically
       // when the headset is plugged.
       window._previousFMRadioState = true;
-      updateAntennaUI();
+      updateWarningModeUI();
       favoritesList.init();
     }
     updatePowerUI();
+
+    // PERFORMANCE MARKER (5): fullyLoaded
+    // Designates that the app is *completely* loaded and all relevant
+    // "below-the-fold" content exists in the DOM, is marked visible,
+    // has its events bound and is ready for user interaction. All
+    // required startup background processing should be complete.
+    window.performance.mark('fullyLoaded');
   });
 }
 
-window.addEventListener('load', function(e) {
+document.l10n.ready.then(function() {
+  // PERFORMANCE MARKER (1): navigationLoaded
+  // Designates that the app's *core* chrome or navigation interface
+  // exists in the DOM and is marked as ready to be displayed.
+  window.performance.mark('navigationLoaded');
+
   AirplaneModeHelper.ready(function() {
     airplaneModeEnabled = AirplaneModeHelper.getStatus() == 'enabled';
     init();
+
+    // PERFORMANCE MARKER (2): navigationInteractive
+    // Designates that the app's *core* chrome or navigation interface
+    // has its events bound and is ready for user interaction.
+    window.performance.mark('navigationInteractive');
+
+    // PERFORMANCE MARKER (3): visuallyLoaded
+    // Designates that the app is visually loaded (e.g.: all of the
+    // "above-the-fold" content exists in the DOM and is marked as
+    // ready to be displayed).
+    window.performance.mark('visuallyLoaded');
+
+    // PERFORMANCE MARKER (4): contentInteractive
+    // Designates that the app has its events bound for the minimum
+    // set of functionality to allow the user to interact with the
+    // "above-the-fold" content.
+    window.performance.mark('contentInteractive');
   });
-}, false);
+});
+
 
 // Turn off radio immediately when window is unloaded.
 window.addEventListener('unload', function(e) {
   mozFMRadio.disable();
 }, false);
+

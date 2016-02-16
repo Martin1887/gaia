@@ -1,6 +1,7 @@
 'use strict';
 /* global contacts */
 /* global utils */
+/* global Matcher */
 
 (function() {
   var CHUNK_SIZE = 5;
@@ -22,6 +23,9 @@
     var mustFinish = false;
 
     var isOnLine = navigator.onLine;
+
+    // To count the number of merged duplicate contacts
+    var numMergedDuplicated = 0;
 
     window.addEventListener('online', onLineChanged);
     window.addEventListener('offline', onLineChanged);
@@ -97,6 +101,8 @@
     }
 
     this.start = function() {
+      numMergedDuplicated = 0;
+
       mustHold = false;
       holded = false;
       mustFinish = false;
@@ -129,6 +135,8 @@
     this.persist = function(contactData, successCb, errorCb) {
       var cbs = {
         onmatch: function(matches) {
+          numMergedDuplicated++;
+
           contacts.adaptAndMerge(this, matches, {
             success: successCb,
             error: errorCb
@@ -142,7 +150,7 @@
       };
 
       // Try to match and if so merge is performed
-      contacts.Matcher.match(contactData, 'passive', cbs);
+      Matcher.match(contactData, 'passive', cbs);
     };
 
     // This method might be overwritten
@@ -177,7 +185,7 @@
     function notifySuccess() {
       if (typeof self.onsuccess === 'function') {
         window.setTimeout(function do_success() {
-          self.onsuccess(numImported);
+          self.onsuccess(numImported, numMergedDuplicated);
         }, 0);
       }
     }

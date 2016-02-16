@@ -5,7 +5,7 @@
 import time
 from gaiatest import GaiaTestCase
 from gaiatest.apps.messages.app import Messages
-from gaiatest.apps.messages.regions.message_thread import MessageThread
+from gaiatest.apps.system.app import System
 
 
 class TestDialerFromMessage(GaiaTestCase):
@@ -22,14 +22,19 @@ class TestDialerFromMessage(GaiaTestCase):
         self.messages = Messages(self.marionette)
         self.messages.launch()
 
-        self.data_layer.send_sms(self.testvars['carrier']['phone_number'], _text_message_content)
+        self.data_layer.send_sms(self.environment.phone_numbers[0], _text_message_content)
         self.apps.switch_to_displayed_app()
 
         self.messages.wait_for_message_received(timeout=180)
 
+        # Sometimes tap is done on the notification instead of message header
+        self.marionette.switch_to_frame()
+        system = System(self.marionette)
+        system.wait_for_notification_toaster_not_displayed()
+
+        self.apps.switch_to_displayed_app()
         message_thread = self.messages.tap_first_received_message()
 
         # Check the phone number
-        message_thread.tap_header()
         keypad = message_thread.tap_call()
-        self.assertEquals(keypad.phone_number, self.testvars['carrier']['phone_number'])
+        self.assertEquals(keypad.phone_number, self.environment.phone_numbers[0])

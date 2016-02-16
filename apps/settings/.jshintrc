@@ -3,6 +3,9 @@
   "predef": [
     "define",
     "require",
-    "Settings"
+    "Settings",
+    "TextEncoder",
+    "Promise",
+    "console"
   ]
 }

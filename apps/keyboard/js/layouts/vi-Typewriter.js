@@ -5,11 +5,13 @@
 // This is a traditional Vietnamese typewriter layout.
 Keyboards['vi-Typewriter'] = {
   label: 'Vietnamese',
+  shortLabel: 'Vi',
   menuLabel: 'Tiếng Việt',
   imEngine: 'vietnamese',
   needsCandidatePanel: true,
   width: 10,
   types: ['text', 'url', 'email'],
+  lang: 'vi',
   alt: {
     'đ': 'z',
     'ư': 'f',

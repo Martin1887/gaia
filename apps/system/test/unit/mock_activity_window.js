@@ -6,7 +6,7 @@
   };
 
   var MockActivityWindow = function ActivityWindow(config) {
-    this.instanceID = 'ActivityWindow-' +
+    this.instanceID = 'mock-activity-' +
       MockActivityWindowHelper.mInstances.length;
     this.open = function() {};
     this.close = function() {};
@@ -26,7 +26,7 @@
     this.focus = function() {};
     this.blur = function() {};
     this.debug = function() {};
-    this.ensureFullRepaint = function() {};
+    this.waitForNextPaint = function() {};
     this.forward = function() {};
     this.canGoForward = function() {};
     this.canGoBack = function() {};

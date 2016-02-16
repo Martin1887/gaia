@@ -1,13 +1,11 @@
-/* -*- Mode: js; js-indent-level: 2; indent-tabs-mode: nil -*- */
-/* vim: set shiftwidth=2 tabstop=2 autoindent cindent expandtab: */
-
+/* global DsdsSettings, TelephonyItemsHandler, AirplaneModeHelper */
 'use strict';
 
 /**
  * Singleton object (base object) that handle listener and events on mozIcc
  * objects in order to handle telephony-related menu items in the root panel.
  */
-var TelephonySettingHelper = (function(window, document, undefined) {
+window.TelephonySettingHelper = (function() {
   var _iccManager;
   var _mobileConnections;
 
@@ -17,13 +15,14 @@ var TelephonySettingHelper = (function(window, document, undefined) {
    * Init function.
    */
   function tsh_init() {
-    _iccManager = window.navigator.mozIccManager;
-    _mobileConnections = window.navigator.mozMobileConnections;
-    if (!_mobileConnections || !_iccManager) {
-      return;
-    }
+    return new Promise(function(resolve, reject) {
+      _iccManager = window.navigator.mozIccManager;
+      _mobileConnections = window.navigator.mozMobileConnections;
 
-    navigator.mozL10n.once(function loadWhenIdle() {
+      if (!_mobileConnections || !_iccManager) {
+        return resolve();
+      }
+
       var idleObserver = {
         time: 3,
         onidle: function() {
@@ -42,11 +41,11 @@ var TelephonySettingHelper = (function(window, document, undefined) {
           _iccManager.addEventListener('iccdetected',
             function iccDetectedHandler(evt) {
               if (_mobileConnections[0].iccId &&
-                 (_mobileConnections[0].iccId === evt.iccId)) {
+                (_mobileConnections[0].iccId === evt.iccId)) {
                 TelephonyItemsHandler.handleItems();
                 tsh_addListeners();
               }
-          });
+            });
 
           _iccManager.addEventListener('iccundetected',
             function iccUndetectedHandler(evt) {
@@ -54,7 +53,9 @@ var TelephonySettingHelper = (function(window, document, undefined) {
                 _mobileConnections[0].removeEventListener('datachange',
                   TelephonyItemsHandler.handleItems);
               }
-          });
+            });
+
+          resolve();
         }
       };
       navigator.addIdleObserver(idleObserver);
@@ -81,4 +82,4 @@ var TelephonySettingHelper = (function(window, document, undefined) {
   return {
     init: tsh_init
   };
-})(this, document);
+})();

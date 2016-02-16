@@ -1,9 +1,12 @@
 Keyboards['fr-Dvorak-bepo'] = {
   label: 'French - Bépo',
+  shortLabel: 'Fr',
   menuLabel: 'Bépo',
   imEngine: 'latin',
-  types: ['text', 'url', 'email'],
+  types: ['text', 'url', 'email', 'password'],
   autoCorrectLanguage: 'fr',
+  autoCorrectPunctuation: false,
+  lang: 'fr',
   alt: {
     a: 'àâæáãäåā',
     c: 'çćč',
@@ -14,7 +17,7 @@ Keyboards['fr-Dvorak-bepo'] = {
     s: 'śšşß',
     S: 'ŚŠŞ',
     n: 'ńñň',
-    '.': ',?!-;:'
+    '.': ',?!-;:…'
   },
   keys: [
     [

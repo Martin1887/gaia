@@ -13,6 +13,7 @@ a::-moz-focus-inner {
 html {
   font-size: 10px;
   color: #000;
+  -moz-user-select: none;
 }
 
 body {
@@ -26,7 +27,7 @@ iframe {
   display: flex; /* Fix Bug 976665 */
 }
 
-[aria-hidden="true"] { display: none !important; }
+[hidden] { display: none !important; }
 
 input.error {
   background-color: rgba(219, 113, 95, 0.2) !important;
@@ -64,6 +65,26 @@ input.error {
   opacity: 0.0;
 }
 
+/* Hide/show tab panel when other views show up */
+
+#tabpanel {
+  transition: visibility var(--transition-duration);
+}
+
+#tabpanel.behind {
+  visibility: hidden;
+}
+
+/**
+ * 1. GaiaHeader will vertically align
+ *    display block elements
+ */
+
+gaia-header [data-icon]:before {
+  display: block; /* 1 */
+  color: var(--header-button-color, #000);
+}
+
 #fte_view.non-ready {
   pointer-events: none;
 }
@@ -73,7 +94,8 @@ input.error {
   background: #f4f4f4;
   transform: translate(0, 0);
   transition: transform 0.5s ease,
-              opacity 0.2s ease;
+              opacity 0.2s ease,
+              visibility 0.5s;
 }
 
 #balance-tab,
@@ -89,6 +111,7 @@ input.error {
   overflow-x: hidden;
   overflow-y: auto;
   position: absolute;
+  -moz-user-select: none;
   bottom: 0;
   top: 0;
   left: 0;
@@ -96,35 +119,41 @@ input.error {
 }
 
 /* VIEWPORTS */
-.view[data-viewport="behind"] {
+.view.behind {
   visibility: hidden;
 }
 
 .view[data-viewport="ethereal"] {
   pointer-events: none;
   opacity: 0;
+  visibility: hidden;
 }
 
 .view[data-viewport="bottom"] {
   transform: translateY(100%);
+  visibility: hidden;
 }
 
 .view[data-viewport="top"] {
   transform: translateY(-100%);
+  visibility: hidden;
 }
 
 .view[data-viewport="left"] {
   transform: translateX(-100%);
+  visibility: hidden;
 }
 
 .view[data-viewport="right"] {
   transform: translateX(100%);
+  visibility: hidden;
 }
 
 .view[data-viewport="inside"] {
   transform: scale(0.3);
   opacity: 0;
   pointer-events: none;
+  visibility: hidden;
 }
 
 #settings-view.view {
@@ -132,37 +161,19 @@ input.error {
 }
 
 /* BB HEADER ICONS */
-body[role="application"] section[role="region"] > header .icon.config {
+[icon="config"]:before {
   background-image: url(images/app/icons/config.png);
-  background-size: 3rem;
 }
-
-body[role="application"] section[role="region"] > header button {
-  text-shadow: none;
-  font-weight: normal;
-}
-
 
 /* BB BUTTONS ICONS */
 .buttons-list {
   list-style: none;
 }
 
-li button {
-  text-align: center;
-}
-
-li button.icon {
-  text-align: left;
-}
-
-li button:after {
-  top: calc(100% + 0.1rem);
-}
-
 .fake-select select {
   height: 100%;
   position: absolute;
+  -moz-user-select: none;
   top: 0;
   left: 0;
   opacity: 0;
@@ -201,3 +212,32 @@ section.content {
   margin-top: 1rem;
 }
 
+/* GRAPHS */
+section.graph {
+  position: relative;
+  height: 28.5rem;
+  flex: 1;
+}
+
+section.graph canvas {
+  position: absolute;
+  -moz-user-select: none;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* FADE */
+.fade {
+  opacity: 0;
+}
+
+.fade.in {
+  opacity: 1;
+  transition: opacity var(--transition-duration) linear;
+}
+
+.fade.out {
+  transition: opacity var(--transition-duration) linear;
+}

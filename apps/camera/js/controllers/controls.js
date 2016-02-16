@@ -2,10 +2,6 @@ define(function(require, exports, module) {
 'use strict';
 
 /**
- * TODO: Controllers should create views
- */
-
-/**
  * Dependencies
  */
 
@@ -26,14 +22,11 @@ module.exports.ControlsController = ControlsController;
  * @param {App} app
  */
 function ControlsController(app) {
-  debug('initializing');
   bindAll(this);
   this.app = app;
   this.activity = app.activity;
-  this.view = app.views.controls || new ControlsView();
-  this.app.views.controls = this.view;
+  this.createView();
   this.bindEvents();
-  this.configure();
   debug('initialized');
 }
 
@@ -43,59 +36,96 @@ function ControlsController(app) {
  * @private
  */
 ControlsController.prototype.bindEvents = function() {
-  this.app.settings.mode.on('change:selected', this.view.setter('mode'));
+  this.app.settings.mode.on('change:selected', this.view.setMode);
   this.app.settings.mode.on('change:options', this.configureMode);
 
   // App
   this.app.on('change:recording', this.onRecordingChange);
   this.app.on('camera:shutter', this.captureHighlightOff);
-  this.app.on('camera:busy', this.view.disable);
-  this.app.on('timer:started', this.onTimerStarted);
+  this.app.on('camera:willchange', this.onCameraWillChange);
+  this.app.on('camera:configured', this.onCameraConfigured);
   this.app.on('newthumbnail', this.onNewThumbnail);
-  this.app.on('timer:cleared', this.restore);
-  this.app.on('camera:ready', this.restore);
+  this.app.once('loaded', this.onceAppLoaded);
+  this.app.on('busy', this.onCameraBusy);
+  this.app.on('localized', this.view.localize);
 
   // View
+  this.view.on('modechanged', this.onViewModeChanged);
   this.view.on('click:thumbnail', this.app.firer('preview'));
-  this.view.on('click:switch', this.onSwitchButtonClick);
   this.view.on('click:cancel', this.onCancelButtonClick);
   this.view.on('click:capture', this.onCaptureClick);
+
+  // Timer
+  this.app.on('countdown:started', this.onCountdownStarted);
+  this.app.on('countdown:ended', this.onCountdownStopped);
+
+  // Settings
+  this.app.on('settings:opened', this.onSettingsOpened);
+  this.app.on('settings:closed', this.onSettingsClosed);
+
+  // Preview gallery
+  this.app.on('previewgallery:opened', this.view.hide);
+  this.app.on('previewgallery:closed', this.view.show);
 
   debug('events bound');
 };
 
 /**
- * Initial configuration.
+ * Create and configure the view.
  *
  * @private
  */
-ControlsController.prototype.configure = function() {
+ControlsController.prototype.createView = function() {
   var initialMode = this.app.settings.mode.selected('key');
-  var isCancellable = !!this.app.activity.pick;
+  var cancellable = !!this.app.activity.pick;
+
+  // Create the view (test hook)
+  this.view = this.app.views.controls || new ControlsView();
 
   // The gallery button should not
   // be shown if an activity is pending
   // or the application is in 'secure mode'.
-  this.view.set('cancel', isCancellable);
-  this.view.set('mode', initialMode);
+  this.view.set('cancel', cancellable);
+  this.view.setMode(initialMode);
 
   // Disable view until camera
   // 'ready' enables it.
-  this.view.set('faded');
   this.view.disable();
-
-  this.configureMode();
 
   // Put it in the DOM
   this.view.appendTo(this.app.el);
 
-  debug('cancelable: %s', isCancellable);
+  debug('cancelable: %s', cancellable);
   debug('mode: %s', initialMode);
 };
 
+/**
+ * Disables the switch if there is
+ * only one modes available.
+ *
+ * This is only the case if an activity
+ * indicated it only supports one mode,
+ * just 'picture' or 'video'.
+ *
+ * @private
+ */
 ControlsController.prototype.configureMode = function() {
-  var isSwitchable = this.app.settings.mode.get('options').length > 1;
-  this.view.set('switchable', isSwitchable);
+  var switchable = this.app.settings.mode.get('options').length > 1;
+  if (!switchable) { this.view.disable('switch'); }
+};
+
+/**
+ * Once the app is loaded, we can enable
+ * the controls. We also bind a listener
+ * that enabled the controls whenever
+ * the camera becomes 'ready' from
+ * hereon after.
+ *
+ * @private
+ */
+ControlsController.prototype.onceAppLoaded = function() {
+  this.app.on('ready', this.restore);
+  this.view.enable();
 };
 
 /**
@@ -116,6 +146,21 @@ ControlsController.prototype.onCaptureClick = function() {
 };
 
 /**
+ * Prevent the mode switch from being changed
+ * by the user when we are in the process of
+ * configuring the camera.
+ *
+ * @private
+ */
+ControlsController.prototype.onCameraWillChange = function() {
+  this.view.suspendModeSwitch(true);
+};
+
+ControlsController.prototype.onCameraConfigured = function() {
+  this.view.suspendModeSwitch(false);
+};
+
+/**
  * Set the recording attribute on
  * the view to allow it to style
  * accordingly.
@@ -126,6 +171,8 @@ ControlsController.prototype.onCaptureClick = function() {
 ControlsController.prototype.onRecordingChange = function(recording) {
   this.view.set('recording', recording);
   if (!recording) { this.onRecordingEnd(); }
+  // Update capture button label when recording changes.
+  this.view.setCaptureLabel(recording);
 };
 
 /**
@@ -155,13 +202,48 @@ ControlsController.prototype.onNewThumbnail = function(thumbnailBlob) {
 
 /**
  * Forces the capture button to
- * look pressed while the timer is
- * counting down and disables buttons.
+ * look pressed while the countdown is
+ * counting down and hides controls.
  *
  * @private
  */
-ControlsController.prototype.onTimerStarted = function() {
+ControlsController.prototype.onCountdownStarted = function() {
   this.captureHighlightOn();
+  this.view.set('countdown', 'active');
+};
+
+/**
+ * Forces the capture button to
+ * look unpressed when the countdown
+ * stops and shows controls.
+ *
+ * @private
+ */
+ControlsController.prototype.onCountdownStopped = function() {
+  this.captureHighlightOff();
+  this.view.set('countdown', 'inactive');
+};
+
+/**
+ * Make controls invisible to the screen reader since they are behind settings
+ * overlay.
+ *
+ * @private
+ */
+ControlsController.prototype.onSettingsOpened = function() {
+  this.view.setScreenReaderVisible(false);
+};
+
+/**
+ * Make controls visible to the screen reader again when settings are closed.
+ *
+ * @private
+ */
+ControlsController.prototype.onSettingsClosed = function() {
+  this.view.setScreenReaderVisible(true);
+};
+
+ControlsController.prototype.onCameraBusy = function() {
   this.view.disable();
 };
 
@@ -172,8 +254,8 @@ ControlsController.prototype.onTimerStarted = function() {
  * @private
  */
 ControlsController.prototype.restore = function() {
+  debug('restore');
   this.captureHighlightOff();
-  this.view.unset('faded');
   this.view.enable();
 };
 
@@ -198,16 +280,19 @@ ControlsController.prototype.captureHighlightOff = function() {
 };
 
 /**
- * Switch to the next capture
- * mode: 'picture' or 'video'.
+ * Switch to the next capture mode:
+ * 'picture' or 'video', when the
+ * mode is changed via the view.
+ *
+ * Them mode can be changed by either
+ * tapping or swiping the mode switch.
  *
  * @private
  */
-ControlsController.prototype.onSwitchButtonClick = function() {
-  this.view.disable();
+ControlsController.prototype.onViewModeChanged = function() {
+  debug('view mode changed');
   this.app.settings.mode.next();
 };
-
 
 ControlsController.prototype.onCancelButtonClick = function() {
   this.app.emit('activitycanceled');

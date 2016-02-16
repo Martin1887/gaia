@@ -18,7 +18,7 @@ module.exports = LanguagePanel;
 LanguagePanel.Selectors = {
   'languagePanel': '#languages',
   'body': 'body',
-  'back': 'a[href="#root"]',
+  'header': 'gaia-header',
   'languageChangeSelect': '#languages select[name="language.current"]',
   'languageLabel': 'p[data-l10n-id="language"]',
   'languageRegionDateLabel': '#region-date'
@@ -27,25 +27,38 @@ LanguagePanel.Selectors = {
 LanguagePanel.prototype = {
   __proto__: Base.prototype,
 
-  // XXX it's weird that when fetching values out of the select/option
-  // we would get strange '\u202a' and '\u202c' characters. In this way,
-  // we have to add these characters to check ! We can remove this after
-  // this problem got fixed.
+  // The \u202a, \u202b and \u202c are special Unicode formatting codes which
+  // force the direction of the text between them.  They are added by
+  // LanguageList.wrapBidi to ensure proper display of all language names.
   _languageMap: {
     english: {
       label: 'Language',
-      optionText: '\u202aEnglish (US)\u202c',
-      dayRules: /monday|tuesday|wednesday|thursday|friday|saturday|sunday/i
+      desc: '\u202aEnglish (US)\u202c',
+      dayRules: /Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday/
     },
-    traditionalChinese: {
-      label: '語言',
-      optionText: '\u202a正體中文\u202c',
-      dayRules: /一|二|三|四|五|六|日/i
+    accented: {
+      label: 'Ŀȧȧƞɠŭŭȧȧɠḗḗ',
+      desc: '\u202aƤȧȧƈķȧȧɠḗḗḓ Ȧȧƈƈḗḗƞŧḗḗḓ\u202c',
+      dayRules: new RegExp(
+        'lundi|' +
+        'mardi|' +
+        'mercredi|' +
+        'jeudi|' +
+        'vendredi|' +
+        'samedi|' +
+        'dimanche')
     },
-    french: {
-      label: 'Langue',
-      optionText: '\u202aFrançais\u202c',
-      dayRules: /lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche/i
+    bidi: {
+      label: '\u202e˥ɐuƃnɐƃǝ\u202c',
+      desc: '\u202b\u202eԀɐɔʞɐƃǝp\u202c \u202eԐıpı\u202c\u202c',
+      dayRules: new RegExp(
+        'الاثنين|' +
+        'الثلاثاء|' +
+        'الأربعاء|' +
+        'الخميس|' +
+        'الجمعة|' +
+        'السبت|' +
+        'الأحد')
     }
   },
 
@@ -54,7 +67,6 @@ LanguagePanel.prototype = {
   },
 
   get currentLanguageFromMozSettings() {
-    // ar, en-US, fr, zh-TW for example
     return this.client.settings.get('language.current');
   },
 
@@ -80,7 +92,7 @@ LanguagePanel.prototype = {
     if (this._languageMap[value]) {
       var oldLanguage = this.currentLanguage;
       this.tapSelectOption('languageChangeSelect',
-        this._languageMap[value].optionText);
+        this._languageMap[value].desc);
 
       this.client.waitFor(function() {
         var newLanguage = this.currentLanguage;
@@ -107,12 +119,15 @@ LanguagePanel.prototype = {
 
   back: function() {
     var parentSection = this.waitForElement('languagePanel');
-    this.findElement('back').tap();
-
     var bodyWidth = this.findElement('body').size().width;
+
+    this.client.switchToShadowRoot(this.findElement('header'));
+    this.client.findElement('[action="back"] button').tap();
+    this.client.switchToShadowRoot();
+
     this.client.waitFor(function() {
       var loc = parentSection.location();
-      return loc.x >= bodyWidth;
+      return Math.abs(loc.x) >= bodyWidth;
     });
   }
 

@@ -1,5 +1,5 @@
 'use strict';
-/* global KeyEvent */
+/* global KeyEvent, mozIntl, IntlHelper */
 define(function(require) {
 var Alarm = require('alarm');
 var ClockView = require('panels/alarm/clock_view');
@@ -7,16 +7,18 @@ var AudioManager = require('audio_manager');
 var FormButton = require('form_button');
 var Sounds = require('sounds');
 var Utils = require('utils');
-var mozL10n = require('l10n');
 var Panel = require('panel');
-var _ = mozL10n.get;
 var html = require('text!panels/alarm_edit/panel.html');
 var constants = require('constants');
+
+IntlHelper.define('weekday-long', 'datetime', {
+  weekday: 'long'
+});
 
 var AlarmEdit = function() {
   Panel.apply(this, arguments);
   this.element.innerHTML = html;
-  mozL10n.translate(this.element);
+
   var handleDomEvent = this.handleDomEvent.bind(this);
 
   this.element.addEventListener('panel-visibilitychange',
@@ -34,9 +36,13 @@ var AlarmEdit = function() {
     volume: this.element.querySelector('#alarm-volume-input')
   };
 
+  this.headers = {
+    header: this.element.querySelector('#alarm-header')
+  };
+
   this.buttons = {};
   [
-    'delete', 'close', 'done'
+    'delete', 'done'
   ].forEach(function(id) {
     this.buttons[id] = this.element.querySelector('#alarm-' + id);
   }, this);
@@ -52,15 +58,12 @@ var AlarmEdit = function() {
       var splitValue = value.split(':');
       date.setHours(splitValue[0]);
       date.setMinutes(splitValue[1]);
-      return Utils.getLocalizedTimeText(date);
+      return { raw: Utils.getLocalizedTimeText(date) };
     }.bind(this)
   });
   this.buttons.repeat = new FormButton(this.selects.repeat, {
-    selectOptions: constants.DAYS,
     id: 'repeat-menu',
-    formatLabel: function(daysOfWeek) {
-      return this.alarm.summarizeDaysOfWeek(daysOfWeek);
-    }.bind(this)
+    formatLabel: Utils.summarizeDaysOfWeek
   });
   this.buttons.sound = new FormButton(this.selects.sound, {
     id: 'sound-menu',
@@ -69,12 +72,16 @@ var AlarmEdit = function() {
   this.buttons.snooze = new FormButton(this.selects.snooze, {
     id: 'snooze-menu',
     formatLabel: function(snooze) {
-      return _('nMinutes', {n: snooze});
+      var numFormatter = IntlHelper.get('digit-nopadding');
+      return { 
+        id: 'alarmMinutes',
+        args: {minutes: numFormatter.format(parseInt(snooze))} 
+      };
     }
   });
 
   this.scrollList = this.element.querySelector('#edit-alarm');
-  this.sundayListItem = this.element.querySelector('#repeat-select-sunday');
+  this.repeatSelect = this.element.querySelector('#repeat-select');
 
   // When the system pops up the ValueSelector, it inadvertently
   // messes with the scrollTop of the current panel. This is a
@@ -84,14 +91,12 @@ var AlarmEdit = function() {
     this.element.scrollTop = 0;
   }.bind(this));
 
-  mozL10n.translate(this.element);
-  // When the language changes, the value of 'weekStartsOnMonday'
-  // might change. Since that's more than a simple text string, we
-  // can't just use mozL10n.translate().
-  window.addEventListener('localized', this.updateL10n.bind(this));
+  // When the language changes, the value of 'firstDayOfTheWeek'
+  // might change and we need to update translations of weekdays
   this.updateL10n();
+  document.addEventListener('DOMRetranslated', this.updateL10n.bind(this));
 
-  this.buttons.close.addEventListener('click', handleDomEvent);
+  this.headers.header.addEventListener('action', handleDomEvent);
   this.buttons.done.addEventListener('click', handleDomEvent);
   this.selects.sound.addEventListener('change', handleDomEvent);
   this.selects.sound.addEventListener('blur', handleDomEvent);
@@ -100,11 +105,15 @@ var AlarmEdit = function() {
   this.inputs.name.addEventListener('keypress', this.handleNameInput);
   this.inputs.volume.addEventListener('change', handleDomEvent);
 
-  // If the phone locks during preview, pause the sound.
+  this.isSaving = false;
+
+  // If the phone locks during preview, or an alarm fires, pause the sound.
   // TODO: When this is no longer a singleton, unbind the listener.
   window.addEventListener('visibilitychange', function() {
     if (document.hidden) {
       this.stopPreviewSound();
+      // Ensure the keyboard goes away.
+      document.activeElement.blur();
     }
   }.bind(this));
 };
@@ -128,17 +137,39 @@ Utils.extend(AlarmEdit.prototype, {
   },
 
   updateL10n: function() {
-    // Move the weekdays around to properly account for whether the
-    // week starts on Sunday or Monday.
-    var weekStartsOnMonday = parseInt(_('weekStartsOnMonday'), 10);
-    var parent = this.sundayListItem.parentElement;
-    if (weekStartsOnMonday) {
-      // Sunday gets moved to the end.
-      parent.appendChild(this.sundayListItem);
-    } else {
-      // Sunday goes first.
-      parent.insertBefore(this.sundayListItem, parent.firstChild);
-    }
+    // Move the weekdays around to properly account for the firstDay.
+    mozIntl.calendarInfo('firstDayOfTheWeek').then(firstDay => {
+      var formatter = IntlHelper.get('weekday-long');
+
+      var options = [...this.repeatSelect.querySelectorAll('option')];
+      var optionsByDay = {};
+
+      options.forEach(option => {
+        var value = option.getAttribute('value');
+        optionsByDay[value] = option;
+        this.repeatSelect.removeChild(option);
+      });
+
+      for (var i = 0; i < 7; i++) {
+        var day = (i + firstDay) % options.length;
+        var option = optionsByDay[day.toString()];
+
+        var dayDate = new Date(constants.KNOWN_SUNDAY); 
+        dayDate.setDate(constants.KNOWN_SUNDAY.getDate() + firstDay + i);
+
+        option.textContent = formatter.format(dayDate);
+        this.repeatSelect.appendChild(option);
+      }
+    });
+
+    var numFormatter = IntlHelper.get('digit-nopadding');
+    var elements = [...document.querySelectorAll('#snooze-select > option')];
+
+    elements.forEach(element => {
+      var value = parseInt(element.value);
+      element.setAttribute('data-l10n-args',
+        JSON.stringify({minutes: numFormatter.format(value)}));
+    });
   },
 
   // The name `handleEvent` is already defined by the Panel class, so this
@@ -151,7 +182,7 @@ Utils.extend(AlarmEdit.prototype, {
     }
 
     switch (input) {
-      case this.buttons.close:
+      case this.headers.header:
         ClockView.show();
         break;
       case this.buttons.done:
@@ -205,7 +236,10 @@ Utils.extend(AlarmEdit.prototype, {
     // to be "undefined" rather than "".
     this.element.dataset.id = this.alarm.id || '';
     this.inputs.name.value = this.alarm.label;
-    this.inputs.volume.value = AudioManager.getAlarmVolume();
+
+    AudioManager.requestAlarmVolume().then(function(volume) {
+      this.inputs.volume.value = AudioManager.getAlarmVolume();
+    }.bind(this));
 
     // Init time, repeat, sound, snooze selection menu.
     this.initTimeSelect();
@@ -213,6 +247,16 @@ Utils.extend(AlarmEdit.prototype, {
     this.initSoundSelect();
     this.initSnoozeSelect();
     this.checkboxes.vibrate.checked = this.alarm.vibrate;
+
+    // Update the labels for any FormButton dropdowns that have
+    // changed, because setting <select>.value does not fire a change
+    // event.
+    for (var key in this.buttons) {
+      var button = this.buttons[key];
+      if (button instanceof FormButton) {
+        button.refresh();
+      }
+    }
 
     location.hash = '#alarm-edit-panel';
   },
@@ -240,7 +284,7 @@ Utils.extend(AlarmEdit.prototype, {
   },
 
   getSoundSelect: function aev_getSoundSelect() {
-    return this.buttons.sound.value;
+    return this.buttons.sound.value !== '0' && this.buttons.sound.value;
   },
 
   previewSound: function aev_previewSound() {
@@ -269,29 +313,35 @@ Utils.extend(AlarmEdit.prototype, {
   },
 
   save: function aev_save(callback) {
+    if (this.isSaving) {
+      // Ignore double-taps on the "Save" button. When this view gets
+      // refactored, we should opt for a more coherent way of managing
+      // UI state to avoid glitches like this.
+      return;
+    }
+    var alarm = this.alarm;
+
     if (this.element.dataset.id && this.element.dataset.id !== '') {
-      this.alarm.id = parseInt(this.element.dataset.id, 10);
+      alarm.id = parseInt(this.element.dataset.id, 10);
     } else {
-      delete this.alarm.id;
+      delete alarm.id;
     }
 
-    this.alarm.label = this.inputs.name.value;
+    alarm.label = this.inputs.name.value;
 
     var time = this.getTimeSelect();
-    this.alarm.time = [time.hour, time.minute];
-    this.alarm.repeat = this.buttons.repeat.value;
-    this.alarm.sound = this.getSoundSelect();
-    this.alarm.vibrate = this.checkboxes.vibrate.checked;
-    this.alarm.snooze = parseInt(this.getSnoozeSelect(), 10);
+    alarm.hour = time.hour;
+    alarm.minute = time.minute;
+    alarm.repeat = this.buttons.repeat.value;
+    alarm.sound = this.getSoundSelect();
+    alarm.vibrate = this.checkboxes.vibrate.checked;
+    alarm.snooze = parseInt(this.getSnoozeSelect(), 10);
     AudioManager.setAlarmVolume(this.getAlarmVolumeValue());
 
-    this.alarm.cancel();
+    this.isSaving = true;
 
-    this.alarm.setEnabled(true, function(err, alarm) {
-      if (err) {
-        callback && callback(err, alarm);
-        return;
-      }
+    alarm.schedule('normal').then(() => {
+      this.isSaving = false;
       window.dispatchEvent(new CustomEvent('alarm-changed', {
         detail: { alarm: alarm, showBanner: true }
       }));
@@ -305,7 +355,7 @@ Utils.extend(AlarmEdit.prototype, {
       return;
     }
 
-    this.alarm.delete(callback);
+    this.alarm.delete().then(callback);
   }
 
 });

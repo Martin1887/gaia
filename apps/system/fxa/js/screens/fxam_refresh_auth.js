@@ -4,12 +4,11 @@
 /* global FxaModuleStates, FxaModuleUI, FxaModule, FxModuleServerRequest,
    FxaModuleOverlay */
 /* exported FxaModuleRefreshAuth */
+/* jshint unused:false */
 
 'use strict';
 
 var FxaModuleRefreshAuth = (function() {
-
-  var _ = null;
 
   function _isPasswordValid(passwordEl) {
     var passwordValue = passwordEl.value;
@@ -36,9 +35,11 @@ var FxaModuleRefreshAuth = (function() {
     FxModuleServerRequest.requestPasswordReset(
       email,
       function onSuccess(response) {
-        done(response.success);
+        done();
       },
-      this.showErrorResponse
+      function onError(response) {
+        this._showCouldNotResetPassword();
+      }.bind(this)
     );
   }
 
@@ -51,17 +52,12 @@ var FxaModuleRefreshAuth = (function() {
 
   function _forgotPassword() {
     /*jshint validthis:true */
-    FxaModuleOverlay.show(_('fxa-requesting-password-reset'));
+    FxaModuleOverlay.show('fxa-requesting-password-reset');
     _requestPasswordReset.call(
       this,
       this.email,
-      function(isRequestHandled) {
+      function() {
         FxaModuleOverlay.hide();
-        if (!isRequestHandled) {
-          _showCouldNotResetPassword.call(this);
-          return;
-        }
-
         FxaModuleStates.setState(FxaModuleStates.PASSWORD_RESET_SUCCESS);
       }
     );
@@ -71,13 +67,11 @@ var FxaModuleRefreshAuth = (function() {
   var Module = Object.create(FxaModule);
   Module.init = function init(options) {
     if (!this.initialized) {
-      _ = navigator.mozL10n.get;
       // Cache DOM elements.
       this.importElements(
         'fxa-pw-input-refresh',
         'fxa-show-pw-refresh',
-        'fxa-forgot-password-refresh',
-        'fxa-user-email-refresh'
+        'fxa-forgot-password-refresh'
       );
 
       this.fxaPwInputRefresh.addEventListener('input', (function(event) {
@@ -87,7 +81,6 @@ var FxaModuleRefreshAuth = (function() {
       this.fxaShowPwRefresh.addEventListener('change', (function() {
         var passwordFieldType = !!this.fxaShowPwRefresh.checked ? 'text' :
                                                                   'password';
-        this.fxaPwInputRefresh.setAttribute('type', passwordFieldType);
       }).bind(this), false);
 
       this.fxaForgotPasswordRefresh.addEventListener('click',
@@ -101,7 +94,6 @@ var FxaModuleRefreshAuth = (function() {
       return;
     }
 
-    this.fxaUserEmailRefresh.textContent = options.email;
     this.email = options.email;
 
     _cleanForm(this.fxaPwInputRefresh, this.fxaShowPwRefresh);
@@ -109,7 +101,7 @@ var FxaModuleRefreshAuth = (function() {
   };
 
   Module.onDone = function onDone(callback) {
-    FxaModuleOverlay.show(_('fxa-authenticating'));
+    FxaModuleOverlay.show('fxa-connecting');
 
     FxModuleServerRequest.signIn(
       this.email,

@@ -1,379 +1,358 @@
-/*global Calendar */
-(function(window) {
-  'use strict';
+define(function(require, exports, module) {
+'use strict';
 
-  var CALENDAR_PREFIX = 'calendar-';
+var CalendarTemplate = require('templates/calendar');
+var View = require('view');
+var co = require('ext/co');
+var core = require('core');
+var debug = require('common/debug')('views/settings');
+var router = require('router');
 
-  var template = Calendar.Templates.Calendar;
-  var _super = Calendar.View.prototype;
+require('dom!settings');
 
-  function Settings(options) {
-    Calendar.View.apply(this, arguments);
+function Settings(options) {
+  View.apply(this, arguments);
 
-    this._hideSettings = this._hideSettings.bind(this);
-    this._onDrawerTransitionEnd = this._onDrawerTransitionEnd.bind(this);
-    this._updateTimeouts = Object.create(null);
+  this.calendarList = [];
+  this._hideSettings = this._hideSettings.bind(this);
+  this._onDrawerTransitionEnd = this._onDrawerTransitionEnd.bind(this);
 
-    this._observeUI();
-  }
+  this._observeUI();
+}
+module.exports = Settings;
 
-  Settings.prototype = {
-    __proto__: _super,
+Settings.prototype = {
+  __proto__: View.prototype,
 
-    waitBeforePersist: 600,
+  calendarList: null,
 
-    /**
-     * Local update is a flag
-     * used to indicate that the incoming
-     * update was made by this view and
-     * should not fire the _update method.
-     */
-    _localUpdate: false,
+  /**
+   * used internally to check if calendar and account data was loaded from db
+   * @type {Promise}
+   * @private
+   */
+  _load: null,
 
-    /**
-     * Name of the class that will be applied to the
-     * body element when sync is in progress.
-     */
-    selectors: {
-      element: '#settings',
-      calendars: '#settings .calendars',
-      calendarName: '.name',
-      toolbar: '#settings [role="toolbar"]',
-      backButton: '#settings .settings-back',
+  waitBeforePersist: 600,
 
-      // A dark semi-opaque layer that is used to "gray out" the view behind
-      // the element used for settings. Tapping on it will also close out
-      // the settings element, per ux desire.
-      shield: '#settings .settings-shield',
+  /**
+   * Local update is a flag
+   * used to indicate that the incoming
+   * update was made by this view and
+   * should not fire the _update method.
+   */
+  _localUpdate: false,
 
-      // This outer div is used to hide .settings-drawer via an
-      // overflow: hidden, so that the .settings-drawer can translateY
-      // animate downward and appear to come out from under the view
-      // header that is visible "behind" the element used for settings.
-      drawerContainer: '#settings .settings-drawer-container',
+  /**
+   * Name of the class that will be applied to the
+   * body element when sync is in progress.
+   */
+  selectors: {
+    element: '#settings',
+    calendars: '#settings .calendars',
+    calendarName: '.name',
+    toolbar: '#settings [role="tablist"]',
+    header: '#settings-header',
+    headerTitle: '#settings-header h1',
 
-      // Holds the actual visible drawer contents: list of calendars
-      // and bottom toolbar.
-      drawer: '#settings .settings-drawer',
+    // A dark semi-opaque layer that is used to "gray out" the view behind
+    // the element used for settings. Tapping on it will also close out
+    // the settings element, per ux desire.
+    shield: '#settings .settings-shield',
 
-      advancedSettingsButton: '#settings .settings',
-      syncButton: '#settings .sync'
-    },
+    // This outer div is used to hide .settings-drawer via an
+    // overflow: hidden, so that the .settings-drawer can translateY
+    // animate downward and appear to come out from under the view
+    // header that is visible "behind" the element used for settings.
+    drawerContainer: '#settings .settings-drawer-container',
 
-    get calendars() {
-      return this._findElement('calendars');
-    },
+    // Holds the actual visible drawer contents: list of calendars
+    // and bottom toolbar.
+    drawer: '#settings .settings-drawer',
 
-    get toolbar() {
-      return this._findElement('toolbar');
-    },
+    advancedSettingsButton: '#settings .settings',
+    syncButton: '#settings .sync',
+    syncProgress: '#settings .sync-progress',
 
-    get backButton() {
-      return this._findElement('backButton');
-    },
+    // A view that settings overlays. Still needs to be active/visible but
+    // hidden from the screen reader.
+    timeViews: '#time-views'
+  },
 
-    get shield() {
-      return this._findElement('shield');
-    },
+  get calendars() {
+    return this._findElement('calendars');
+  },
 
-    get drawerContainer() {
-      return this._findElement('drawerContainer');
-    },
+  get toolbar() {
+    return this._findElement('toolbar');
+  },
 
-    get drawer() {
-      return this._findElement('drawer');
-    },
+  get header() {
+    return this._findElement('header');
+  },
 
-    get advancedSettingsButton() {
-      return this._findElement('advancedSettingsButton');
-    },
+  get headerTitle() {
+    return this._findElement('headerTitle');
+  },
 
-    get syncButton() {
-      return this._findElement('syncButton');
-    },
+  get shield() {
+    return this._findElement('shield');
+  },
 
-    _observeUI: function() {
-      this.advancedSettingsButton.addEventListener('click', function(e) {
-        e.stopPropagation();
-        Calendar.App.router.show('/advanced-settings/');
-      });
+  get drawerContainer() {
+    return this._findElement('drawerContainer');
+  },
 
-      this.syncButton.addEventListener('click', this._onSyncClick.bind(this));
+  get drawer() {
+    return this._findElement('drawer');
+  },
 
-      this.calendars.addEventListener(
-        'change', this._onCalendarDisplayToggle.bind(this)
-      );
-    },
+  get advancedSettingsButton() {
+    return this._findElement('advancedSettingsButton');
+  },
 
-    _observeAccountStore: function() {
-      var store = this.app.store('Account');
-      var handler = this._updateSyncButton.bind(this);
+  get syncButton() {
+    return this._findElement('syncButton');
+  },
 
-      store.on('add', handler);
-      store.on('remove', handler);
-    },
+  get syncProgress() {
+    return this._findElement('syncProgress');
+  },
 
-    _observeCalendarStore: function() {
-      var store = this.app.store('Calendar');
-      var self = this;
+  get timeViews() {
+    return this._findElement('timeViews');
+  },
 
-      function handle(method) {
-        return function() {
-          self[method].apply(self, arguments);
-        };
-      }
+  _syncStartStatus: function () {
+    this.syncProgress.setAttribute('data-l10n-id', 'sync-progress-syncing');
+    this.syncProgress.classList.add('syncing');
+  },
 
-      // calendar store events
-      store.on('update', handle('_update'));
-      store.on('add', handle('_add'));
-      store.on('remove', handle('_remove'));
-    },
+  _syncCompleteStatus: function () {
+    this.syncProgress.setAttribute('data-l10n-id', 'sync-progress-complete');
+    this.syncProgress.classList.remove('syncing');
+  },
 
-    _persistCalendarDisplay: function(id, displayed) {
-      var store = this.app.store('Calendar');
-      var self = this;
+  _observeUI: function() {
+    this.advancedSettingsButton.addEventListener('click', function(e) {
+      e.stopPropagation();
+      router.show('/advanced-settings/');
+    });
 
-      // clear timeout id
-      delete this._updateTimeouts[id];
+    this.syncButton.addEventListener('click', this._onSyncClick.bind(this));
+    core.syncController.on('syncStart', this._syncStartStatus.bind(this));
+    core.syncController.on('syncComplete',
+      this._syncCompleteStatus.bind(this));
 
-      function persist(err, id, model) {
-        if (err) {
-          console.log('View.Setting cannot save calendar', err);
-          return;
-        }
+    this.calendars.addEventListener(
+      'change', this._onCalendarDisplayToggle.bind(this)
+    );
+  },
 
-        if (self.ondisplaypersist) {
-          self.ondisplaypersist(model);
-        }
-      }
+  _observeAccounts: function() {
+    var stream = core.bridge.observeAccounts();
+    stream.listen(this._updateSyncButton.bind(this));
+    return new Promise(resolve => stream.listen(resolve));
+  },
 
-      function fetch(err, calendar) {
-        if (err) {
-          console.log('View.Setting cannot fetch calendar', id);
-          return;
-        }
+  _observeCalendars: function() {
+    var stream = core.bridge.observeCalendars();
+    stream.listen(this._updateCalendars.bind(this));
+    return new Promise(resolve => stream.listen(resolve));
+  },
 
-        calendar.localDisplayed = displayed;
-        store.persist(calendar, persist);
-      }
+  _updateCalendars: function(records) {
+    this.calendarList = records.map(r => r.calendar);
+    this.render();
+  },
 
-      store.get(id, fetch);
-    },
+  _persistCalendarDisplay: co.wrap(function *(id, displayed) {
+    try {
+      var calendar = this.calendarList.find(c => String(c._id) === String(id));
+      // we "clone" the calendar otherwise the caching logic will affect the
+      // 'calendarVisibilityChange' event (we check if value changed this way)
+      calendar = Object.create(calendar);
+      calendar.localDisplayed = displayed;
+      yield core.bridge.updateCalendar(calendar);
+    } catch (err) {
+      console.error(`Can't save calendar display: ${err}`);
+    }
+  }),
 
-    _onCalendarDisplayToggle: function(e) {
-      var input = e.target;
-      var id = input.value;
+  _onCalendarDisplayToggle: function(e) {
+    var input = e.target;
+    this._persistCalendarDisplay(input.getAttribute('value'), !!input.checked);
+  },
 
-      if (this._updateTimeouts[id]) {
-        clearTimeout(this._updateTimeouts[id]);
-      }
+  _onSyncClick: function() {
+    // trigger the sync the syncStart/complete events
+    // will hide/show the button.
+    core.syncController.all();
+  },
 
-      this._updateTimeouts[id] = setTimeout(
-        this._persistCalendarDisplay.bind(this, id, !!input.checked),
-        this.waitBeforePersist
-      );
-    },
+  // Ajust size of drawer scroll area to fit size of calendars, within
+  // a min/max that is controlled by CSS. This has to be a manual
+  // calculation because UX wants the list of calendars to form-fit
+  // without a scrollbar, but enforce a minimum height and a maximum.
+  // The alternative to this approach is to size drawerContainer and
+  // drawer to be height 100%, and put the min/max height CSS on the
+  // .calendars. However, that means the translate animation is over
+  // a 100% height div, which ends up looking not so smooth on close
+  // of the animation, since the actual visible content is about half
+  // the size of that 100% and in the easing, zips by too quickly that
+  // it is harder to track, almost looks like just a harder visibility
+  // discontinuity.
+  _setCalendarContainerSize: function() {
+    var nodes = this.calendars.children;
+    var calendarsHeight = nodes[0] ?
+                          nodes[0].getBoundingClientRect().height *
+                          nodes.length : 0;
+    this.drawerContainer.style.height = (calendarsHeight +
+                                  this.toolbar.clientHeight) + 'px';
+  },
 
-    _onSyncClick: function() {
-      // trigger the sync the syncStart/complete events
-      // will hide/show the button.
-      this.app.syncController.all();
-    },
+  onrender: function() {
+    this._setCalendarContainerSize();
+    this._rendered = true;
+    this._animateDrawer();
+  },
 
-    _update: function(id, model) {
-      var el = document.getElementById(this.idForModel(CALENDAR_PREFIX, id));
-      var check = el.querySelector('input[type="checkbox"]');
+  render: function() {
+    debug('Will render settings view.');
+    this.calendars.innerHTML = '';
 
-      if (el.classList.contains(Calendar.ERROR) && !model.error) {
-        el.classList.remove(Calendar.ERROR);
-      }
+    debug('Inject calendars into settings list.');
+    this.calendarList.forEach(calendar => {
+      debug('Will add calendar to settings view', calendar.id, calendar);
+      var html = CalendarTemplate.item.render(calendar);
+      this.calendars.insertAdjacentHTML('beforeend', html);
 
-      if (model.error) {
-        el.classList.add(Calendar.ERROR);
-      }
-
-      el.querySelector(this.selectors.calendarName).textContent = model.name;
-      check.checked = model.localDisplayed;
-    },
-
-    _add: function(id, object) {
-      var idx = this.calendars.children.length;
-
-      var html = template.item.render(object);
-      this.calendars.insertAdjacentHTML(
-        'beforeend',
-        html
-      );
-
-      if (object.error) {
-        var el = this.calendars.children[
-          idx
-        ];
-
-        el.classList.add(Calendar.ERROR);
+      if (calendar.error) {
+        console.error('Views.Settings calendar error:', calendar.error);
+        var idx = this.calendars.children.length - 1;
+        var el = this.calendars.children[idx];
+        el.classList.add('error');
       }
 
       this._setCalendarContainerSize();
-    },
+    });
 
-    _remove: function(id) {
-      var el = document.getElementById(this.idForModel(CALENDAR_PREFIX, id));
-      if (el) {
-        el.parentNode.removeChild(el);
-      }
+    this.onrender && this.onrender();
+  },
 
-      this._setCalendarContainerSize();
-    },
+  _updateSyncButton: function(list) {
+    var canSync = list.some(o => o.provider.canSync);
+    this.toolbar.classList.toggle('noaccount', !canSync);
+  },
 
-    // Ajust size of drawer scroll area to fit size of calendars, within
-    // a min/max that is controlled by CSS. This has to be a manual
-    // calculation because UX wants the list of calendars to form-fit
-    // without a scrollbar, but enforce a minimum height and a maximum.
-    // The alternative to this approach is to size drawerContainer and
-    // drawer to be height 100%, and put the min/max height CSS on the
-    // .calendars. However, that means the translate animation is over
-    // a 100% height div, which ends up looking not so smooth on close
-    // of the animation, since the actual visible content is about half
-    // the size of that 100% and in the easing, zips by too quickly that
-    // it is harder to track, almost looks like just a harder visibility
-    // discontinuity.
-    _setCalendarContainerSize: function() {
-      var nodes = this.calendars.children;
-      var calendarsHeight = nodes[0] ?
-                            nodes[0].getBoundingClientRect().height *
-                            nodes.length : 0;
-      this.drawerContainer.style.height = (calendarsHeight +
-                                    this.toolbar.clientHeight) + 'px';
-    },
+  _onDrawerTransitionEnd: function(e) {
+    this._updateDrawerAnimState('done');
+    if (!document.body.classList.contains('settings-drawer-visible')) {
+      router.resetState();
+    }
+  },
 
-    onrender: function() {
-      this._setCalendarContainerSize();
-      this._rendered = true;
-      this._animateDrawer();
-    },
+  // Update a state visible in the DOM for when animation is taking place.
+  // This is mostly useful for a test hook to know when the animation is
+  // done.
+  _updateDrawerAnimState: function(state) {
+    this.drawer.dataset.animstate = state;
+  },
 
-    render: function() {
-      var store = this.app.store('Calendar');
+  _hideSettings: function() {
+    this._updateDrawerAnimState('animating');
+    document.body.classList.remove('settings-drawer-visible');
+  },
 
-      store.all(function(err, calendars) {
-        if (err) {
-          console.log(
-            'Error fetching calendars in View.Settings'
-          );
-          return;
-        }
-
-        // clear list of calendars
-        this.calendars.innerHTML = '';
-
-        // append each calendar
-        var id;
-        for (id in calendars) {
-          this._add(id, calendars[id]);
-        }
-
-        // observe new calendar events
-        this._observeCalendarStore();
-
-        // observe accounts to hide sync button
-        this._observeAccountStore();
-
-        // show/hide sync button
-        this._updateSyncButton(function() {
-          if (this.onrender) {
-            this.onrender();
-          }
-        }.bind(this));
-      }.bind(this));
-    },
-
-    _updateSyncButton: function(callback) {
-      var store = this.app.store('Account');
-      var element = this.toolbar;
-      var self = this;
-
-      store.syncableAccounts(function(err, list) {
-        if (err) {
-          return callback(err);
-        }
-
-        element.classList.toggle('noaccount', list.length === 0);
-
-        // test only event
-        self.onupdatesyncbutton && self.onupdatesyncbutton();
-        typeof callback === 'function' ? callback() : '';
-      });
-    },
-
-    _onDrawerTransitionEnd: function(e) {
-      this._updateDrawerAnimState('done');
-      if (!document.body.classList.contains('settings-drawer-visible')) {
-        this.app.resetState();
-      }
-    },
-
-    // Update a state visible in the DOM for when animation is taking place.
-    // This is mostly useful for a test hook to know when the animation is
-    // done.
-    _updateDrawerAnimState: function(state) {
-      this.drawer.dataset.animstate = state;
-    },
-
-    _hideSettings: function() {
-      this._updateDrawerAnimState('animating');
-      document.body.classList.remove('settings-drawer-visible');
-    },
-
-    _animateDrawer: function() {
-      // Wait for both _rendered and _activated before triggering
-      // the animation, so that it is smooth, without jank due to
-      // changes in style/layout from activating or rendering.
-      // Also, set the style on the body, since other views will also
-      // have items animate based on the class. For instance, the +
-      // to add an event in the view-selector views fades out.
-      if (this._rendered && this._activated &&
-          !document.body.classList.contains('settings-drawer-visible')) {
-        this._updateDrawerAnimState('animating');
-        document.body.classList.add('settings-drawer-visible');
-      }
-    },
-
-    onactive: function() {
-      _super.onactive.apply(this, arguments);
-
-      // onactive can be called more times than oninactive, since
-      // settings can overlay over and not trigger an inactive state,
-      // so only bind these listeners and do the drawer animation once.
-      if (!document.body.classList.contains('settings-drawer-visible')) {
-        this._activated = true;
-        this._animateDrawer();
-
-        // Both the transparent back and clicking on the semi-opaque
-        // shield should close the settings since visually those sections
-        // do not look like part of the drawer UI, and UX wants to give
-        // the user a few options to close the drawer since there is no
-        // explicit close button.
-        this.backButton.addEventListener('click', this._hideSettings);
-        this.shield.addEventListener('click', this._hideSettings);
-
-        this.drawer.addEventListener('transitionend',
-                                     this._onDrawerTransitionEnd);
-      }
-    },
-
-    oninactive: function() {
-      _super.oninactive.apply(this, arguments);
-      this._activated = false;
-      this.backButton.removeEventListener('click', this._hideSettings);
-      this.shield.removeEventListener('click', this._hideSettings);
-      this.drawer.removeEventListener('transitionend',
-                                   this._onDrawerTransitionEnd);
+  _animateDrawer: function() {
+    // Wait for both _rendered and _activated before triggering
+    // the animation, so that it is smooth, without jank due to
+    // changes in style/layout from activating or rendering.
+    // Also, set the style on the body, since other views will also
+    // have items animate based on the class. For instance, the +
+    // to add an event in the view-selector views fades out.
+    if (!this._rendered) {
+      return debug('Skip animation since not yet rendered.');
     }
 
-  };
+    if (!this._activated) {
+      return debug('Skip animation since not yet activated.');
+    }
 
-  Settings.prototype.onfirstseen = Settings.prototype.render;
-  Calendar.ns('Views').Settings = Settings;
+    var classList = document.body.classList;
+    if (classList.contains('settings-drawer-visible')) {
+      return debug('Skip animation since drawer already visible?');
+    }
 
-}(this));
+    this._updateDrawerAnimState('animating');
+    classList.add('settings-drawer-visible');
+  },
 
+  _loadBaseData: function() {
+    if (!this._load) {
+      // make sure we only observe data once and wait until it's ready before
+      // showing the animation
+      this._load = Promise.all([
+        this._observeCalendars(),
+        this._observeAccounts()
+      ]);
+    }
+
+    return this._load;
+  },
+
+  onactive: co.wrap(function *() {
+    debug('Will do settings animation.');
+
+    try {
+      yield this._loadBaseData();
+    } catch(err) {
+      console.error('Error fetching calendars in View.Settings', err);
+      return;
+    }
+
+    // View#onactive will call Views.Settings#render the first time.
+    View.prototype.onactive.apply(this, arguments);
+
+    // onactive can be called more times than oninactive, since
+    // settings can overlay over and not trigger an inactive state,
+    // so only bind these listeners and do the drawer animation once.
+    if (document.body.classList.contains('settings-drawer-visible')) {
+      return;
+    }
+
+    debug('Settings drawer is not visible... will activate.');
+    this._activated = true;
+    this._animateDrawer();
+
+    // Set header title to same as time view header
+    this.headerTitle.textContent =
+      document.getElementById('current-month-year').textContent;
+
+    // Both the transparent back and clicking on the semi-opaque
+    // shield should close the settings since visually those sections
+    // do not look like part of the drawer UI, and UX wants to give
+    // the user a few options to close the drawer since there is no
+    // explicit close button.
+    this.header.addEventListener('action', this._hideSettings);
+    this.shield.addEventListener('click', this._hideSettings);
+    this.timeViews.setAttribute('aria-hidden', true);
+    this.drawer.addEventListener('transitionend', this._onDrawerTransitionEnd);
+  }),
+
+  oninactive: function() {
+    debug('Will deactivate settings.');
+    View.prototype.oninactive.apply(this, arguments);
+    this._activated = false;
+    this.header.removeEventListener('action', this._hideSettings);
+    this.shield.removeEventListener('click', this._hideSettings);
+    this.timeViews.removeAttribute('aria-hidden');
+    this.drawer.removeEventListener('transitionend',
+                                 this._onDrawerTransitionEnd);
+  }
+
+};
+
+Settings.prototype.onfirstseen = Settings.prototype.render;
+
+});

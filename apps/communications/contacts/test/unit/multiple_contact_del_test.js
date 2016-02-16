@@ -1,20 +1,23 @@
 /*jshint node: true, browser: true */
-/* globals MockContactsList, MockMozContacts, Mockfb,
+/* globals MockContactsList, MockMozContacts, Mockfb, MockLoader, utils,
 MocksHelper, contactsRemover, contacts, MockContactsSettings */
 
 'use strict';
 
+requireApp('communications/contacts/services/contacts.js');
 requireApp('communications/contacts/test/unit/mock_navigation.js');
 requireApp('communications/contacts/test/unit/mock_contacts.js');
-requireApp('communications/contacts/test/unit/mock_mozContacts.js');
+require('/shared/test/unit/mocks/mock_mozContacts.js');
 requireApp('communications/contacts/test/unit/mock_contacts_list.js');
 requireApp('communications/contacts/test/unit/mock_l10n.js');
 requireApp('communications/contacts/test/unit/mock_fb.js');
 requireApp('communications/contacts/js/contacts_bulk_delete.js');
 requireApp('communications/contacts/js/contacts_remover.js');
-requireApp('communications/dialer/test/unit/mock_confirm_dialog.js');
+require('/shared/test/unit/mocks/mock_confirm_dialog.js');
 requireApp('communications/contacts/js/views/list.js');
 requireApp('communications/contacts/test/unit/mock_contacts_settings.js');
+requireApp('communications/contacts/test/unit/mock_loader.js');
+require('/shared/test/unit/mocks/mock_moz_contact.js');
 
 /* jshint ignore:start */
 if (!this._) {
@@ -28,10 +31,12 @@ if (!this.utils) {
 
 var mocksHelperForDelete = new MocksHelper([
   'Contacts',
-  'ConfirmDialog'
+  'ConfirmDialog',
+  'mozContact'
 ]).init();
 
-var subject, fb, real_, realOverlay, realFb, realContacts, realSettings;
+var subject, fb, real_, realFb, realContacts, realSettings,
+    realLoader;
 
 suite('Multiple Contacts Delete', function() {
   function getContactIds() {
@@ -43,52 +48,14 @@ suite('Multiple Contacts Delete', function() {
     return result;
   }
 
-  function createSelectPromise() {
-    var promise = {
-      canceled: false,
-      _selected: [],
-      resolved: false,
-      successCb: null,
-      errorCb: null,
-      resolve: function resolve(ids) {
-        var self = this;
-        setTimeout(function onResolve() {
-          if (ids) {
-            self._selected = ids;
-          }
-          self.resolved = true;
-          if (self.successCb) {
-            self.successCb(self._selected);
-          }
-        }, 0);
-      }
-    };
-    return promise;
-  }
-
   suiteSetup(function() {
     if (!window.utils) {
       window.utils = {};
     }
-    realOverlay = window.utils.overlay;
-    window.utils.overlay = {
-      total: 0,
-      shown: false,
-      show: function() {
-        this.shown = true;
-        return this;
-      },
-      hide: function() {},
-      showMenu: function() {},
-      update: function() {},
-      setClass: function() {},
-      setTotal: function(n) {
-        this.total = n;
-      },
-      setHeaderMsg: function() {}
-    };
     realContacts = navigator.mozContacts;
     navigator.mozContacts = MockMozContacts;
+    realLoader = window.Loader;
+    window.Loader = MockLoader;
     real_ = window._;
     window._ = navigator.mozL10n.get;
     realFb = fb;
@@ -96,22 +63,25 @@ suite('Multiple Contacts Delete', function() {
     mocksHelperForDelete.suiteSetup();
     realSettings = contacts.Settings;
     contacts.Settings = MockContactsSettings;
+    window.utils.misc = {
+      toMozContact: function() {}
+    };
   });
 
   suiteTeardown(function() {
     window._ = real_;
     fb = realFb;
     navigator.mozContacts = realContacts;
-    window.utils.overlay = realOverlay;
+    window.Loader = realLoader;
     mocksHelperForDelete.suiteTeardown();
     contacts.Settings = realSettings;
-
+    delete window.utils.misc;
   });
 
   setup(function() {
+    this.sinon.stub(utils.misc, 'toMozContact');
     subject = new contactsRemover();
   });
-
 
   test('Correct initialization given an array of ids', function(done) {
     var ids = getContactIds();
@@ -171,14 +141,5 @@ suite('Multiple Contacts Delete', function() {
       done();
     };
     assert.ok(ids, 'No Contact to delete');
-  });
-
-  test('Perform Delete Operation', function(done) {
-    var ids = getContactIds();
-    var promise = createSelectPromise();
-    promise.resolve(ids);
-    contacts.BulkDelete.performDelete(promise);
-    assert.ok(window.utils.overlay.shown, 'overlay not displayed');
-    done();
   });
 });

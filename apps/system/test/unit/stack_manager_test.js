@@ -1,30 +1,26 @@
 /* global StackManager, AppWindow, Event, MocksHelper,
-          HomescreenLauncher, MockSheetsTransition */
+          MockService, MockSheetsTransition */
 'use strict';
-
-mocha.globals(['homescreenLauncher', 'layoutManager']);
 
 requireApp('system/js/stack_manager.js');
 requireApp('system/test/unit/mock_app_window.js');
-requireApp('system/test/unit/mock_homescreen_launcher.js');
-requireApp('system/test/unit/mock_layout_manager.js');
+requireApp('system/shared/test/unit/mocks/mock_service.js');
 requireApp('system/test/unit/mock_sheets_transition.js');
 
 var mocksForStackManager = new MocksHelper([
-  'AppWindow', 'HomescreenLauncher', 'LayoutManager',
-  'SheetsTransition'
+  'AppWindow', 'SheetsTransition', 'Service'
 ]).init();
 
 suite('system/StackManager >', function() {
-  var dialer, contact, settings, google, system;
+  var dialer, contact, settings, google, system, operatorVariant;
   var contact_sheet_1, contact_sheet_2;
   var settings_sheet_1, settings_sheet_2, settings_sheet_3;
   mocksForStackManager.attachTestHelpers();
 
   setup(function() {
+    StackManager.start();
     this.sinon.useFakeTimers();
 
-    window.homescreenLauncher = new HomescreenLauncher().start();
     dialer = new AppWindow({
       url: 'app://communications.gaiamobile.org/dialer/index.html',
       origin: 'app://communications.gaiamobile.org/',
@@ -58,6 +54,15 @@ suite('system/StackManager >', function() {
       manifestURL:
         'app://system.gaiamobile.org/contact/manifest.webapp',
       name: 'System',
+      manifest: { role: 'system' }
+    });
+
+    operatorVariant = new AppWindow({
+      url: 'app://opvariant.gaiamobile.org/index.html',
+      origin: 'app://opvariant.gaiamobile.org/',
+      manifestURL:
+        'app://opvariant.gaiamobile.org/contact/manifest.webapp',
+      name: 'Operator Variant',
       manifest: { role: 'system' }
     });
 
@@ -112,7 +117,6 @@ suite('system/StackManager >', function() {
 
   teardown(function() {
     this.sinon.clock.tick(800); // Making sure everything got broadcasted
-    window.homescreenLauncher = undefined;
     StackManager.__clearAll();
   });
 
@@ -151,12 +155,18 @@ suite('system/StackManager >', function() {
   }
 
   function home() {
-    window.dispatchEvent(new Event('home'));
+    window.dispatchEvent(new Event('homescreenopening'));
   }
 
-  function openAppFromCardView(app) {
+  function appOpening(app) {
     var evt = document.createEvent('CustomEvent');
     evt.initCustomEvent('appopening', true, false, app);
+    window.dispatchEvent(evt);
+  }
+
+  function appOpened(app) {
+    var evt = document.createEvent('CustomEvent');
+    evt.initCustomEvent('appopened', true, false, app);
     window.dispatchEvent(evt);
   }
 
@@ -171,24 +181,68 @@ suite('system/StackManager >', function() {
     });
   });
 
-  suite('Stack vs System App', function() {
+  suite('Stack vs hidden apps', function() {
     setup(function() {
       appLaunch(system);
+      appLaunch(operatorVariant);
     });
 
-    test('system app should never be in the stack', function() {
+    test('role=system apps should never be in the stack', function() {
       StackManager.snapshot().forEach(function(app) {
         if (app.manifest) {
-          assert.notEqual(app.manifest.role,
-                          'system',
-                          'system app should not be in snapshot');
+          assert.notEqual(app.manifest.role, 'system');
         }
+      });
+    });
+
+    suite('when the app currently displayed is not part of the stack',
+    function() {
+      setup(function() {
+        appLaunch(settings);
+        appLaunch(operatorVariant);
+        MockService.mockQueryWith('AppWindowManager.getActiveWindow',
+          operatorVariant);
+
+        this.sinon.stub(settings, 'getActiveWindow').returns(null);
+      });
+
+      test('getCurrent should still work to allow event forwarding',
+      function() {
+        assert.equal(StackManager.getCurrent(), operatorVariant);
+      });
+
+      test('outOfStack should be true since we don\'t know where we are',
+      function() {
+        assert.isTrue(StackManager.outOfStack());
+      });
+
+      test('outOfStack should not throw if this.position === -1',
+      function() {
+        StackManager.position = -1;
+        assert.isTrue(StackManager.outOfStack());
+      });
+
+      suite('but to prevent undefined swiping behaviors', function() {
+        test('getPrev should return undefined', function() {
+          assert.isUndefined(StackManager.getPrev());
+        });
+
+        test('getNext should return undefined', function() {
+          assert.isUndefined(StackManager.getNext());
+        });
       });
     });
 
     teardown(function() {
       StackManager.__clearAll();
     });
+  });
+
+  test('_didntMove by default is true', function() {
+    appLaunch(dialer);
+    this.sinon.stub(dialer, 'setNFCFocus');
+    StackManager.commit();
+    assert.isTrue(dialer.setNFCFocus.calledWith(true));
   });
 
   suite('Cards View Events', function() {
@@ -199,12 +253,13 @@ suite('system/StackManager >', function() {
     });
 
     test('stack position updates on cardviewclosed', function() {
-      assert.equal(StackManager.position, 2, 'wrong starting position');
+      StackManager.position = 0;
+      assert.equal(StackManager.position, 0, 'wrong starting position');
       var cardClosedEvent =
-        new CustomEvent('cardviewclosed',
-                        { 'detail': { 'newStackPosition': 1 }});
+        new CustomEvent('cardviewclosed', { 'detail': dialer });
       StackManager.handleEvent(cardClosedEvent);
-      assert.equal(StackManager.position, 1, 'new position is wrong');
+      assert.equal(StackManager.position, 2, 'new position is end of stack');
+      assert.equal(StackManager.getCurrent(), dialer, 'app is at top of stack');
     });
 
     test('and does not cause the position to stringify', function() {
@@ -265,7 +320,9 @@ suite('system/StackManager >', function() {
     suite('> goNext()', function() {
       setup(function() {
         StackManager.goPrev();
+        assert.isFalse(StackManager._didntMove);
         StackManager.goPrev();
+        assert.isFalse(StackManager._didntMove);
       });
 
       test('should move forward in the stack without modifying it', function() {
@@ -300,11 +357,26 @@ suite('system/StackManager >', function() {
       test('should do nothing when we\'re at the top of the stack',
       function() {
         StackManager.goNext();
+        assert.isFalse(StackManager._didntMove);
         StackManager.goNext();
+        assert.isTrue(StackManager._didntMove);
         assert.deepEqual(StackManager.getCurrent().config, settings.config);
         StackManager.goNext();
         assert.deepEqual(StackManager.getCurrent().config, settings.config);
       });
+    });
+
+    test('going back to the start app', function() {
+      var onSheetsGestureEnd = this.sinon.spy();
+      window.addEventListener('sheets-gesture-end', onSheetsGestureEnd);
+      StackManager.goPrev();
+      StackManager.goNext();
+      assert.isTrue(StackManager._didntMove);
+      StackManager.commit();
+      sinon.assert.calledOnce(onSheetsGestureEnd);
+      this.sinon.clock.tick(800);
+      sinon.assert.calledOnce(onSheetsGestureEnd);
+      window.removeEventListener('sheets-gesture-end', onSheetsGestureEnd);
     });
 
     suite('> blasting through history', function() {
@@ -320,8 +392,12 @@ suite('system/StackManager >', function() {
         contactCancelQueuedShow = this.sinon.stub(contact, 'cancelQueuedShow');
         settingsQueueHide = this.sinon.stub(settings, 'queueHide');
 
+        this.sinon.stub(MockService, 'request');
+
         StackManager.goPrev();
+        assert.isFalse(StackManager._didntMove);
         StackManager.goPrev();
+        assert.isFalse(StackManager._didntMove);
       });
 
       test('it should flag the next active app', function() {
@@ -348,10 +424,15 @@ suite('system/StackManager >', function() {
         sinon.assert.calledWith(settingsBroadcast, 'swipeout');
       });
 
+      test('it should request stopRecording', function() {
+        assert.isTrue(MockService.request.calledWith('stopRecording'));
+      });
+
       suite('if we\'re back to the same place', function() {
         setup(function() {
           StackManager.goNext();
           StackManager.goNext();
+          assert.isTrue(StackManager._didntMove);
         });
 
         test('it should just cleanup the transition classes', function() {
@@ -391,6 +472,14 @@ suite('system/StackManager >', function() {
 
     test('it should become the current stack item', function() {
       assert.deepEqual(StackManager.getCurrent().config, dialer.config);
+    });
+
+    test('it should set the position when opened', function() {
+      var fakePosition = 10;
+      assert.equal(StackManager.position, 0);
+      this.sinon.stub(StackManager, '_indexOfInstanceID').returns(fakePosition);
+      appOpened(dialer);
+      assert.equal(StackManager.position, fakePosition);
     });
 
     suite('then another app is launched', function() {
@@ -617,13 +706,29 @@ suite('system/StackManager >', function() {
         assert.deepEqual(StackManager.getCurrent().config, settings.config);
       });
     });
+
+  });
+
+  suite('When the last app terminates', function() {
+    setup(function() {
+      appLaunch(contact);
+      appCrash(contact);
+    });
+    test('the position should be -1',
+    function() {
+      assert.equal(StackManager.position, -1);
+    });
+    test('the stack should be empty',
+    function() {
+      assert.equal(StackManager._stack.length, 0);
+    });
   });
 
   test('open app from card should update the ordering', function() {
     appLaunch(dialer);
     appLaunch(contact);
     appLaunch(settings);
-    openAppFromCardView(dialer);
+    appOpening(dialer);
     assert.deepEqual(StackManager.getCurrent().config, dialer.config);
   });
 

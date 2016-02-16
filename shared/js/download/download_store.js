@@ -169,6 +169,18 @@ var DownloadStore = (function() {
           .then((value) => {lastRevisionId = value;})
         ]);
     }).then(function() {
+      readyState = 'initialized';
+
+      // Remove the legacy index element, if it exists. See Bug 1180250.
+      const LEGACY_INDEX_ID = 1;
+      if (downloadList && downloadList.includes(LEGACY_INDEX_ID)) {
+        return promisify(get(LEGACY_INDEX_ID)).then((download) => {
+          if ('byTimestamp' in download) {
+            downloadList.splice(downloadList.indexOf(LEGACY_INDEX_ID), 1);
+          }
+        });
+      }
+    }).then(function() {
       notifyOpenSuccess(success);
     }).catch(function(e) {
       console.error('Error while opening the Download Store: ', e.message);
@@ -210,14 +222,13 @@ var DownloadStore = (function() {
   }
 
   function notifyOpenSuccess(cb) {
-    readyState = 'initialized';
     window.setTimeout(cb, 0);
     document.dispatchEvent(new CustomEvent('ds-initialized'));
   }
 
   // These fields will be stored in our datastore
-  var fieldsToPropagate =
-    ['url', 'path', 'totalBytes', 'contentType', 'startTime', 'state'];
+  var fieldsToPropagate = ['url', 'path', 'totalBytes', 'contentType',
+                           'startTime', 'state', 'storageName', 'storagePath'];
 
   function cookDownload(download) {
     var ret = Object.create(null);
@@ -296,8 +307,9 @@ var DownloadStore = (function() {
     datastore.add(downloadCooked).then(function(id) {
       // Enriched object with the id provided by the datastore
       downloadCooked.id = id;
-      datastore.put(downloadCooked, id).then(defaultSuccess(req),
-                                             defaultError(req));
+      datastore.put(downloadCooked, id)
+               .then(function() { req.done(downloadCooked); },
+                     defaultError(req));
     }, defaultError(req));
   }
 
@@ -309,6 +321,21 @@ var DownloadStore = (function() {
     });
 
     return req;
+  }
+
+  function doGet(id, req) {
+    datastore.get(id).then(function(download) { req.done(download); },
+                           defaultError(req));
+  }
+
+  function get(id) {
+   var req = new Request();
+
+   window.setTimeout(function() {
+    init(doGet.bind(null, id, req), req.failed.bind(req));
+   });
+
+   return req;
   }
 
   function doGetAll(req) {
@@ -351,14 +378,48 @@ var DownloadStore = (function() {
     return req;
   }
 
+  function doAddListener(listener) {
+    datastore.addEventListener('change', listener);
+  }
+
+  function addListener(listener) {
+    var req = new Request();
+
+    window.setTimeout(function() {
+      init(doAddListener.bind(null, listener), req.failed.bind(req));
+    });
+
+    return req;
+  }
+
+  function doRemoveListener(listener) {
+    datastore.removeEventListener('change', listener);
+  }
+
+  function removeListener(listener) {
+    var req = new Request();
+
+    window.setTimeout(function() {
+      init(doRemoveListener.bind(null, listener), req.failed.bind(req));
+    });
+
+    return req;
+  }
+
   return {
+   /*
+    * This method returns the download with the specified id.
+    */
+   get: get,
+
    /*
     * This method returns an array of complete downloads
     */
     getAll: getAll,
 
     /*
-     * It adds a new download object
+     * It adds a new download object and returns the new datastore
+     * download object
      *
      * @param{Object} Download object provided by the API
      *
@@ -371,6 +432,20 @@ var DownloadStore = (function() {
      * @param{Object} The download object to be removed from the datastore
      *
      */
-    remove: remove
+    remove: remove,
+
+    /*
+     * Add a listener that will receive datastore change events.
+     *
+     * @param{Function} The listener to be added.
+     */
+    addListener: addListener,
+
+    /*
+     * Remove a listener previously added via addListener.
+     *
+     * @param{Function} The listener to be removed.
+     */
+    removeListener: removeListener
   };
 }());

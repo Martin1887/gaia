@@ -2,14 +2,26 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from marionette.by import By
+import time
+
+from marionette_driver import expected, By, Wait
+
 from gaiatest.apps.base import Base
+from gaiatest.apps.homescreen.regions.bottom_bar import BottomBar
 
 
 class ConfirmDialog(Base):
 
-    _confirm_button_locator = (By.ID, 'confirm-dialog-confirm-button')
+    _confirm_button_locator = (By.CSS_SELECTOR, 'gaia-confirm .confirm')
 
-    def tap_confirm(self):
-        self.wait_for_element_displayed(*self._confirm_button_locator)
-        self.marionette.find_element(*self._confirm_button_locator).tap()
+    def tap_confirm(self, bookmark=False):
+        # TODO add a good wait here when Bug 1008961 is resolved
+        time.sleep(1)
+        if not bookmark:
+            self.marionette.switch_to_frame()
+        confirm = Wait(self.marionette).until(expected.element_present(
+            *self._confirm_button_locator))
+        Wait(self.marionette).until(expected.element_displayed(confirm))
+        confirm.tap()
+        
+        return BottomBar(self.marionette)

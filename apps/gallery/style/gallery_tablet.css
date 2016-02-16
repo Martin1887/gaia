@@ -39,7 +39,6 @@ footer {
 }
 
 body.fullscreenView #frames {
-  top: 0;
   height: 100%;
 }
 
@@ -90,8 +89,9 @@ body.thumbnailListView #thumbnails {
   visibility: visible;
 }
 
-#thumbnails-list-top {
-  display: block;
+/* Header in default thumbnail list appears in tablets only */
+body.thumbnailListView #thumbnail-list-top {
+  display: block !important;
 }
 
 #thumbnails.list {
@@ -149,11 +149,6 @@ body.fullscreenView #fullscreen-back-button-large {
 #fullscreen-view a.disabled {
   opacity: 0.4;
   pointer-events: none;
-}
-
-/* Pick */
-#pick-top {
-  height: 5rem;
 }
 
 /* Edit */
@@ -344,7 +339,7 @@ body.fullscreenView #fullscreen-back-button-large {
  */
 #overlay,
 #confirm-dialog {
-  background: rgba(51, 51, 51, 0.6);
+  background: rgb(51, 51, 51);
 }
 
 #overlay section,
@@ -412,9 +407,14 @@ body.thumbnailListView #fullscreen-view.toolbar-hidden .videoPlayerFooter.hidden
 
 /* XXX: Below css will move to building block til bug905065 is closed */
 
-#fullscreen-toolbar-header,
-#thumbnails-list-top {
-  display: block;
+/*
+ * 1. Introduced by bug 1059748
+ * In bug 1019841 we introduced !important for .large-only styles to hide
+ * tablet layout on phone devices, which will cause regression on tablet.
+ * We have to use !important here to override styles from phone layout.
+ */
+#fullscreen-toolbar-header {
+  display: block !important; /* 1 */
 }
 
 @media (min-width: 768px) and (min-height: 768px) {
@@ -547,14 +547,9 @@ section[role="region"] > header:first-child menu[type="toolbar"] button:after {
     left: 40rem;
   }
 
-  body.thumbnailListView #thumbnails,
-  body.thumbnailSelectView #thumbnails {
+  body.thumbnailListView #thumbnail-views,
+  body.thumbnailSelectView #thumbnail-views {
     visibility: visible;
-    width: 40rem;
-  }
-
-  #thumbnail-list-view,
-  #thumbnail-select-view {
     width: 40rem;
   }
 

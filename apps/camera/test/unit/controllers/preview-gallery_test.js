@@ -1,29 +1,23 @@
 suite('controllers/preview-gallery', function() {
-  /*global req*/
   'use strict';
 
   suiteSetup(function(done) {
     var self = this;
-
-    req([
+    requirejs([
       'app',
-      'lib/camera',
       'controllers/preview-gallery',
       'lib/settings',
       'views/preview-gallery',
-      'views/controls',
       'lib/storage',
       'lib/orientation'
     ], function(
-      App, Camera, PreviewGalleryController, Settings, PreviewGalleryView,
-      ControlsView, Storage, orientation) {
+      App,PreviewGalleryController, Settings, PreviewGalleryView,
+      Storage, orientation) {
       self.PreviewGalleryController =
          PreviewGalleryController.PreviewGalleryController;
       self.Settings = Settings;
       self.PreviewGalleryView = PreviewGalleryView;
-      self.ControlsView = ControlsView;
       self.Storage = Storage;
-      self.Camera = Camera;
       self.App = App;
       self.orientation = orientation;
       done();
@@ -32,13 +26,9 @@ suite('controllers/preview-gallery', function() {
 
   setup(function() {
     this.app = sinon.createStubInstance(this.App);
-    this.app.camera = sinon.createStubInstance(this.Camera);
     this.app.settings = sinon.createStubInstance(this.Settings);
-    this.app.settings = sinon.createStubInstance(this.Settings);
+    this.app.require = sinon.stub();
     this.app.activity = {};
-    this.app.views = {
-      controls: sinon.createStubInstance(this.ControlsView)
-    };
 
     // Fake dialog calls the
     // 'delete' callback sync.
@@ -60,14 +50,11 @@ suite('controllers/preview-gallery', function() {
 
   suite('PreviewGalleryController()', function() {
     setup(function() {
-      var mozL10n = {
-        get: function() {},
-        translate: function() {}
-      };
-      if (!navigator.mozL10n) { navigator.mozL10n = mozL10n; }
-      window.MozActivity = function() {};
+      var MozActivity = function() {};
+      if (!window.MozActivity) {
+        window.MozActivity = MozActivity;
+      }
       sinon.stub(window, 'MozActivity');
-      sinon.stub(navigator.mozL10n, 'get');
 
       this.previewGalleryController.storage = {
         deleteImage: sinon.spy(),
@@ -75,24 +62,34 @@ suite('controllers/preview-gallery', function() {
         on: sinon.spy()
       };
 
-      CustomDialog.show = function(title, msg, cancelCb, deleteCb) {
-        deleteCb.callback();
+      this.previewGalleryController.settings = {
+        activity: {
+          get: sinon.spy()
+        },
       };
 
+      this.previewGalleryController.resizeImageAndSave =
+        function(options, done) {
+          done(options.blob);
+        };
+
+      this.app.require.callsArgWith(1,
+        this.previewGalleryController.resizeImageAndSave);
+
+      this.clock = sinon.useFakeTimers();
     });
 
     teardown(function() {
       window.MozActivity.restore();
-      navigator.mozL10n.get.restore();
     });
 
     test('Should listen to the following events', function() {
       this.previewGalleryController.bindEvents();
 
-      assert.ok(this.app.on.calledWith('preview'));
-      assert.ok(this.app.on.calledWith('newmedia'));
-      assert.ok(this.app.on.calledWith('hidden'));
-      assert.ok(this.app.on.calledWith('storage:itemdeleted'));
+      assert.ok(this.app.on.calledWith('preview', this.controller.openPreview));
+      assert.ok(this.app.on.calledWith('hidden', this.controller.closePreview));
+      assert.ok(this.app.on.calledWith('media:configured', this.controller.updatePreviewGallery));
+      assert.ok(this.app.on.calledWith('media:deleted', this.controller.updatePreviewGallery));
     });
 
     test('Should open the gallery app when gallery button is pressed',
@@ -106,13 +103,16 @@ suite('controllers/preview-gallery', function() {
 
     test('Should shareCurrentItem whose type is image', function() {
       var item = {
-        blob: {},
+        blob: new Blob(['empty-image'], {'type': 'image/jpeg'}),
         filepath: 'root/folder1/folder2/fileName',
         isImage: true
       };
       this.previewGalleryController.items = [item];
       this.previewGalleryController.currentItemIndex = 0;
       this.previewGalleryController.shareCurrentItem();
+
+      assert.ok(this.app.emit.calledWith('busy', 'resizingImage'));
+
       // Get first argument, of first call
       var arg = window.MozActivity.args[0][0];
 
@@ -133,6 +133,7 @@ suite('controllers/preview-gallery', function() {
       this.previewGalleryController.items = [item];
       this.previewGalleryController.currentItemIndex = 0;
       this.previewGalleryController.shareCurrentItem();
+
       // Get first argument, of first call
       var arg = window.MozActivity.args[0][0];
 
@@ -178,46 +179,6 @@ suite('controllers/preview-gallery', function() {
       });
     });
 
-    test('Check onNewMedia callback', function() {
-      var item = {
-        blob: {},
-        filepath: 'root/fileName',
-        isVideo: true
-      };
-
-      this.app.activity = {
-        active: false
-      };
-
-      this.previewGalleryController.items.unshift = sinon.spy();
-      this.previewGalleryController.updateThumbnail = sinon.spy();
-      this.previewGalleryController.onNewMedia(item);
-      assert.ok(this.previewGalleryController.items.unshift.called);
-      assert.ok(this.previewGalleryController.updateThumbnail.called);
-    });
-
-    test('Should Check the Item Deleted', function() {
-      var item = {
-        blob: {},
-        filepath: 'root/fileName',
-        isVideo: true
-      };
-
-      var data = {
-        path: 'root/fileName'
-      };
-
-      this.app.activity = {
-        active: false
-      };
-
-      this.previewGalleryController.updateThumbnail = sinon.spy();
-      this.previewGalleryController.updatePreviewGallery = sinon.spy();
-      this.previewGalleryController.onNewMedia(item);
-      this.previewGalleryController.onItemDeleted(data);
-      assert.ok(this.previewGalleryController.updatePreviewGallery.called);
-    });
-
     test('Should go to next image on handleSwipe(\'left\')', function() {
       this.previewGalleryController.items = [1,2,3];
       this.previewGalleryController.currentItemIndex = 1;
@@ -253,22 +214,25 @@ suite('controllers/preview-gallery', function() {
       assert.isFalse(this.previewGalleryController.previewItem.called);
       assert.equal(this.previewGalleryController.currentItemIndex, 0);
     });
+  });
 
-    test('Should close the preview on blur', function() {
-      this.previewGalleryController.closePreview = sinon.spy();
-      this.previewGalleryController.onHidden();
-      assert.ok(this.previewGalleryController.closePreview.called);
+  suite('PreviewGalleryController#openPreview()', function() {
+    setup(function() {
+      this.app.require.callsArgWith(1, this.PreviewGalleryView, sinon.stub());
+      sinon.stub(this.controller, 'previewItem');
+      this.controller.settings = {
+        activity: {
+          get: sinon.spy()
+        },
+        previewGallery: {
+          get: sinon.spy()
+        }
+      };
     });
 
-    test('Should close the preview on blur if in \'secureMode\'', function() {
-      this.app.inSecureMode = true;
-      this.previewGalleryController.closePreview = sinon.spy();
-      this.previewGalleryController.configure = sinon.spy();
-      this.previewGalleryController.updateThumbnail = sinon.spy();
-      this.previewGalleryController.onHidden();
-      assert.ok(this.previewGalleryController.configure.called);
-      assert.ok(this.previewGalleryController.updateThumbnail.called);
-      assert.ok(this.previewGalleryController.closePreview.calledAfter(this.previewGalleryController.updateThumbnail));
+    test('Should call previewItem', function() {
+      this.controller.openPreview();
+      assert.isTrue(this.controller.previewItem.called);
     });
 
     // XXX: this is really a view test, but we don't have tests for the view yet
@@ -299,24 +263,19 @@ suite('controllers/preview-gallery', function() {
          });
   });
 
-  suite('PreviewGalleryController#openPreview()', function() {
-    setup(function() {
-      sinon.stub(this.controller, 'previewItem');
-      this.controller.openPreview();
-    });
-
-    test('Should set `previewGalleryOpen` to `true` on app', function() {
-      assert.isTrue(this.app.set.calledWith('previewGalleryOpen', true));
-    });
-  });
-
   suite('PreviewGalleryController#closePreview()', function() {
     setup(function() {
+      this.controller.view = new this.PreviewGalleryView();
+      this.previewGalleryView = this.controller.view;
+      this.controller.view.close = sinon.spy();
+      this.controller.view.destroy = sinon.spy();
       this.controller.closePreview();
     });
 
     test('Should set `previewGalleryOpen` to `false` on app', function() {
-      assert.isTrue(this.app.set.calledWith('previewGalleryOpen', false));
+      assert.isTrue(this.previewGalleryView.close.called);
+      assert.isTrue(this.previewGalleryView.destroy.called);
+      assert.isTrue(this.controller.view === null);
     });
   });
 

@@ -6,8 +6,8 @@ define(function(require, exports, module) {
  */
 
 var debug = require('debug')('view:setting');
-var View = require('vendor/view');
 var bind = require('lib/bind');
+var View = require('view');
 
 /**
  * Exports
@@ -18,11 +18,12 @@ module.exports = View.extend({
   name: 'setting',
 
   initialize: function(options) {
-    this.l10n = options.l10n || navigator.mozL10n;
+    this.l10n = options.l10n || document.l10n;
     this.model = options.model;
     this.model.on('change', this.render);
     this.on('destroy', this.onDestroy);
-    this.el.classList.add(this.model.get('icon'));
+    this.el.dataset.icon = this.model.get('icon');
+    this.el.classList.add('test-' + this.model.get('title') + '-setting');
     bind(this.el, 'click', this.onClick);
   },
 
@@ -36,23 +37,46 @@ module.exports = View.extend({
 
   render: function() {
     var data = this.model.get();
-
     data.selected = this.model.selected();
     data.value = data.selected && data.selected.title;
+    this.el.setAttribute('role', 'option');
 
-    this.el.innerHTML = this.template(data);
-    debug('rendered item %s', data.key);
+
+    var localizedValue;
+    if (data.optionsLocalizable === false) {
+      localizedValue = Promise.resolve(data.value);
+    } else {
+      localizedValue = this.l10n.formatValue(data.value);
+    }
+
+    localizedValue.then(valueString => {
+      this.l10n.setAttributes(
+        this.el,
+        'setting-option-' + data.title,
+        { value: valueString }
+      );
+      this.el.innerHTML = this.template({
+        titleL10n: 'data-l10n-id="' + data.title + '"',
+        valueL10n: data.optionsLocalizable !== false ? 'data-l10n-id="' +
+          data.value + '"' : '',
+        valueText: data.optionsLocalizable === false ? data.value : '',
+      });
+
+      // Clean up
+      delete this.template;
+
+      debug('rendered (item %s)', data.key);
+    });
+
     return this;
-  },
-
-  localize: function(value) {
-    return this.l10n.get(value) || value;
   },
 
   template: function(data) {
     return '<div class="setting_text">' +
-      '<h4 class="setting_title">' + this.localize(data.title) + '</h4>' +
-      '<h5 class="setting_value">' + this.localize(data.value) + '</h5>' +
+      '<h4 class="setting_title" ' + data.titleL10n + '></h4>' +
+      '<h5 class="setting_value" ' + data.valueL10n + '>' + 
+        data.valueText +
+      '</h5>' +
     '</div>';
   },
 });

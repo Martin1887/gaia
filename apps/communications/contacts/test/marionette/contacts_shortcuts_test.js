@@ -2,26 +2,21 @@
 
 var Contacts = require('./lib/contacts');
 var assert = require('assert');
-var Actions = require('marionette-client').Actions;
 
 marionette('Contacts shortcuts > touch', function() {
-  var config = Contacts.config;
-  config.prefs = {
-    'dom.w3c_touch_events.enabled': 1
-  };
-  var client = marionette.client(config);
+  var client = marionette.client({ profile: Contacts.config });
   var subject;
   var selectors;
-  var actions = new Actions(client);
-
-  var scrollbar,
-      overlay;
+  var actions;
+  var scrollbar;
+  var overlay;
 
   function overlayOpacity() {
     return subject.getElementStyle(selectors.overlay, 'opacity');
   }
 
   setup(function() {
+    actions = client.loader.getActions();
     subject = new Contacts(client);
     subject.launch();
 
@@ -30,9 +25,10 @@ marionette('Contacts shortcuts > touch', function() {
     scrollbar = client.helper.waitForElement(selectors.scrollbar);
   });
 
+  // Disabled bug 1023908
   suite('touch on shortcuts', function() {
     test('press/release on scrollbar should show/hide shortcut', function() {
-      var action = actions.press(scrollbar, 10, 200).perform();
+      var action = actions.press(scrollbar, 10, 100).perform();
       overlay = client.helper.waitForElement(selectors.overlay);
       assert.equal(overlay.text().length, 1);
       assert.equal(overlayOpacity(), '1');
@@ -66,9 +62,9 @@ marionette('Contacts shortcuts > touch', function() {
 
     test('pressing near the last release position should show valid shortcut',
       function() {
-      actions.press(scrollbar, 10, 200).release().perform();
+      actions.press(scrollbar, 15, 100).release().perform();
 
-      var action = actions.press(scrollbar, 10, 200).perform();
+      var action = actions.press(scrollbar, 15, 100).perform();
       overlay = client.helper.waitForElement(selectors.overlay);
       assert.equal(overlay.text().length, 1);
       action.release().perform();

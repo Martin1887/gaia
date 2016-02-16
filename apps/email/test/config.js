@@ -1,5 +1,6 @@
+'use strict';
 /*global requirejs, define, TestUrlResolver */
-// Test config. mail_app.js has the non-test, runtime config
+// Test config. config.js has the non-test, runtime config
 (function(global) {
   var contextIdCount = 0;
   var baseConfig = {
@@ -7,12 +8,9 @@
     paths: {
       test: '../test',
       l10nbase: '../shared/js/l10n',
-      l10ndate: '../shared/js/l10n_date',
+      moz_intl: '../shared/test/unit/mocks/mock_moz_intl',
       style: '../style',
-      shared: '../shared',
-
-      'mailapi/main-frame-setup': 'ext/mailapi/main-frame-setup',
-      'mailapi/main-frame-backend': 'ext/mailapi/main-frame-backend'
+      shared: '../shared'
     },
     map: {
       '*': {
@@ -20,8 +18,10 @@
       }
     },
     shim: {
-      l10ndate: ['l10nbase'],
-
+      moz_intl: {
+        deps: ['l10nbase'],
+        exports: 'MockMozIntl'
+      },
       'shared/js/mime_mapper': {
         exports: 'MimeMapper'
       },
@@ -32,6 +32,31 @@
 
       'shared/js/accessibility_helper': {
         exports: 'AccessibilityHelper'
+      },
+
+      'shared/js/gesture_detector': {
+        exports: 'GestureDetector'
+      }
+    },
+    config: {
+      template: {
+        tagToId: function(tag) {
+           return tag.replace(/^cards-/, 'cards/')
+                  .replace(/^lst-/, 'cards/lst/')
+                  .replace(/^msg-/, 'cards/msg/')
+                  .replace(/^cmp-/, 'cards/cmp/')
+                  .replace(/-/g, '_');
+        }
+      },
+
+      element: {
+        idToTag: function(id) {
+          return id.toLowerCase()
+                 .replace(/^cards\/lst\//, 'lst-')
+                 .replace(/^cards\/msg\//, 'msg-')
+                 .replace(/^cards\/cmp\//, 'cmp-')
+                 .replace(/[^a-z]/g, '-');
+        }
       }
     },
     definePrim: 'prim'
@@ -50,8 +75,9 @@
     });
 
     req.config(baseConfig);
-    if (config)
+    if (config) {
       req.config(config);
+    }
 
     // Tears down the context.
     if (suiteTeardown) {
@@ -94,17 +120,20 @@
 
     if (ids) {
       req(ids, function() {
-        if (callback)
+        if (callback) {
           callback.apply(null, Array.slice(arguments));
-        if (done)
+        }
+        if (done) {
           done();
+        }
       }, function(err) {
-        if (done)
+        if (done) {
           done(err);
+        }
       });
     }
 
     return req;
   };
-}(this));
+}(window));
 

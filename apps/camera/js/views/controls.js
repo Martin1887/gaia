@@ -6,8 +6,10 @@ define(function(require, exports, module) {
  */
 
 var debug = require('debug')('view:controls');
-var attach = require('vendor/attach');
-var View = require('vendor/view');
+var debounce = require('lib/debounce');
+var bind = require('lib/bind');
+var View = require('view');
+var Drag = require('drag');
 
 /**
  * Exports
@@ -17,52 +19,186 @@ module.exports = View.extend({
   name: 'controls',
   className: 'test-controls',
 
-  initialize: function() {
+  initialize: function(options) {
+    this.drag = options && options.drag; // test hook
+    this.once('inserted', this.setupSwitch);
     this.render();
+  },
+
+  switchPositions: {
+    left: 'picture',
+    right: 'video',
+    picture: 'left',
+    video: 'right'
+  },
+
+  // {node}: {data-l10n-id} pairs used for localization.
+  elsL10n: {
+    cancel: 'controls-button-close',
+    thumbnail: 'preview-button',
+    capture: 'capture-button'
   },
 
   render: function() {
     this.el.innerHTML = this.template();
-    this.els.thumbnail = this.find('.js-thumbnail');
 
-    // Bind events
-    attach.on(this.el, 'click', '.js-btn', this.onButtonClick);
-    attach.on(this.el, 'click', '.js-switch', this.onButtonClick);
+    // Get nodes
+    this.els.switchHandle = this.find('.js-switch-handle');
+    this.els.thumbnail = this.find('.js-thumbnail');
+    this.els.capture = this.find('.js-capture');
+    this.els.cancel = this.find('.js-cancel');
+    this.els.switch = this.find('.js-switch');
+    this.els.icons = {
+      camera: this.find('.js-icon-camera'),
+      video: this.find('.js-icon-video')
+    };
+
+    // Clean up
+    delete this.template;
+
     debug('rendered');
+    return this.bindEvents();
   },
 
-  onButtonClick: function(e, el) {
-    var name = el.getAttribute('name');
+  /**
+   * Respond to click events on the buttons
+   * other than the switch, which is a special
+   * case.
+   *
+   * We 'debouce' the callback to defend
+   * against button-bashing.
+   *
+   * @return {ControlsView} for chaining
+   * @private
+   */
+  bindEvents: function() {
+    this.onButtonClick = debounce(this.onButtonClick, 300, true);
+    bind(this.els.thumbnail, 'click', this.onButtonClick);
+    bind(this.els.capture, 'click', this.onButtonClick);
+    bind(this.els.cancel, 'click', this.onButtonClick);
+    return this;
+  },
+
+  /**
+   * Create the draggable switch.
+   *
+   * We debouce the tapped callback to
+   * defend against button-bashing.
+   *
+   * @private
+   */
+  setupSwitch: function() {
+    debug('setup dragger');
+
+    // Wait until the document is complete
+    // to avoid any forced sync reflows.
+    if (document.readyState !== 'complete') {
+      window.addEventListener('load', this.setupSwitch);
+      debug('deferred switch setup till after load');
+      return;
+    }
+
+    // Prefer existing drag (test hook)
+    this.drag = this.drag || new Drag({
+      handle: this.els.switchHandle,
+      container: this.els.switch
+    });
+
+    this.drag.on('tapped', debounce(this.onSwitchTapped, 300, true));
+    this.drag.on('ended', this.drag.snapToClosestEdge);
+    this.drag.on('translate', this.onSwitchTranslate);
+    this.drag.on('snapped', this.onSwitchSnapped);
+
+    this.drag.updateDimensions();
+    this.updateSwitchPosition();
+
+    // Tidy up
+    window.removeEventListener('load', this.setupSwitch);
+  },
+
+  setCaptureLabel: function(recording) {
+    this.els.capture.setAttribute('data-l10n-id',
+      recording ? 'stop-capture-button' : 'capture-button');
+  },
+
+  onSwitchSnapped: function(edges) {
+    var mode = this.switchPositions[edges.x];
+    var changed = mode !== this.get('mode');
+    if (changed) { this.onSwitchChanged(); }
+  },
+
+  onSwitchChanged: function() {
+    this.emit('modechanged');
+  },
+
+  onSwitchTapped: function(e) {
+    e.preventDefault();
     e.stopPropagation();
+    debug('switch tapped');
+    this.onSwitchChanged();
+  },
+
+  onSwitchTranslate: function(e) {
+    this.setSwitchIcon(e.position.ratio.x);
+  },
+
+  setSwitchIcon: function(ratio) {
+    var skew = 2;
+    var ratioSkewed = ratio * skew;
+    var camera = Math.max(0, 1 - ratioSkewed);
+    var video = Math.max(0, -1 + ratioSkewed);
+    this.els.icons.camera.style.opacity = camera;
+    this.els.icons.video.style.opacity = video;
+    debug('set switch icon camera: %s, video: %s', camera, video);
+  },
+
+  /**
+   * Set view screen reader visibility. In some cases, though the view is behind
+   * an overlay and not hidden off screen, it still needs to be
+   * hidden/inaccessible from the screen reader.
+   */
+  setScreenReaderVisible: function(visible) {
+    this.el.setAttribute('aria-hidden', !visible);
+  },
+
+  onButtonClick: function(e) {
+    e.stopPropagation();
+    debug('button click');
+    var name = e.currentTarget.getAttribute('name');
     this.emit('click:' + name, e);
   },
 
-  template: function() {
-    /*jshint maxlen:false*/
-    return '<div class="controls-left">' +
-      '<div class="controls-button controls-thumbnail-button test-thumbnail js-thumbnail js-btn rotates" name="thumbnail"></div>' +
-      '<div class="controls-button controls-cancel-pick-button test-cancel-pick icon-pick-cancel js-btn rotates" name="cancel"></div>' +
-    '</div>' +
-    '<div class="controls-middle">' +
-      '<div class="capture-button test-capture js-btn rotates" name="capture">' +
-        '<div class="circle outer-circle"></div>' +
-        '<div class="circle inner-circle"></div>' +
-        '<div class="center icon"></div>' +
-      '</div>' +
-    '</div>' +
-    '<div class="controls-right">' +
-      '<div class="mode-switch test-switch js-switch" name="switch">' +
-        '<div class="mode-icon icon rotates"></div>' +
-        '<div class="selected-mode">' +
-          '<div class="selected-mode-icon icon rotates"></div>' +
-        '</div>' +
-      '</div>' +
-    '</div>';
+  suspendModeSwitch: function(suspended) {
+    if (suspended) {
+      this.set('switch-toggle-disabled');
+    } else {
+      this.unset('switch-toggle-disabled');
+    }
+  },
+
+  setMode: function(mode) {
+    debug('set mode: %s', mode);
+    this.set('mode', mode);
+    this.switchPosition = this.switchPositions[mode];
+    var ratio = { left: 0, right: 1 }[this.switchPosition];
+    this.updateSwitchPosition();
+    this.setSwitchIcon(ratio);
+    // Set appropriate mode switch label for screen reader.
+    this.els.switch.setAttribute('data-l10n-id', mode + '-mode-button');
+    debug('mode set pos: %s', this.switchPosition);
+  },
+
+  updateSwitchPosition: function() {
+    debug('updateSwitchPosition');
+    if (!this.drag) { return; }
+    this.drag.set({ x: this.switchPosition });
+    debug('updated switch position: %s', this.switchPosition);
   },
 
   setThumbnail: function(blob) {
     if (!this.els.image) {
       this.els.image = new Image();
+      this.els.image.classList.add('test-thumbnail');
       this.els.thumbnail.appendChild(this.els.image);
       this.set('thumbnail', true);
     } else {
@@ -70,6 +206,7 @@ module.exports = View.extend({
     }
 
     this.els.image.src = window.URL.createObjectURL(blob);
+    debug('thumbnail set');
   },
 
   removeThumbnail: function() {
@@ -108,6 +245,11 @@ module.exports = View.extend({
     debug('attr key: %s, value: %s', attr, value);
   },
 
+  get: function(key) {
+    var attr = 'data-' + key;
+    return this.el.getAttribute(attr);
+  },
+
   unset: function(key) {
     var attr = 'data-' + key;
     var value = this.el.getAttribute(attr);
@@ -123,18 +265,59 @@ module.exports = View.extend({
   disable: function(key) {
     this.set(key ? key + '-disabled' : 'disabled');
     this.unset(key ? key + '-enabled' : 'enabled');
+  },
+
+  /**
+   * Localize the template based on a list of localizable elements - elsL10n. In
+   * case the template is loaded before l10n is ready, localize will peform the
+   * initial localization.
+   */
+  localize: function() {
+    // Switch mode label depends on the mode that is currently set.
+    var mode = this.get('mode') || 'picture';
+    this.els.switch.setAttribute('data-l10n-id', mode + '-mode-button');
+  },
+
+  template: function() {
+    /*jshint maxlen:false*/
+    return '<div class="controls-left">' +
+      '<div class="controls-button controls-thumbnail-button test-thumbnail js-thumbnail rotates" ' +
+        'name="thumbnail" role="button" data-l10n-id="preview-button"></div>' +
+      '<div class="controls-button controls-cancel-pick-button test-cancel-pick rotates js-cancel" ' +
+        'name="cancel" data-icon="close" role="button" data-l10n-id="controls-button-close"></div>' +
+    '</div>' +
+    '<div class="controls-middle">' +
+      '<div class="capture-button test-capture rotates js-capture" name="capture" ' +
+        'data-l10n-id="capture-button" role="button">' +
+        '<div class="circle outer-circle"></div>' +
+        '<div class="circle inner-circle"></div>' +
+        '<div class="center" data-icon="camera" aria-hidden="true"></div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="controls-right">' +
+      '<div class="mode-switch test-switch" name="switch">' +
+        '<div class="inner js-switch" role="button">' +
+          '<div class="mode-switch_bg-icon rotates" data-icon="camera" aria-hidden="true"></div>' +
+          '<div class="mode-switch_bg-icon rotates" data-icon="video" aria-hidden="true"></div>' +
+          '<div class="mode-switch_handle js-switch-handle" aria-hidden="true">' +
+            '<div class="mode-switch_current-icon camera rotates js-icon-camera" data-icon="camera" aria-hidden="true"></div>' +
+            '<div class="mode-switch_current-icon video rotates js-icon-video" data-icon="video" aria-hidden="true"></div>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
   }
 });
 
 /**
  * Examples:
  *
- *   this.classFrom('recording', true); //=> 'recording'
- *   this.classFrom('flash', 'on'); //=> 'flash-on'
- *   this.classFrom('recording', false); //=> ''
- *   this.classFrom('recording'); //=> 'recording'
- *   this.classFrom('recording', 'true'); //=> 'recording'
- *   this.classFrom('recording', 'false'); //=> ''
+ *   classFrom('recording', true); //=> 'recording'
+ *   classFrom('flash', 'on'); //=> 'flash-on'
+ *   classFrom('recording', false); //=> ''
+ *   classFrom('recording'); //=> 'recording'
+ *   classFrom('recording', 'true'); //=> 'recording'
+ *   classFrom('recording', 'false'); //=> ''
  *
  * @param  {String} key
  * @param  {*} value

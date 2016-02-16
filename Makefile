@@ -4,7 +4,7 @@
 # GAIA_DOMAIN : change that if you plan to use a different domain to update   #
 #               your applications or want to use a local domain               #
 #                                                                             #
-# HOMESCREEN  : url of the homescreen to start on                             #
+# SYSTEM      : url of the SYSTEM to start on                                 #
 #                                                                             #
 # ADB         : if you use a device and plan to send update it with your work #
 #               you need to have adb in your path or you can edit this line to#
@@ -15,11 +15,7 @@
 #                                                                             #
 # REPORTER    : Mocha reporter to use for test output.                        #
 #                                                                             #
-# MOZPERFOUT  : File path to output mozperf data. Empty mean stdout.          #
-#                                                                             #
-# MARIONETTE_RUNNER_HOST : The Marionnette runner host.                       #
-#                          Current values can be 'marionette-b2gdesktop-host' #
-#                          and 'marionette-device-host'                       #
+# MARIONETTE_RUNNER_HOST : ie marionette-device-host                          #
 #                                                                             #
 # COVERAGE    : Add blanket testing coverage report to use for test output.   #
 #                                                                             #
@@ -30,11 +26,11 @@
 #                                                                             #
 # Lint your code                                                              #
 #                                                                             #
-# use "make hint" and "make gjslint" to lint using respectively jshint and    #
-# gjslint.                                                                    #
+# Use "make lint" to lint using jshint                                        #
 #                                                                             #
-# Use "make lint" to lint using gjslint for blacklisted files, and jshint for #
-# other files.                                                                #
+# Use "make eslint" to lint using eslint. This is currently used for checks   #
+# that are beyond the other linter's scope, i.e., customized checks for       #
+# discouraged coding patterns or deprecated APIs.                             #
 #                                                                             #
 # APP=<app name> will hint/lint only this app.                                #
 # LINTED_FILES=<list of files> will (h/l)int only these space-separated files #
@@ -42,20 +38,16 @@
 #                                                                             #
 ###############################################################################
 #                                                                             #
-# XULrunner download and location configuration                               #
+# b2g desktop download and location configuration (formerly xulrunner)        #
 #                                                                             #
-# USE_LOCAL_XULRUNNER_SDK  : if you have a local XULrunner installation and   #
-#                            wants to use it                                  #
+# USE_LOCAL_XULRUNNER_SDK  : if you have a local b2g desktop installation     #
+#                            and want to use it                               #
 #                                                                             #
 # XULRUNNER_DIRECTORY      : if you use USE_LOCAL_XULRUNNER_SDK, this is      #
-#                            where your local XULrunner installation is       #
+#                            where your local b2g desktop installation is     #
+#                            Note: a full firefox build is good enough        #
 #                                                                             #
-# XULRUNNER_BASE_DIRECTORY : if you don't use USE_LOCAL_XULRUNNER_SDK, this   #
-#                            is where you want the automatic XULrunner        #
-#                            download to uncompress.                          #
-#                                                                             #
-# Submakes will get XULRUNNER_DIRECTORY, XULRUNNERSDK and XPCSHELLSDK as      #
-# absolute paths.                                                             #
+# Submakes will get XULRUNNER_DIRECTORY and XPCSHELLSDK as absolute paths.    #
 #                                                                             #
 ###############################################################################
 
@@ -63,49 +55,61 @@
 # Eliminate use of the built-in implicit rules to get faster.
 MAKEFLAGS=-r
 
--include local.mk
+# Rebuild when user specifying these config. If following config are specified,
+# build system considers it will load exteranl resources and force rebuilding.
+REBUILD?=0
+ifdef GAIA_DISTRIBUTION_DIR
+	REBUILD=1
+endif
+ifdef LOCALE_BASEDIR
+	REBUILD=1
+endif
+ifdef LOCALES_FILE
+	REBUILD=1
+endif
 
-# .b2g.mk recorded the make flags from Android.mk
-# This ensures |./flash.sh gaia| follows |./build.sh gaia| will pick up the same
-# flags.
--include .b2g.mk
+RUN_ON_NODE?=0
+
+BUILD_RUNNER=run-js-command
+
+-include local.mk
 
 # Headless bot does not need the full output of wget
 # and it can cause crashes in bot.io option is here so
 # -nv can be passed and turn off verbose output.
-WGET_OPTS?=-c
+WGET_OPTS?=-c -nv
 GAIA_DOMAIN?=gaiamobile.org
 
 DEBUG?=0
 DEVICE_DEBUG?=0
 NO_LOCK_SCREEN?=0
+SCREEN_TIMEOUT?=-1
 PRODUCTION?=0
-DESKTOP_SHIMS?=0
 GAIA_OPTIMIZE?=0
 GAIA_DEV_PIXELS_PER_PX?=1
+NGA_SERVICE_WORKERS?=0
+
+# Parallel build for multicores CPU
+P?=1
+
+# Alias
+ifdef GAIA_DPPX
+GAIA_DEV_PIXELS_PER_PX=$(GAIA_DPPX)
+endif
+
 DOGFOOD?=0
 NODE_MODULES_SRC?=modules.tar
+NODE_MODULES_CACHEDIR=modules_tar_cachedir
 
 # GAIA_DEVICE_TYPE customization
 # phone - default
 # tablet
 # tv
 GAIA_DEVICE_TYPE?=phone
+-include build/config/$(GAIA_DEVICE_TYPE)/device.mk
 
-# Haida customization
-# Pass 1 to enable haida features
-HAIDA?=0
 TEST_AGENT_PORT?=8789
 GAIA_APP_TARGET?=engineering
-
-# Flag to ease build a simulator-compatible profile
-SIMULATOR?=0
-ifeq ($(SIMULATOR),1)
-DESKTOP=1
-NOFTU=1
-NOFTUPING=1
-DEVICE_DEBUG=1
-endif
 
 # Enable compatibility to run in Firefox Desktop
 DESKTOP?=$(DEBUG)
@@ -115,10 +119,33 @@ NOFTU?=0
 NOFTUPING?=0
 # Automatically enable remote debugger
 REMOTE_DEBUGGER?=0
+# Debug mode for build process
+BUILD_DEBUG?=0
+
+# Enable PerformanceTiming logs
+PERF_LOGGING?=0
+
+# Are we building for RAPTOR?
+RAPTOR?=0
+
+# Enable hardware composing by default
+HARDWARE_COMPOSER?=1
+
+# Share performance and usage data
+SHARE_PERF_USAGE?=1
+
+# what version of node we expect to run for ideal support.
+NODE_VERSION=v4.2
+# the minimum major version is absolutely required.
+NODE_MIN_VERSION=4
+
+# what version of npm we expect to run for ideal support.
+NPM_VERSION=2
 
 ifeq ($(DEVICE_DEBUG),1)
 REMOTE_DEBUGGER=1
 NO_LOCK_SCREEN=1
+SCREEN_TIMEOUT?=300
 endif
 
 # We also disable FTU when running in Firefox or in debug mode
@@ -149,13 +176,9 @@ LOCAL_DOMAINS?=1
 
 ADB?=adb
 
-ifeq ($(DEBUG),1)
-SCHEME=http://
-else
 SCHEME=app://
-endif
 
-HOMESCREEN?=$(SCHEME)system.$(GAIA_DOMAIN)
+SYSTEM?=$(SCHEME)system.$(GAIA_DOMAIN)
 
 BUILD_APP_NAME?=*
 ifneq ($(APP),)
@@ -164,12 +187,18 @@ BUILD_APP_NAME=$(APP)
 endif
 endif
 
-REPORTER?=spec
+# BUILDAPP variable defines the target b2g platform (eg desktop, device)
+# and exports it for the gaia-marionette script
+BUILDAPP?=desktop
+export BUILDAPP
 # Ensure that NPM only logs warnings and errors
 export npm_config_loglevel=warn
+ifneq ($(BUILDAPP),desktop)
+REPORTER?=mocha-tbpl-reporter
+endif
+REPORTER?=spec
 MARIONETTE_RUNNER_HOST?=marionette-b2gdesktop-host
-TEST_MANIFEST?=./shared/test/integration/local-manifest.json
-MOZPERFOUT?=""
+TEST_MANIFEST?=$(shell pwd)/shared/test/integration/local-manifest.json
 
 ifeq ($(MAKECMDGOALS), demo)
 GAIA_DOMAIN=thisdomaindoesnotexist.org
@@ -250,47 +279,80 @@ SEP_FOR_SED=\\\\
 MSYS_FIX=/
 endif
 
-# The install-xulrunner target arranges to get xulrunner downloaded and sets up
-# some commands for invoking it. But it is platform dependent
-# IMPORTANT: you should generally change the directory name when you change the
-# URL unless you know what you're doing
-XULRUNNER_SDK_URL=http://ftp.mozilla.org/pub/mozilla.org/xulrunner/nightly/2014/03/2014-03-08-03-02-03-mozilla-central/xulrunner-30.0a1.en-US.
-XULRUNNER_BASE_DIRECTORY?=xulrunner-sdk-30
-XULRUNNER_DIRECTORY?=$(XULRUNNER_BASE_DIRECTORY)/xulrunner-sdk
-XULRUNNER_URL_FILE=$(XULRUNNER_BASE_DIRECTORY)/.url
+# The b2g_sdk target arranges to get b2g desktop downloaded and set up.
+# This is platform dependent code, so a mite complicated.
+# Note: this used to be just xulrunner, hence the use of that name throughout,
+# but xulrunner doesn't include everything we need
+
+# Configuration for pre-built or already downloaded b2g (or alternative)
+ifdef USE_LOCAL_XULRUNNER_SDK
+
+ifndef XULRUNNER_DIRECTORY
+$(error XULRUNNER_DIRECTORY must be set if USE_LOCAL_XULRUNNER_SDK is set)
+endif
+
+# Some guesswork to figure out where the xpcshell binary really is
+# Most of this is to accommodate the variety of setups used
+# by different platforms, build systems and TBPL configurations
+# including Firefox, xulrunner and other builds
+XPCSHELL_GUESS = $(firstword $(wildcard \
+    $(XULRUNNER_DIRECTORY)/B2G.app/Contents/MacOS/xpcshell \
+    $(XULRUNNER_DIRECTORY)/bin/XUL.framework/Versions/Current/xpcshell \
+    $(XULRUNNER_DIRECTORY)/bin/xpcshell* \
+    $(XULRUNNER_DIRECTORY)/b2g/xpcshell* \
+  ))
+ifneq (,$(XPCSHELL_GUESS))
+XPCSHELLSDK := $(abspath $(XPCSHELL_GUESS))
+XULRUNNERSDK := $(wildcard $(XPCSHELLSDK)/run-mozilla.sh)
+endif
+
+# Configuration for a downloaded b2g desktop
+else
+
+# Determine the host-dependent bundle to download
+B2G_SDK_VERSION := 39.0a1
+B2G_SDK_DATE := 2015/03/2015-03-05-16-02-02
+
+XULRUNNER_BASE_DIR ?= b2g_sdk
+XULRUNNER_DIRECTORY ?= $(XULRUNNER_BASE_DIR)/$(B2G_SDK_VERSION)-$(notdir $(B2G_SDK_DATE))
+XULRUNNER_DIRECTORY := $(abspath $(XULRUNNER_DIRECTORY))
 
 ifeq ($(SYS),Darwin)
-# For mac we have the xulrunner-sdk so check for this directory
-# We're on a mac
-XULRUNNER_MAC_SDK_URL=$(XULRUNNER_SDK_URL)mac-
-ifeq ($(ARCH),i386)
-# 32-bit
-XULRUNNER_SDK_DOWNLOAD=$(XULRUNNER_MAC_SDK_URL)i386.sdk.tar.bz2
-else
-# 64-bit
-XULRUNNER_SDK_DOWNLOAD=$(XULRUNNER_MAC_SDK_URL)x86_64.sdk.tar.bz2
-endif
-XULRUNNERSDK=$(abspath $(XULRUNNER_DIRECTORY)/bin/XUL.framework/Versions/Current/run-mozilla.sh)
-XPCSHELLSDK=$(abspath $(XULRUNNER_DIRECTORY)/bin/XUL.framework/Versions/Current/xpcshell)
+B2G_SDK_EXT := dmg
+B2G_SDK_OS := mac64
+XPCSHELLSDK := $(abspath $(XULRUNNER_DIRECTORY)/B2G.app/Contents/MacOS/xpcshell)
 
 else ifeq ($(findstring MINGW32,$(SYS)), MINGW32)
-# For windows we only have one binary
-XULRUNNER_SDK_DOWNLOAD=$(XULRUNNER_SDK_URL)win32.sdk.zip
-XULRUNNERSDK=
-XPCSHELLSDK=$(abspath $(XULRUNNER_DIRECTORY)/bin/xpcshell)
+B2G_SDK_EXT := zip
+B2G_SDK_OS := win32
+XPCSHELLSDK := $(abspath $(XULRUNNER_DIRECTORY)/b2g/xpcshell.exe)
 
-else
 # Otherwise, assume linux
-# downloads and installs locally xulrunner to run the xpchsell
-# script that creates the offline cache
-XULRUNNER_LINUX_SDK_URL=$(XULRUNNER_SDK_URL)linux-
-ifeq ($(ARCH),x86_64)
-XULRUNNER_SDK_DOWNLOAD=$(XULRUNNER_LINUX_SDK_URL)x86_64.sdk.tar.bz2
 else
-XULRUNNER_SDK_DOWNLOAD=$(XULRUNNER_LINUX_SDK_URL)i686.sdk.tar.bz2
+B2G_SDK_EXT := tar.bz2
+ifeq ($(ARCH),x86_64)
+B2G_SDK_OS := linux-x86_64
+else
+B2G_SDK_OS := linux-i686
 endif
-XULRUNNERSDK=$(abspath $(XULRUNNER_DIRECTORY)/bin/run-mozilla.sh)
-XPCSHELLSDK=$(abspath $(XULRUNNER_DIRECTORY)/bin/xpcshell)
+XPCSHELLSDK := $(abspath $(XULRUNNER_DIRECTORY)/b2g/xpcshell)
+endif
+
+B2G_SDK_URL_BASE := http://ftp.mozilla.org/pub/mozilla.org/b2g/nightly/$(B2G_SDK_DATE)-mozilla-central
+B2G_SDK_FILE_NAME := b2g-$(B2G_SDK_VERSION).multi.$(B2G_SDK_OS).$(B2G_SDK_EXT)
+B2G_SDK_URL := $(B2G_SDK_URL_BASE)/$(B2G_SDK_FILE_NAME)
+B2G_SDK_URL_FILE := $(XULRUNNER_DIRECTORY)/.b2g.url
+
+endif # Firefox build workaround
+
+# XULRUNNERSDK used to be run-mozilla.sh, but some builds don't include it
+# Without that, Linux needs to reference the directory containing libxul.so
+ifeq (,$(XULRUNNERSDK)$(findstring Darwin,$(SYS))$(findstring MINGW32_,$(SYS)))
+ifeq (,$(LD_LIBRARY_PATH))
+XULRUNNERSDK := LD_LIBRARY_PATH="$(dir $(XPCSHELLSDK))"
+else
+XULRUNNERSDK := LD_LIBRARY_PATH="$(dir $(XPCSHELLSDK)):$(LD_LIBRARY_PATH)"
+endif
 endif
 
 # It's difficult to figure out XULRUNNERSDK in subprocesses; it's complex and
@@ -302,6 +364,9 @@ export GAIA_DIR
 export SEP
 export SEP_FOR_SED
 
+# Need to predefine XULRUNNERSDK, XPCSHELLSDK, GAIA_DIR
+include build/common.mk
+
 ifndef GAIA_APP_CONFIG
 GAIA_APP_CONFIG=$(GAIA_DIR)$(SEP)build$(SEP)config$(SEP)$(GAIA_DEVICE_TYPE)$(SEP)apps-$(GAIA_APP_TARGET).list
 endif
@@ -309,39 +374,52 @@ endif
 ifndef GAIA_DISTRIBUTION_DIR
   GAIA_DISTRIBUTION_DIR := $(GAIA_DIR)$(SEP)distribution
 else
-	ifneq (,$(findstring MINGW32_,$(SYS)))
-		GAIA_DISTRIBUTION_DIR := $(shell pushd $(GAIA_DISTRIBUTION_DIR) > /dev/null; \
-			pwd -W | sed 's|/|\\\\|g'; popd > /dev/null;)
-	else
-		GAIA_DISTRIBUTION_DIR := $(realpath $(GAIA_DISTRIBUTION_DIR))
-	endif
+  ifneq (,$(findstring MINGW32_,$(SYS)))
+    GAIA_DISTRIBUTION_DIR := $(shell pushd $(GAIA_DISTRIBUTION_DIR) > /dev/null; \
+      pwd -W | sed 's|/|\\\\|g'; popd > /dev/null;)
+  else
+    GAIA_DISTRIBUTION_DIR := $(realpath $(GAIA_DISTRIBUTION_DIR))
+  endif
 endif
 export GAIA_DISTRIBUTION_DIR
 
 SETTINGS_PATH ?= build/config/custom-settings.json
 KEYBOARD_LAYOUTS_PATH ?= build/config/keyboard-layouts.json
+CONTACTS_IMPORT_SERVICES_PATH ?= build/config/communications_services.json
+EMAIL_SERVICES_PATH ?=
+DEFAULT_KEYBOAD_SYMBOLS_FONT ?= shared/style/keyboard_symbols/Keyboard-Symbols.ttf
+DEFAULT_GAIA_ICONS_FONT ?= shared/elements/gaia-icons/fonts/gaia-icons.ttf
 
 ifdef GAIA_DISTRIBUTION_DIR
-	DISTRIBUTION_SETTINGS := $(GAIA_DISTRIBUTION_DIR)$(SEP)settings.json
-	DISTRIBUTION_CONTACTS := $(GAIA_DISTRIBUTION_DIR)$(SEP)contacts.json
-	DISTRIBUTION_APP_CONFIG := $(GAIA_DISTRIBUTION_DIR)$(SEP)apps.list
-	DISTRIBUTION_VARIANT := $(GAIA_DISTRIBUTION_DIR)$(SEP)variant.json
-	DISTRIBUTION_KEYBOARD_LAYOUTS := $(GAIA_DISTRIBUTION_DIR)$(SEP)keyboard-layouts.json
-	ifneq ($(wildcard $(DISTRIBUTION_SETTINGS)),)
-		SETTINGS_PATH := $(DISTRIBUTION_SETTINGS)
-	endif
-	ifneq ($(wildcard $(DISTRIBUTION_CONTACTS)),)
-		CONTACTS_PATH := $(DISTRIBUTION_CONTACTS)
-	endif
-	ifneq ($(wildcard $(DISTRIBUTION_APP_CONFIG)),)
-		GAIA_APP_CONFIG := $(DISTRIBUTION_APP_CONFIG)
-	endif
-	ifneq ($(wildcard $(DISTRIBUTION_VARIANT)),)
-		VARIANT_PATH := $(DISTRIBUTION_VARIANT)
-	endif
-	ifneq ($(wildcard $(DISTRIBUTION_KEYBOARD_LAYOUTS)),)
-		KEYBOARD_LAYOUTS_PATH := $(DISTRIBUTION_KEYBOARD_LAYOUTS)
-	endif
+  DISTRIBUTION_SETTINGS := $(GAIA_DISTRIBUTION_DIR)$(SEP)settings.json
+  DISTRIBUTION_CONTACTS := $(GAIA_DISTRIBUTION_DIR)$(SEP)contacts.json
+  DISTRIBUTION_APP_CONFIG := $(GAIA_DISTRIBUTION_DIR)$(SEP)apps.list
+  DISTRIBUTION_VARIANT := $(GAIA_DISTRIBUTION_DIR)$(SEP)variant.json
+  DISTRIBUTION_KEYBOARD_LAYOUTS := $(GAIA_DISTRIBUTION_DIR)$(SEP)keyboard-layouts.json
+  DISTRIBUTION_CONTACTS_IMPORT_SERVICES := $(GAIA_DISTRIBUTION_DIR)$(SEP)communications_services.json
+  ifneq ($(wildcard $(DISTRIBUTION_SETTINGS)),)
+    SETTINGS_PATH := $(DISTRIBUTION_SETTINGS)
+  endif
+  ifneq ($(wildcard $(DISTRIBUTION_CONTACTS)),)
+    CONTACTS_PATH := $(DISTRIBUTION_CONTACTS)
+  endif
+  ifneq ($(wildcard $(DISTRIBUTION_APP_CONFIG)),)
+    GAIA_APP_CONFIG := $(DISTRIBUTION_APP_CONFIG)
+  endif
+  ifneq ($(wildcard $(DISTRIBUTION_VARIANT)),)
+    VARIANT_PATH := $(DISTRIBUTION_VARIANT)
+  endif
+  ifneq ($(wildcard $(DISTRIBUTION_KEYBOARD_LAYOUTS)),)
+    KEYBOARD_LAYOUTS_PATH := $(DISTRIBUTION_KEYBOARD_LAYOUTS)
+  endif
+  ifneq ($(wildcard $(DISTRIBUTION_CONTACTS_IMPORT_SERVICES)),)
+    CONTACTS_IMPORT_SERVICES_PATH := $(DISTRIBUTION_CONTACTS_IMPORT_SERVICES)
+  endif
+  ifneq ($(wildcard $(DISTRIBUTION_EMAIL_SERVICES)),)
+    EMAIL_SERVICES_PATH := $(DISTRIBUTION_EMAIL_SERVICES)
+  endif
+
+  -include $(GAIA_DISTRIBUTION_DIR)$(SEP)distro.mk
 endif
 
 # Read the file specified in $GAIA_APP_CONFIG and turn them into $GAIA_APPDIRS,
@@ -360,43 +438,48 @@ GAIA_APP_CONFIG := /tmp/gaia-apps-temp.list
 $(warning GAIA_APP_SRCDIRS is deprecated, please use GAIA_APP_CONFIG)
 endif
 
-GAIA_APPDIRS=$(shell while read LINE; do \
-	if [ "$${LINE\#$${LINE%?}}" = "*" ]; then \
-		srcdir="`echo "$$LINE" | sed 's/.\{2\}$$//'`"; \
-		[ -d $(GAIA_DIR)$(SEP)$$srcdir ] && find -L $(GAIA_DIR)$(SEP)$$srcdir -mindepth 1 -maxdepth 1 -type d | sed 's@[/\\]@$(SEP_FOR_SED)@g'; \
-		[ -d $(GAIA_DISTRIBUTION_DIR)$(SEP)$$srcdir ] && find -L $(GAIA_DISTRIBUTION_DIR)$(SEP)$$srcdir -mindepth 1 -maxdepth 1 -type d | sed 's@[/\\]@$(SEP_FOR_SED)@g'; \
-	else \
-    if [ -d "$(GAIA_DISTRIBUTION_DIR)$(SEP)$$LINE" ]; then \
-      echo "$(GAIA_DISTRIBUTION_DIR)$(SEP)$$LINE" | sed 's@[/\\]@$(SEP_FOR_SED)@g'; \
-    elif [ -d "$(GAIA_DIR)$(SEP)$$LINE" ]; then \
-      echo "$(GAIA_DIR)$(SEP)$$LINE" | sed 's@[/\\]@$(SEP_FOR_SED)@g'; \
-    elif [ -d "$$LINE" ]; then \
-      echo "$$LINE" | sed 's@[/\\]@$(SEP_FOR_SED)@g'; \
-    fi \
-	fi \
-done < $(GAIA_APP_CONFIG))
+GAIA_ALLAPPDIRS=$(shell find -L $(GAIA_DIR)$(SEP)apps $(GAIA_DIR)$(SEP)dev_apps $(GAIA_DIR)$(SEP)tv_apps -maxdepth 1 -mindepth 1 -type d  | sed 's@[/\\]@$(SEP_FOR_SED)@g')
+
+GAIA_APPDIRS?=$(shell $(call run-js-command,scan-appdir, \
+		GAIA_APP_CONFIG="$(GAIA_APP_CONFIG)" \
+		GAIA_DIR="$(GAIA_DIR)" \
+		GAIA_DISTRIBUTION_DIR="$(GAIA_DISTRIBUTION_DIR)" \
+		GAIA_APP_SRCDIRS="$(GAIA_APP_SRCDIRS)"))
 
 ifneq ($(GAIA_OUTOFTREE_APP_SRCDIRS),)
   $(shell mkdir -p outoftree_apps \
     $(foreach dir,$(GAIA_OUTOFTREE_APP_SRCDIRS),\
       $(foreach appdir,$(wildcard $(dir)/*),\
-        && ln -sf $(appdir) outoftree_apps/)))
+	&& ln -sf $(appdir) outoftree_apps/)))
 endif
 
 GAIA_LOCALES_PATH?=locales
 LOCALES_FILE?=shared/resources/languages.json
 GAIA_LOCALE_SRCDIRS=$(GAIA_DIR)$(SEP)shared $(GAIA_APPDIRS)
 GAIA_DEFAULT_LOCALE?=en-US
-GAIA_INLINE_LOCALES?=1
+GAIA_PRETRANSLATE?=1
 GAIA_CONCAT_LOCALES?=1
 
 # This variable is for customizing the keyboard layouts in a build.
-GAIA_KEYBOARD_LAYOUTS?=en,pt-BR,es,de,fr,pl,zh-Hans-Pinyin
+# Include the ID of the layout in this variable will make both the dictionary
+# and the layout included in the package.
+GAIA_KEYBOARD_LAYOUTS?=en,emoji,pt-BR,es,de,fr,fr-CA,pl,ko,zh-Hans-Pinyin,en-Dvorak
+# We optionally offers downloading the dictionary from the CDN, instead of
+# including it in the build.
+# Include the ID of the layout in this variable will make it appear in the
+# keyboard settings page, allowing user to download the dictionary.
+# Any layout listed here that doesn't require a dictionary download and/or
+# comes with its own dictionary will become a pre-installed layout,
+# behaving the same way as if it is listed in the above variable.
+GAIA_KEYBOARD_DOWNLOADABLE_LAYOUTS?=noPreloadDictRequired
+# Enable user dictionary for built-in keyboard app by default
+GAIA_KEYBOARD_ENABLE_USER_DICT?=1
+
 
 ifeq ($(SYS),Darwin)
 MD5SUM = md5 -r
 SED_INPLACE_NO_SUFFIX = /usr/bin/sed -i ''
-DOWNLOAD_CMD = /usr/bin/curl -OL
+DOWNLOAD_CMD = /usr/bin/curl -OLsS
 TAR_WILDCARDS = tar
 else
 MD5SUM = md5sum -b
@@ -408,19 +491,25 @@ endif
 # Test agent setup
 TEST_COMMON=dev_apps/test-agent/common
 ifeq ($(strip $(NODEJS)),)
-	NODEJS := `which node`
+  NODEJS := $(shell which node)
+endif
+ifeq ($(strip $(NODEJS)),)
+  NODEJS := $(shell which nodejs)
 endif
 
 ifeq ($(strip $(NPM)),)
-	NPM := `which npm`
+  NPM := $(shell which npm)
 endif
 
 TEST_AGENT_CONFIG="./dev_apps/test-agent/config.json"
+TEST_AGENT_COVERAGE="./build/config/test-agent-coverage.json"
+
+CAPABILITIES=$(GAIA_DIR)$(SEP)tests$(SEP)jsmarionette$(SEP)capabilities.json
 
 #Marionette testing variables
 #make sure we're python 2.7.x
 ifeq ($(strip $(PYTHON_27)),)
-PYTHON_27 := `which python`
+PYTHON_27 := $(shell which python)
 endif
 PYTHON_FULL := $(wordlist 2,4,$(subst ., ,$(shell $(PYTHON_27) --version 2>&1)))
 PYTHON_MAJOR := $(word 1,$(PYTHON_FULL))
@@ -429,167 +518,133 @@ MARIONETTE_HOST ?= localhost
 MARIONETTE_PORT ?= 2828
 TEST_DIRS ?= $(GAIA_DIR)/tests
 
+PROFILE_DIR?=$(GAIA_DIR)$(SEP)$(PROFILE_FOLDER)
+COREWEBAPPS_DIR?=$(PROFILE_DIR)
+
 define BUILD_CONFIG
 { \
-	"ADB" : "$(patsubst "%",%,$(ADB))", \
-	"GAIA_DIR" : "$(GAIA_DIR)", \
-	"PROFILE_DIR" : "$(GAIA_DIR)$(SEP)$(PROFILE_FOLDER)", \
-	"PROFILE_FOLDER" : "$(PROFILE_FOLDER)", \
-	"GAIA_SCHEME" : "$(SCHEME)", \
-	"GAIA_DOMAIN" : "$(GAIA_DOMAIN)", \
-	"DEBUG" : $(DEBUG), \
-	"LOCAL_DOMAINS" : $(LOCAL_DOMAINS), \
-	"DESKTOP" : $(DESKTOP), \
-	"DEVICE_DEBUG" : $(DEVICE_DEBUG), \
-	"NO_LOCK_SCREEN" : $(NO_LOCK_SCREEN), \
-	"HOMESCREEN" : "$(HOMESCREEN)", \
-	"GAIA_PORT" : "$(GAIA_PORT)", \
-	"GAIA_LOCALES_PATH" : "$(GAIA_LOCALES_PATH)", \
-	"GAIA_INSTALL_PARENT" : "$(GAIA_INSTALL_PARENT)", \
-	"LOCALES_FILE" : "$(subst \,\\,$(LOCALES_FILE))", \
-	"GAIA_KEYBOARD_LAYOUTS" : "$(GAIA_KEYBOARD_LAYOUTS)", \
-	"LOCALE_BASEDIR" : "$(subst \,\\,$(LOCALE_BASEDIR))", \
-	"BUILD_APP_NAME" : "$(BUILD_APP_NAME)", \
-	"PRODUCTION" : "$(PRODUCTION)", \
-	"GAIA_OPTIMIZE" : "$(GAIA_OPTIMIZE)", \
-	"GAIA_DEV_PIXELS_PER_PX" : "$(GAIA_DEV_PIXELS_PER_PX)", \
-	"DOGFOOD" : "$(DOGFOOD)", \
-	"OFFICIAL" : "$(MOZILLA_OFFICIAL)", \
-	"GAIA_DEFAULT_LOCALE" : "$(GAIA_DEFAULT_LOCALE)", \
-	"GAIA_INLINE_LOCALES" : "$(GAIA_INLINE_LOCALES)", \
-	"GAIA_CONCAT_LOCALES" : "$(GAIA_CONCAT_LOCALES)", \
-	"GAIA_ENGINE" : "xpcshell", \
-	"GAIA_DISTRIBUTION_DIR" : "$(GAIA_DISTRIBUTION_DIR)", \
-	"GAIA_APPDIRS" : "$(GAIA_APPDIRS)", \
-	"NOFTU" : "$(NOFTU)", \
-	"REMOTE_DEBUGGER" : "$(REMOTE_DEBUGGER)", \
-	"HAIDA" : $(HAIDA), \
-	"TARGET_BUILD_VARIANT" : "$(TARGET_BUILD_VARIANT)", \
-	"SETTINGS_PATH" : "$(subst \,\\,$(SETTINGS_PATH))", \
-	"FTU_PING_URL": "$(FTU_PING_URL)", \
-	"KEYBOARD_LAYOUTS_PATH" : "$(KEYBOARD_LAYOUTS_PATH)", \
-	"STAGE_DIR" : "$(STAGE_DIR)", \
-	"VARIANT_PATH" : "$(VARIANT_PATH)" \
+  "ADB" : "$(patsubst "%",%,$(ADB))", \
+  "GAIA_DIR" : "$(GAIA_DIR)", \
+  "PROFILE_DIR" : "$(PROFILE_DIR)", \
+  "PROFILE_FOLDER" : "$(PROFILE_FOLDER)", \
+  "COREWEBAPPS_DIR" : "$(COREWEBAPPS_DIR)", \
+  "GAIA_SCHEME" : "$(SCHEME)", \
+  "GAIA_DOMAIN" : "$(GAIA_DOMAIN)", \
+  "DEBUG" : "$(DEBUG)", \
+  "LOCAL_DOMAINS" : "$(LOCAL_DOMAINS)", \
+  "DESKTOP" : "$(DESKTOP)", \
+  "DEVICE_DEBUG" : "$(DEVICE_DEBUG)", \
+  "NO_LOCK_SCREEN" : "$(NO_LOCK_SCREEN)", \
+  "SCREEN_TIMEOUT" : "$(SCREEN_TIMEOUT)", \
+  "SYSTEM" : "$(SYSTEM)", \
+  "GAIA_PORT" : "$(GAIA_PORT)", \
+  "GAIA_LOCALES_PATH" : "$(GAIA_LOCALES_PATH)", \
+  "GAIA_INSTALL_PARENT" : "$(GAIA_INSTALL_PARENT)", \
+  "LOCALES_FILE" : "$(subst \,\\,$(LOCALES_FILE))", \
+  "GAIA_KEYBOARD_LAYOUTS" : "$(GAIA_KEYBOARD_LAYOUTS)", \
+  "GAIA_KEYBOARD_DOWNLOADABLE_LAYOUTS" : "$(GAIA_KEYBOARD_DOWNLOADABLE_LAYOUTS)", \
+  "GAIA_KEYBOARD_ENABLE_USER_DICT" : "$(GAIA_KEYBOARD_ENABLE_USER_DICT)", \
+  "LOCALE_BASEDIR" : "$(subst \,\\,$(LOCALE_BASEDIR))", \
+  "BUILD_APP_NAME" : "$(BUILD_APP_NAME)", \
+  "PRODUCTION" : "$(PRODUCTION)", \
+  "GAIA_OPTIMIZE" : "$(GAIA_OPTIMIZE)", \
+  "GAIA_DEVICE_TYPE" : "$(GAIA_DEVICE_TYPE)", \
+  "GAIA_DEV_PIXELS_PER_PX" : "$(GAIA_DEV_PIXELS_PER_PX)", \
+  "DOGFOOD" : "$(DOGFOOD)", \
+  "OFFICIAL" : "$(MOZILLA_OFFICIAL)", \
+  "GAIA_DEFAULT_LOCALE" : "$(GAIA_DEFAULT_LOCALE)", \
+  "GAIA_PRETRANSLATE" : "$(GAIA_PRETRANSLATE)", \
+  "GAIA_CONCAT_LOCALES" : "$(GAIA_CONCAT_LOCALES)", \
+  "GAIA_ENGINE" : "xpcshell", \
+  "GAIA_DISTRIBUTION_DIR" : "$(GAIA_DISTRIBUTION_DIR)", \
+  "GAIA_APPDIRS" : "$(GAIA_APPDIRS)", \
+  "GAIA_ALLAPPDIRS" : "$(GAIA_ALLAPPDIRS)", \
+  "GAIA_MEMORY_PROFILE" : "$(GAIA_MEMORY_PROFILE)", \
+  "HARDWARE_COMPOSER" : "$(HARDWARE_COMPOSER)", \
+  "NOFTU" : "$(NOFTU)", \
+  "REMOTE_DEBUGGER" : "$(REMOTE_DEBUGGER)", \
+  "TARGET_BUILD_VARIANT" : "$(TARGET_BUILD_VARIANT)", \
+  "SETTINGS_PATH" : "$(subst \,\\,$(SETTINGS_PATH))", \
+  "FTU_PING_URL" : "$(FTU_PING_URL)", \
+  "KEYBOARD_LAYOUTS_PATH" : "$(KEYBOARD_LAYOUTS_PATH)", \
+  "CONTACTS_IMPORT_SERVICES_PATH" : "$(CONTACTS_IMPORT_SERVICES_PATH)", \
+  "EMAIL_SERVICES_PATH" : "$(EMAIL_SERVICES_PATH)", \
+  "STAGE_DIR" : "$(STAGE_DIR)", \
+  "GAIA_APP_TARGET" : "$(GAIA_APP_TARGET)", \
+  "BUILD_DEBUG" : "$(BUILD_DEBUG)", \
+  "VARIANT_PATH" : "$(VARIANT_PATH)", \
+  "REBUILD" : "$(REBUILD)", \
+  "P" : "$(P)", \
+  "VERBOSE" : "$(VERBOSE)", \
+  "PERF_LOGGING" : "$(PERF_LOGGING)", \
+  "SHARE_PERF_USAGE" : "$(SHARE_PERF_USAGE)", \
+  "DEFAULT_KEYBOAD_SYMBOLS_FONT" : "$(DEFAULT_KEYBOAD_SYMBOLS_FONT)", \
+  "DEFAULT_GAIA_ICONS_FONT" : "$(DEFAULT_GAIA_ICONS_FONT)", \
+  "RAPTOR" : "$(RAPTOR)", \
+  "RAPTOR_TRANSFORM" : "$(RAPTOR_TRANSFORM)", \
+  "RAPTOR_TRANSFORMER_PATH" : "$(RAPTOR_TRANSFORMER_PATH)", \
+  "NGA_SERVICE_WORKERS" : "$(NGA_SERVICE_WORKERS)", \
+  "FIREFOX_SYNC" : "$(FIREFOX_SYNC)", \
+  "RUN_ON_NODE" : "$(RUN_ON_NODE)" \
 }
 endef
 
 export BUILD_CONFIG
 
-include build/common.mk
-
 # Generate profile/
-$(PROFILE_FOLDER): preferences post-manifest app-makefiles keyboard-layouts copy-build-stage-data test-agent-config offline contacts extensions $(XULRUNNER_BASE_DIRECTORY) .git/hooks/pre-commit create-default-data $(PROFILE_FOLDER)/installed-extensions.json
+$(PROFILE_FOLDER): profile-dir build-app test-agent-config contacts extensions b2g_sdk .git/hooks/pre-commit
 ifeq ($(BUILD_APP_NAME),*)
 	@echo "Profile Ready: please run [b2g|firefox] -profile $(CURDIR)$(SEP)$(PROFILE_FOLDER)"
 endif
 
-.PHONY: test-agent-bootstrap
-test-agent-bootstrap: $(XULRUNNER_BASE_DIRECTORY)
-	@$(call run-js-command,test-agent-bootstrap)
-
 $(STAGE_DIR):
 	mkdir -p $@
 
-# FIXME: we use |STAGE_APP_DIR="../../build_stage/$$APP"| here because we got
-# some problem on Windows if use absolute path.
-.PHONY: app-makefiles
-app-makefiles: $(XULRUNNER_BASE_DIRECTORY) keyboard-layouts $(STAGE_DIR)/settings_stage.json webapp-manifests svoperapps clear-stage-app webapp-shared | $(STAGE_DIR)
-	@for appdir in $(GAIA_APPDIRS); \
-	do \
-		APP="`basename $$appdir`"; \
-    if [[ ("$$appdir" =~ "${BUILD_APP_NAME}") || ("${BUILD_APP_NAME}" == "*") ]]; then \
-    	if [ -r "$$appdir/Makefile" ]; then \
-    		echo "execute Makefile for $$APP app" ; \
-    		STAGE_APP_DIR="../../build_stage/$$APP" make -C "$$appdir" ; \
-    	else \
-    		echo "copy $$APP to build_stage/" ; \
-    		cp -r "$$appdir" $(STAGE_DIR) && \
-    		if [ -r "$$appdir/build/build.js" ]; then \
-    			echo "execute $$APP/build/build.js"; \
-    			export APP_DIR=$$appdir; \
-    			$(call run-js-command,app/build); \
-    		fi; \
-    	fi && \
-    	$(call clean-build-files,$(STAGE_DIR)/$$APP); \
-    fi; \
-  done
-
-.PHONY: clear-stage-app
-clear-stage-app:
-	@for appdir in $(GAIA_APPDIRS); \
-	do \
-		if [[ ("$$appdir" =~ "${BUILD_APP_NAME}") || ("${BUILD_APP_NAME}" == "*") ]]; then \
-			APP="`basename $$appdir`"; \
-			echo "clear $$APP in build_stage" ; \
-			rm -rf $(STAGE_DIR)/$$APP/*; \
-		fi; \
-	done
-
-svoperapps: $(XULRUNNER_BASE_DIRECTORY)
-	@$(call run-js-command,svoperapps)
-
 LANG=POSIX # Avoiding sort order differences between OSes
 
-# Generate $(PROFILE_FOLDER)/webapps/
-# We duplicate manifest.webapp to manifest.webapp and manifest.json
-# to accommodate Gecko builds without bug 757613. Should be removed someday.
-#
-# We depend on app-makefiles so that per-app Makefiles could modify the manifest
-# as part of their build step.  None currently do this, and webapp-manifests.js
-# would likely want to change to see if the build directory includes a manifest
-# in that case.  Right now this is just making sure we don't race app-makefiles
-# in case someone does decide to get fancy.
-.PHONY: webapp-manifests
-webapp-manifests: $(XULRUNNER_BASE_DIRECTORY) $(STAGE_DIR)
-	@$(call run-js-command,webapp-manifests)
+.PHONY: build-app
+build-app: app
+	@$(call $(BUILD_RUNNER),update-webapps-json)
 
-.PHONY: webapp-zip
-# Generate $(PROFILE_FOLDER)/webapps/APP/application.zip
-webapp-zip: webapp-optimize app-makefiles keyboard-layouts $(XULRUNNER_BASE_DIRECTORY)
-ifneq ($(DEBUG),1)
-	@mkdir -p $(PROFILE_FOLDER)/webapps
-	@$(call run-js-command,webapp-zip)
-endif
+.PHONY: app
+app: b2g_sdk preload-app profile-dir
+	@$(call $(BUILD_RUNNER),app)
 
-.PHONY: webapp-shared
-# Copy shared files to stage folders
-webapp-shared: $(XULRUNNER_BASE_DIRECTORY) keyboard-layouts $(STAGE_DIR) clear-stage-app
-	@$(call run-js-command, webapp-shared)
+.PHONY: pre-app
+pre-app: b2g_sdk profile-dir
+	@$(call $(BUILD_RUNNER),pre-app)
+
+# Keep old targets just for people/scripts still using it
+.PHONY: post-manifest
+post-manifest: app
+
+.PHONY: copy-build-stage-data
+copy-build-stage-data: app
 
 .PHONY: webapp-optimize
-# Web app optimization steps (like precompling l10n, concatenating js files, etc..).
-# You need xulrunner ($(XULRUNNER_BASE_DIRECTORY)) to do this, and you need the app
-# to have been built (app-makefiles).
-webapp-optimize: multilocale app-makefiles $(XULRUNNER_BASE_DIRECTORY)
-	@$(call run-js-command,webapp-optimize)
+webapp-optimize: app
 
-.PHONY: optimize-clean
-# Remove temporary l10n files created by the webapp-optimize step.  Because
-# webapp-zip wants these files to still be around during the zip stage, depend
-# on webapp-zip so it runs to completion before we start the cleanup.
-optimize-clean: webapp-zip $(XULRUNNER_BASE_DIRECTORY)
-	@$(call run-js-command,optimize-clean)
+.PHONY: webapp-zip
+webapp-zip: app
 
-.PHONY: keyboard-layouts
-# A separate step for shared/ folder to generate its content in build time
-keyboard-layouts: webapp-manifests $(XULRUNNER_BASE_DIRECTORY)
-	@$(call run-js-command,keyboard-layouts)
-
-.PHONY: post-manifest
-# Updates hostnames for InterApp Communication APIs.
-post-manifest: app-makefiles $(XULRUNNER_BASE_DIRECTORY)
-	@$(call run-js-command,post-manifest)
+.PHONY: preload-app
+preload-app:
+	$(call $(BUILD_RUNNER),preload,GAIA_DIR="$(GAIA_DIR)" GAIA_DISTRIBUTION_DIR="$(GAIA_DISTRIBUTION_DIR)")
 
 # Get additional extensions
-$(PROFILE_FOLDER)/installed-extensions.json: build/config/additional-extensions.json $(wildcard .build/config/custom-extensions.json)
-ifeq ($(SIMULATOR),1)
-	# Prevent installing external firefox helper addon for the simulator
-else ifeq ($(DESKTOP),1)
-	@$(call run-js-command,additional-extensions)
+$(STAGE_DIR)/additional-extensions/downloaded.json: build/config/additional-extensions.json $(wildcard .build/config/custom-extensions.json)
+ifeq ($(DESKTOP),1)
+	@$(call $(BUILD_RUNNER),additional-extensions)
 endif
 
 profile-dir:
 	@test -d $(PROFILE_FOLDER) || mkdir -p $(PROFILE_FOLDER)
+ifeq ($(GAIA_DEVICE_TYPE), tv)
+	@test -d $(PROFILE_FOLDER)/dummy || mkdir -p $(PROFILE_FOLDER)/dummy
+	@cp $(GAIA_DIR)/build/config/tv/simulator/settings.json $(PROFILE_FOLDER)/dummy/
+	@cp $(GAIA_DIR)/test_media/Movies/gizmo2.mp4 $(PROFILE_FOLDER)/dummy/
+	@cp $(GAIA_DIR)/test_media/Movies/elephants-dream.webm $(PROFILE_FOLDER)/dummy/
+endif
 
 # Copy preload contacts to profile
 contacts: profile-dir
@@ -597,13 +652,14 @@ ifeq ($(BUILD_APP_NAME),*)
 ifdef CONTACTS_PATH
 	@echo "Copying preload contacts to profile"
 	@cp $(CONTACTS_PATH) $(PROFILE_FOLDER)
+	@cp $(CONTACTS_PATH) $(PROFILE_FOLDER)/defaults/contacts.json
 else
 	@rm -f $(PROFILE_FOLDER)/contacts.json
 endif
 endif
 
 # Create webapps
-offline: app-makefiles optimize-clean
+offline: app
 
 # Create an empty reference workload
 .PHONY: reference-workload-empty
@@ -630,93 +686,63 @@ reference-workload-heavy:
 reference-workload-x-heavy:
 	test_media/reference-workload/makeReferenceWorkload.sh x-heavy
 
+.PHONY: xpcshell_sdk xulrunner_sdk print-xulrunner-sdk
 xpcshell_sdk:
 	@echo $(XPCSHELLSDK)
 
 xulrunner_sdk:
 	@echo $(XULRUNNERSDK)
 
-.PHONY: print-xulrunner-sdk
 print-xulrunner-sdk:
 	@echo "$(XULRUNNER_DIRECTORY)"
 
-$(XULRUNNER_BASE_DIRECTORY):
-	@echo "XULrunner directory: $(XULRUNNER_DIRECTORY)"
+B2G_SDK_TMP := .b2g.tmp
+.INTERMEDIATES: $(B2G_SDK_TMP)
+.PHONY: b2g_sdk
+b2g_sdk:
+	@echo "Test SDK directory: $(XULRUNNER_DIRECTORY)"
 ifndef USE_LOCAL_XULRUNNER_SDK
-ifneq ($(XULRUNNER_SDK_DOWNLOAD),$(shell test -d $(XULRUNNER_DIRECTORY) && cat $(XULRUNNER_URL_FILE) 2> /dev/null))
-# must download the xulrunner sdk
-	rm -rf $(XULRUNNER_BASE_DIRECTORY)
-	@echo "Downloading XULRunner..."
-	$(DOWNLOAD_CMD) $(XULRUNNER_SDK_DOWNLOAD)
-ifeq ($(findstring MINGW32,$(SYS)), MINGW32)
-	mkdir "$(XULRUNNER_BASE_DIRECTORY)"
-	@echo "Unzipping XULRunner..."
-	unzip -q xulrunner*.zip -d "$(XULRUNNER_BASE_DIRECTORY)" && rm -f xulrunner*.zip
+ifneq ($(B2G_SDK_URL),$(shell test -d $(XULRUNNER_DIRECTORY) && cat $(B2G_SDK_URL_FILE) 2> /dev/null))
+	rm -rf $(XULRUNNER_DIRECTORY)
+	mkdir -p "$(XULRUNNER_DIRECTORY)"
+	@echo "Downloading B2G SDK..."
+	$(DOWNLOAD_CMD) "$(B2G_SDK_URL)"
+ifeq ($(B2G_SDK_EXT),dmg)
+# it's a nasty mac disk image
+	@mkdir -p $(B2G_SDK_TMP)
+	hdiutil attach $(B2G_SDK_FILE_NAME) -readonly -nobrowse -mount required -mountpoint $(B2G_SDK_TMP)
+	cp -Rf $(B2G_SDK_TMP)/* "$(XULRUNNER_DIRECTORY)"
+	ln -sf "$(XULRUNNER_DIRECTORY)/B2G.app/Contents/MacOS" "$(XULRUNNER_DIRECTORY)/b2g"
+	umount $(B2G_SDK_TMP)
+else ifeq ($(B2G_SDK_EXT),tar.bz2)
+	tar xjf "$(B2G_SDK_FILE_NAME)" -C "$(XULRUNNER_DIRECTORY)"
 else
-	mkdir $(XULRUNNER_BASE_DIRECTORY)
-	tar xjf xulrunner*.tar.bz2 -C $(XULRUNNER_BASE_DIRECTORY) && rm -f xulrunner*.tar.bz2 || \
-		( echo; \
-		echo "We failed extracting the XULRunner SDK archive which may be corrupted."; \
-		echo "You should run 'make really-clean' and try again." ; false )
-endif # MINGW32
-	@echo $(XULRUNNER_SDK_DOWNLOAD) > $(XULRUNNER_URL_FILE)
-endif # XULRUNNER_SDK_DOWNLOAD
+	unzip -q "$(B2G_SDK_FILE_NAME)" -d "$(XULRUNNER_DIRECTORY)"
+endif
+	@rm -rf $(B2G_SDK_TMP) $(B2G_SDK_FILE_NAME)
+	@echo $(B2G_SDK_URL) > $(B2G_SDK_URL_FILE)
+endif # B2G SDK is up to date
 endif # USE_LOCAL_XULRUNNER_SDK
-
-# Optional files that may be provided to extend the set of default
-# preferences installed for gaia.  If the preferences in these files
-# conflict, the result is undefined.
-EXTENDED_PREF_FILES = \
-  custom-prefs.js \
-  gps-prefs.js \
-  payment-prefs.js \
-
-ifeq ($(GAIA_APP_TARGET), engineering)
-EXTENDED_PREF_FILES += payment-dev-prefs.js
-endif
-
-ifeq ($(DOGFOOD),1)
-EXTENDED_PREF_FILES += dogfood-prefs.js
-endif
-
-# Optional partner provided preference files. They will be added
-# after the ones on the EXTENDED_PREF_FILES and they will be read
-# from the GAIA_DISTRIBUTION_DIR directory
-PARTNER_PREF_FILES = \
-  partner-prefs.js\
+	test -f $(XPCSHELLSDK)
 
 # Generate profile/prefs.js
-preferences: profile-dir $(XULRUNNER_BASE_DIRECTORY)
-ifeq ($(BUILD_APP_NAME),*)
-	@$(call run-js-command,preferences)
-	@$(foreach prefs_file,$(addprefix build/config/,$(EXTENDED_PREF_FILES)),\
-	  if [ -f $(prefs_file) ]; then \
-	    cat $(prefs_file) >> $(PROFILE_FOLDER)/user.js; \
-	  fi; \
-	)
-	@echo "" >> $(PROFILE_FOLDER)/user.js
-	@$(foreach prefs_file,$(addprefix $(GAIA_DISTRIBUTION_DIR)/,$(PARTNER_PREF_FILES)),\
-	  if [ -f $(prefs_file) ]; then \
-	    cat $(prefs_file) >> $(PROFILE_FOLDER)/user.js; \
-	  fi; \
-	)
-endif
+preferences: profile-dir b2g_sdk
+	@$(call $(BUILD_RUNNER),preferences)
+
+# Generate profile/settings.json
+settings: pre-app
 
 # Generate $(PROFILE_FOLDER)/extensions
 EXT_DIR=$(PROFILE_FOLDER)/extensions
-extensions:
+extensions: $(STAGE_DIR)/additional-extensions/downloaded.json
 ifeq ($(BUILD_APP_NAME),*)
 	@rm -rf $(EXT_DIR)
 	@mkdir -p $(EXT_DIR)
-ifeq ($(SIMULATOR),1)
-	cp -r tools/extensions/{activities@gaiamobile.org,activities,alarms@gaiamobile.org,alarms,desktop-helper,desktop-helper@gaiamobile.org} $(EXT_DIR)/
-else ifeq ($(DESKTOP),1)
-	cp -r tools/extensions/* $(EXT_DIR)/
-else ifeq ($(DEBUG),1)
-	cp tools/extensions/httpd@gaiamobile.org $(EXT_DIR)/
-	cp -r tools/extensions/httpd $(EXT_DIR)/
-else ifeq ($(DESKTOP_SHIMS),1)
-	cp -r tools/extensions/{desktop-helper,desktop-helper@gaiamobile.org} $(EXT_DIR)/
+ifeq ($(DESKTOP),1)
+	cp -r $(STAGE_DIR)/additional-extensions/* $(EXT_DIR)/
+endif
+ifeq ($(DEBUG),1)
+	cp -r tools/extensions/{httpd,httpd@gaiamobile.org} $(EXT_DIR)/
 endif
 	@echo "Finished: Generating extensions"
 endif
@@ -724,32 +750,64 @@ endif
 
 # this lists the programs we need in the Makefile and that are installed by npm
 
-NPM_INSTALLED_PROGRAMS = node_modules/.bin/mozilla-download node_modules/.bin/jshint node_modules/.bin/mocha
+NPM_INSTALLED_PROGRAMS = node_modules/.bin/mozilla-download node_modules/.bin/jshint node_modules/.bin/mocha node_modules/.bin/eslint
 $(NPM_INSTALLED_PROGRAMS): package.json node_modules
 
-
 NODE_MODULES_REV=$(shell cat gaia_node_modules.revision)
-$(NODE_MODULES_SRC): gaia_node_modules.revision
-ifeq "$(NODE_MODULES_SRC)" "modules.tar"
-	-$(DOWNLOAD_CMD) https://github.com/mozilla-b2g/gaia-node-modules/tarball/$(NODE_MODULES_REV) &&\
-	mv $(NODE_MODULES_REV) "$(NODE_MODULES_SRC)"
-else
+# modules.tar and git-gaia-node-modules are the possible values for
+# $(NODE_MODULES_SRC). See the node_modules target.
+modules.tar: gaia_node_modules.revision $(NODE_MODULES_CACHEDIR)/$(NODE_MODULES_REV)
+	-cp -f "$(NODE_MODULES_CACHEDIR)/$(NODE_MODULES_REV)" "$(NODE_MODULES_SRC)"
+
+$(NODE_MODULES_CACHEDIR)/$(NODE_MODULES_REV): gaia_node_modules.revision
+	@echo Downloading latest node_modules package. This may take several minutes...
+	mkdir -p "$(NODE_MODULES_CACHEDIR)"
+	-cd "$(NODE_MODULES_CACHEDIR)" && $(DOWNLOAD_CMD) https://github.com/mozilla-b2g/gaia-node-modules/tarball/$(NODE_MODULES_REV)
+
+gaia.zip: $(DEFAULT_KEYBOAD_SYMBOLS_FONT) $(DEFAULT_GAIA_ICONS_FONT) $(PROFILE_FOLDER)
+	@mkdir -p tmp/gaia tmp/gonk/system/fonts/hidden && cp -r $(PROFILE_FOLDER) tmp/gaia && \
+	 cp $(DEFAULT_GAIA_ICONS_FONT) tmp/gonk/system/fonts/hidden && \
+	 cp $(DEFAULT_KEYBOAD_SYMBOLS_FONT) tmp/gonk/system/fonts/hidden
+	@cd tmp/ && zip -r -9 -u ../gaia.zip . && cd ../ && rm -r tmp/
+
+git-gaia-node-modules: gaia_node_modules.revision
 	if [ ! -d "$(NODE_MODULES_SRC)" ] ; then \
 		git clone "$(NODE_MODULES_GIT_URL)" "$(NODE_MODULES_SRC)" ; \
 	fi
 	(cd "$(NODE_MODULES_SRC)" && git fetch && git reset --hard "$(NODE_MODULES_REV)" )
-endif
 
-node_modules: $(NODE_MODULES_SRC)
-ifeq "$(NODE_MODULES_SRC)" "modules.tar"
-	$(TAR_WILDCARDS) --strip-components 1 -x -m -f $(NODE_MODULES_SRC) "mozilla-b2g-gaia-node-modules-*/node_modules"
-else
-	rm -fr node_modules
-	cp -R $(NODE_MODULES_SRC)/node_modules node_modules
+# npm-cache target is run when our node modules source is set to npm-cache
+# which is a pre-built set of node modules for the current platform +
+# node version present. The node modules selected for come from package.json.
+#
+# we run npm rebuild on marionette-js-runner to ensure that our python bits are
+# setup properly (it's a postinstall script that runs only when we rebuild).
+#
+# calling npm rebuild ensures that local in tree modules get their dependencies
+# installed. These are not part of the pre-built node modules at this time.
+#
+npm-cache:
+	@echo "Using pre-deployed cache."
+	$(NPM) install
+	touch -c node_modules
+
+node_modules: package.json
+ifneq ($(strip $(NODEJS)),)
+ifneq ($(NODE_VERSION),$(shell $(NODEJS) --version | awk -F. '{print $$1"."$$2}'))
+	@printf '\033[0;33mPlease use $(NODE_VERSION) of nodejs or it may cause unexpected error.\033[0m\n'
 endif
-	npm install && npm rebuild
-	@echo "node_modules installed."
-	touch -c $@
+ifneq (1,$(shell expr `node --version | cut -c2` \>= $(NODE_MIN_VERSION)))
+	@printf '\033[0;33mMinimum required version of nodejs v$(NODE_MIN_VERSION) not satisfied. Aborting. Install the required minimum version before continuing.\033[0m\n'
+	exit 1
+endif
+ifneq ($(NPM_VERSION),$(shell $(NPM) --version | cut -d. -f1))
+	@printf '\033[0;33mRequired version of npm v$(NPM_VERSION) not satisfied. Aborting. No other major versions are supported at this time.\033[0m\n'
+	exit 1
+endif
+endif
+	# TODO: Get rid of references to gaia-node-modules stuff.
+	$(NPM) install
+	$(NPM) run refresh
 
 ###############################################################################
 # Tests                                                                       #
@@ -761,19 +819,19 @@ INJECTED_GAIA = "$(MOZ_TESTS)/browser/gaia"
 TEST_PATH=gaia/tests/${TEST_FILE}
 
 ifndef APPS
-	ifdef APP
-		APPS=$(APP)
-	else
-		APPS=template $(shell find apps -type d -name 'test' | sed -e 's|^apps/||' -e 's|/test$$||' )
-	endif
+  ifdef APP
+    APPS=$(APP)
+  else
+    APPS=template $(shell find apps -type d -name 'test' | sed -e 's|^apps/||' -e 's|/test$$||' | sort )
+  endif
 endif
 
-b2g: node_modules/.bin/mozilla-download
-	./node_modules/.bin/mozilla-download  \
-		--verbose \
-		--product b2g \
-		--channel tinderbox \
-		--branch mozilla-central $@
+mulet: node_modules
+	DEBUG=* ./node_modules/.bin/mozilla-download \
+	--product mulet \
+	--branch mozilla-central \
+	$(shell pwd)
+	touch -c $@
 
 .PHONY: test-integration
 # $(PROFILE_FOLDER) should be `profile-test` when we do `make test-integration`.
@@ -787,27 +845,45 @@ test-integration: clean $(PROFILE_FOLDER) test-integration-test
 #
 # Remember to remove this target after bug-969215 is finished !
 .PHONY: test-integration-test
-test-integration-test:
-	./bin/gaia-marionette \
-		--host $(MARIONETTE_RUNNER_HOST) \
-		--manifest $(TEST_MANIFEST) \
-		--reporter $(REPORTER)
+test-integration-test: mulet node_modules
+	TEST_MANIFEST=$(TEST_MANIFEST) $(NPM) run marionette -- --buildapp="$(BUILDAPP)" --reporter="$(REPORTER)" --marionette-capabilities="$(CAPABILITIES)"
+
+.PHONY: jsmarionette-unit-tests
+jsmarionette-unit-tests: mulet node_modules $(PROFILE_FOLDER) tests/jsmarionette/runner/marionette-js-runner/venv
+	PROFILE_FOLDER=$(PROFILE_FOLDER) ./tests/jsmarionette/run_tests.js
+
+tests/jsmarionette/runner/marionette-js-runner/venv:
+	# Install virtualenv
+	cd tests/jsmarionette/runner/marionette-js-runner && $(NPM) install
+	# Still want to use $GAIA/node_modules
+	rm -rf tests/jsmarionette/runner/marionette-js-runner/node_modules
+
 
 .PHONY: caldav-server-install
 caldav-server-install:
-	pip install --user virtualenv
-	virtualenv js-marionette-env; \
-  source ./js-marionette-env/bin/activate; \
+	source tests/ci/venv.sh; \
 				export LC_ALL=en_US.UTF-8; \
 				export LANG=en_US.UTF-8; \
 				pip install radicale;
 
-.PHONY: test-perf
-test-perf:
-	MOZPERFOUT="$(MOZPERFOUT)" APPS="$(APPS)" MARIONETTE_RUNNER_HOST=$(MARIONETTE_RUNNER_HOST) GAIA_DIR="`pwd`" ./bin/gaia-perf-marionette
+.PHONY: raptor
+raptor: node_modules
+ifneq ($(APP),)
+	GAIA_DISTRIBUTION_DIR=distros/raptor APP=$(APP) make install-gaia
+else
+	GAIA_DISTRIBUTION_DIR=distros/raptor make reset-gaia
+endif
+
+.PHONY: raptor-transformer
+raptor-transformer: node_modules
+ifeq ($(RAPTOR_TRANSFORM_RULES),)
+	@(echo "Please ensure you specify the 'RAPTOR_TRANSFORM_RULES=<directory with the *.esp files>'" && exit 1)
+endif
+	@test -d $(RAPTOR_TRANSFORM_RULES) || (echo "Please ensure the '$(RAPTOR_TRANSFORM_RULES)' directory exists" && exit 1)
+	RAPTOR_TRANSFORM=1 GAIA_DISTRIBUTION_DIR=distros/raptor make reset-gaia
 
 .PHONY: tests
-tests: app-makefiles offline
+tests: app offline
 	echo "Checking if the mozilla build has tests enabled..."
 	test -d $(MOZ_TESTS) || (echo "Please ensure you don't have |ac_add_options --disable-tests| in your mozconfig." && exit 1)
 	echo "Checking the injected Gaia..."
@@ -830,17 +906,17 @@ update-common: common-install
 
 # Create the json config file
 # for use with the test agent GUI
-test-agent-config: test-agent-bootstrap
+test-agent-config:
 ifeq ($(BUILD_APP_NAME),*)
 	@rm -f $(TEST_AGENT_CONFIG)
 	@touch $(TEST_AGENT_CONFIG)
 	@rm -f /tmp/test-agent-config;
 	@# Build json array of all test files
-	@for d in ${GAIA_APPDIRS}; \
+	@for d in ${GAIA_ALLAPPDIRS}; \
 	do \
 		parent="`dirname $$d`"; \
 		pathlen=`expr $${#parent} + 2`; \
-		find "$$d" -name '*_test.js' -path '*/test/unit/*' | awk '{print substr($$0,'$${pathlen}')}' >> /tmp/test-agent-config; \
+		find -L "$$d" -name '*_test.js' -path '*/test/unit/*' | awk '{print substr($$0,'$${pathlen}')}' >> /tmp/test-agent-config; \
 	done;
 	@echo '{"tests": [' >> $(TEST_AGENT_CONFIG)
 	@cat /tmp/test-agent-config |  \
@@ -860,21 +936,21 @@ endif
 # Temp make file method until we can switch
 # over everything in test
 ifneq ($(strip $(APP)),)
-APP_TEST_LIST=$(shell find apps/$(APP) dev_apps/$(APP) -name '*_test.js' 2> /dev/null | grep '/test/unit/')
+APP_TEST_LIST=$(shell find -L $(GAIA_DIR)$(SEP)apps$(SEP)$(APP) $(GAIA_DIR)$(SEP)dev_apps$(SEP)$(APP) $(GAIA_DIR)$(SEP)tv_apps$(SEP)$(APP) -name '*_test.js' 2> /dev/null | grep '/test/unit/')
 endif
 .PHONY: test-agent-test
 test-agent-test: node_modules
 ifneq ($(strip $(APP)),)
 	@echo 'Running tests for $(APP)';
-	./node_modules/test-agent/bin/js-test-agent test $(TEST_ARGS) --server ws://localhost:$(TEST_AGENT_PORT) --reporter $(REPORTER) $(APP_TEST_LIST)
+	./node_modules/test-agent/bin/js-test-agent test $(TEST_ARGS) --server ws://localhost:$(TEST_AGENT_PORT) -t "$(TEST_AGENT_COVERAGE)" -m "://([a-zA-Z-_]+)\." --reporter $(REPORTER) $(APP_TEST_LIST)
 else
 	@echo 'Running all tests';
-	./node_modules/test-agent/bin/js-test-agent test $(TEST_ARGS) --server ws://localhost:$(TEST_AGENT_PORT) --reporter $(REPORTER)
+	./node_modules/test-agent/bin/js-test-agent test $(TEST_ARGS) --server ws://localhost:$(TEST_AGENT_PORT) -t "$(TEST_AGENT_COVERAGE)" -m "://([a-zA-Z-_]+)\." --reporter $(REPORTER)
 endif
 
 .PHONY: test-agent-server
 test-agent-server: common-install node_modules
-	./node_modules/test-agent/bin/js-test-agent server --port $(TEST_AGENT_PORT) -c ./shared/test/unit/test-agent-server.js --http-path . --growl
+	./node_modules/test-agent/bin/js-test-agent server --port $(TEST_AGENT_PORT) -c ./build/config/test-agent-server.js -t "$(TEST_AGENT_COVERAGE)" -m "://([a-zA-Z-_]+)\." --http-path . --growl
 
 .PHONY: marionette
 marionette:
@@ -902,34 +978,21 @@ endif
 # Utils                                                                       #
 ###############################################################################
 
-.PHONY: lint gjslint hint csslint
+.PHONY: lint hint csslint eslint
 
 # Lint apps
-## only gjslint files from build/jshint-xfail.list - files not yet safe to jshint
-## "ls" is used to filter the existing files only, in case the xfail.list is not maintained well enough.
 ifndef LINTED_FILES
 ifdef APP
   JSHINTED_PATH = apps/$(APP)
-  GJSLINTED_PATH = $(shell grep "^apps/$(APP)" build/jshint/xfail.list | ( while read file ; do test -f "$$file" && echo $$file ; done ) )
 else
-  JSHINTED_PATH = apps shared build/test/unit dev_apps/home2
-  GJSLINTED_PATH = $(shell ( while read file ; do test -f "$$file" && echo $$file ; done ) < build/jshint/xfail.list )
+  JSHINTED_PATH = apps shared build tests tv_apps
 endif
 endif
 
 lint:
-	NO_XFAIL=1 $(MAKE) -k gjslint hint
+	$(MAKE) -k hint jsonlint csslint
 
-gjslint: GJSLINT_EXCLUDED_DIRS = $(shell grep '\/\*\*$$' .jshintignore | sed 's/\/\*\*$$//' | paste -s -d, -)
-gjslint: GJSLINT_EXCLUDED_FILES = $(shell egrep -v '(\/\*\*|^\s*)$$' .jshintignore | paste -s -d, -)
-gjslint:
-	# gjslint --disable 210,217,220,225 replaces --nojsdoc because it's broken in closure-linter 2.3.10
-	# http://code.google.com/p/closure-linter/issues/detail?id=64
-	@echo Running gjslint...
-	@gjslint --disable 210,217,220,225 --custom_jsdoc_tags="prop,borrows,memberof,augments,exports,global,event,example,mixes,mixin,fires,inner,todo,access,namespace,listens,module,memberOf,property,requires" -e '$(GJSLINT_EXCLUDED_DIRS)' -x '$(GJSLINT_EXCLUDED_FILES)' $(GJSLINTED_PATH) $(LINTED_FILES)
-	@echo Note: gjslint only checked the files that are xfailed for jshint.
-
-JSHINT_ARGS := --reporter=build/jshint/xfail $(JSHINT_ARGS)
+JSHINT_ARGS := --reporter=build/jshint/reporter $(JSHINT_ARGS)
 
 ifdef JSHINTRC
 	JSHINT_ARGS := $(JSHINT_ARGS) --config $(JSHINTRC)
@@ -937,14 +1000,24 @@ endif
 
 ifdef VERBOSE
 	JSHINT_ARGS := $(JSHINT_ARGS) --verbose
+	VERBOSE=1
 endif
 
 hint: node_modules/.bin/jshint
 	@echo Running jshint...
 	@./node_modules/.bin/jshint $(JSHINT_ARGS) $(JSHINTED_PATH) $(LINTED_FILES) || (echo Please consult https://github.com/mozilla-b2g/gaia/tree/master/build/jshint/README.md to get some information about how to fix jshint issues. && exit 1)
 
-csslint: $(XULRUNNER_BASE_DIRECTORY)
-	@$(call run-js-command,csslint)
+eslint: node_modules/.bin/eslint
+	sed 's/\s*#.*$$//' build/eslint/xfail.list | sort -u > build/eslint/xfail.list.tmp
+	@echo Running eslint...
+	@./node_modules/.bin/eslint --ignore-path build/eslint/xfail.list.tmp -f compact -c .eslintrc $(JSHINTED_PATH) $(LINTED_FILES)
+	rm build/eslint/xfail.list.tmp
+
+csslint: b2g_sdk
+	@$(call $(BUILD_RUNNER),csslint)
+
+jsonlint: b2g_sdk
+	@$(call run-node-command,jsonlint)
 
 # Erase all the indexedDB databases on the phone, so apps have to rebuild them.
 delete-databases:
@@ -981,8 +1054,8 @@ install-gaia: $(PROFILE_FOLDER) push
 # on your phone, and you have adb in your path, then you can use the
 # push target to update the gaia files and reboot b2g
 .PHONY: push
-push: $(XULRUNNER_BASE_DIRECTORY)
-	@$(call run-js-command,push-to-device)
+push: b2g_sdk
+	@$(call $(BUILD_RUNNER),push-to-device)
 
 # Copy demo media to the sdcard.
 # If we've got old style directories on the phone, rename them first.
@@ -991,9 +1064,9 @@ install-media-samples:
 	$(ADB) shell 'if test -d /sdcard/music; then mv /sdcard/music /sdcard/music.temp; mv /sdcard/music.temp /sdcard/Music; fi'
 	$(ADB) shell 'if test -d /sdcard/videos; then mv /sdcard/videos /sdcard/Movies;	fi'
 
-	$(ADB) push media-samples/DCIM $(MSYS_FIX)/sdcard/DCIM
-	$(ADB) push media-samples/Movies $(MSYS_FIX)/sdcard/Movies
-	$(ADB) push media-samples/Music $(MSYS_FIX)/sdcard/Music
+	$(ADB) push test_media/samples/DCIM $(MSYS_FIX)/sdcard/DCIM
+	$(ADB) push test_media/samples/Movies $(MSYS_FIX)/sdcard/Movies
+	$(ADB) push test_media/samples/Music $(MSYS_FIX)/sdcard/Music
 
 install-test-media:
 	$(ADB) push test_media/Pictures $(MSYS_FIX)/sdcard/DCIM
@@ -1029,15 +1102,8 @@ purge:
 	$(ADB) shell rm -r $(MSYS_FIX)/system/b2g/webapps
 	$(ADB) shell 'if test -d $(MSYS_FIX)/persist/svoperapps; then rm -r $(MSYS_FIX)/persist/svoperapps; fi'
 
-$(PROFILE_FOLDER)/settings.json: $(XULRUNNER_BASE_DIRECTORY) profile-dir keyboard-layouts $(STAGE_DIR)/settings_stage.json copy-build-stage-data
-
-$(STAGE_DIR)/settings_stage.json: $(XULRUNNER_BASE_DIRECTORY) keyboard-layouts
-ifeq ($(BUILD_APP_NAME),*)
-	@$(call run-js-command,settings)
-endif
-
 # push $(PROFILE_FOLDER)/settings.json and $(PROFILE_FOLDER)/contacts.json (if CONTACTS_PATH defined) to the phone
-install-default-data: $(PROFILE_FOLDER)/settings.json contacts
+install-default-data: settings contacts app
 	$(ADB) shell stop b2g
 	$(ADB) remount
 	$(ADB) push $(PROFILE_FOLDER)/settings.json $(MSYS_FIX)/system/b2g/defaults/settings.json
@@ -1048,57 +1114,26 @@ else
 endif
 	$(ADB) shell start b2g
 
-# create default data, gonk-misc will copy this folder during B2G build time
-create-default-data: preferences $(PROFILE_FOLDER)/settings.json contacts
-ifeq ($(BUILD_APP_NAME),*)
-	# create a clean folder to store data for B2G, this folder will copy to b2g output folder.
-	rm -rf $(PROFILE_FOLDER)/defaults
-	mkdir -p $(PROFILE_FOLDER)/defaults/pref
-	# rename user_pref() to pref() in user.js
-	sed s/user_pref\(/pref\(/ $(PROFILE_FOLDER)/user.js > $(PROFILE_FOLDER)/defaults/pref/user.js
-	cp $(PROFILE_FOLDER)/settings.json $(PROFILE_FOLDER)/defaults/settings.json
-ifdef CONTACTS_PATH
-	cp $(PROFILE_FOLDER)/contacts.json $(PROFILE_FOLDER)/defaults/contacts.json
-endif
-endif
-
 # clean out build products
 clean:
-	rm -rf profile profile-debug profile-test profile-gaia-test-b2g profile-gaia-test-firefox $(PROFILE_FOLDER) $(STAGE_DIR) docs
+	rm -rf profile profile-debug profile-test profile-gaia-test-b2g profile-gaia-test-firefox profile-raptor $(PROFILE_FOLDER) $(STAGE_DIR) docs minidumps
 
 # clean out build products and tools
 really-clean: clean
-	rm -rf xulrunner-* .xulrunner-* node_modules b2g modules.tar js-marionette-env
+	rm -rf b2g-* .b2g-* b2g_sdk node_modules mulet firefox/ modules.tar js-marionette-env "$(NODE_MODULES_CACHEDIR)"
 
 .git/hooks/pre-commit: tools/pre-commit
 	test -d .git && cp tools/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit || true
 
+build-test-unit: b2g_sdk $(NPM_INSTALLED_PROGRAMS)
+	@$(call run-node-command,build-test,TEST_TYPE=unit REPORTER=$(REPORTER) TRY_ENV=$(TRY_ENV) TEST_FILES="$(TEST_FILES)")
 
-# This task will do three things.
-# 1. Copy manifest to profile: generally we got manifest from webapp-manifest.js
-#    unless manifest is generated from Makefile of app. so we will copy
-#    manifest.webapp if it's avaiable in build_stage/ .
-# 2. Copy external app to profile dir.
-# 3. Generate webapps.json from webapps_stage.json and copy to profile dir.
-copy-build-stage-data: app-makefiles post-manifest multilocale
-	@$(call run-js-command,copy-build-stage-data)
+build-test-integration: b2g_sdk $(NPM_INSTALLED_PROGRAMS)
+	@$(call run-node-command,build-test,TEST_TYPE=integration REPORTER=$(REPORTER) TRY_ENV=$(TRY_ENV) TEST_FILES="$(TEST_FILES)" NODE_PATH=build/test/integration)
 
-build-test-unit: $(NPM_INSTALLED_PROGRAMS)
-	@$(call run-build-test, $(shell find build/test/unit/*.test.js))
-
-build-test-integration: $(NPM_INSTALLED_PROGRAMS)
-	@$(call run-build-test, $(shell find build/test/integration/*.test.js))
+build-test-unit-coverage: $(NPM_INSTALLED_PROGRAMS)
+	@$(call run-build-coverage,build/test/unit)
 
 .PHONY: docs
 docs: $(NPM_INSTALLED_PROGRAMS)
-	grunt docs
-
-.PHONY: watch
-watch: $(NPM_INSTALLED_PROGRAMS)
-	node build/watcher.js
-
-.PHONY: multilocale
-multilocale: app-makefiles webapp-shared $(XULRUNNER_BASE_DIRECTORY)
-ifneq ($(LOCALE_BASEDIR),)
-	@$(call run-js-command,multilocale)
-endif
+	gulp docs

@@ -1,3 +1,9 @@
+'use strict';
+
+/* global module */
+var KeypadView = require('./views/keypad/views.js');
+var TabsView = require('./views/tabs/view.js');
+
 /**
  * Abstraction around dialer app.
  * @constructor
@@ -13,15 +19,17 @@ function Dialer(client) {
 Dialer.URL = 'app://communications.gaiamobile.org';
 
 Dialer.config = {
-  settings: {
-    'ftu.manifestURL': null,
-    'lockscreen.enabled': false,
-    'devtools.overlay': true,
-    'hud.reflows': true
+  profile: {
+    settings: {
+      'devtools.overlay': true,
+      'hud.reflows': true
+    },
+    prefs: {
+      'devtools.debugger.forbid-certified-apps': false
+    }
   },
-  prefs: {
-    'dom.w3c_touch_events.enabled': 1,
-    'devtools.debugger.forbid-certified-apps': false
+  desiredCapabilities: {
+    'raisesAccessibilityExceptions': false
   }
 };
 
@@ -36,27 +44,13 @@ Dialer.Selectors = {
   three: '.keypad-key[data-value="3"]',
   keypadCallBarAddContact: '#keypad-callbar-add-contact',
 
+  contactsTabItem: '#option-contacts',
   callLogTabItem: '#option-recents',
-  callLogEditButton: '#call-log-icon-edit',
   callLogTabs: '#call-log-filter',
-  callLogNoResultsContainer: '#no-result-container',
-  callLogItem: '.log-item',
   callLogEditForm: '#edit-mode',
 
-  contactsTabItem: '#option-contacts',
-  contactsIframe: '#iframe-contacts',
-
-  addToExistintContactMenuItem: '#add-to-existing-contact-menuitem'
+  addToExistingContactMenuItem: 'button[data-l10n-id="addToExistingContact"]'
 };
-
-/**
- * @private
- * @param {Marionette.Client} client for selector.
- * @param {String} name of selector [its a key in Dialer.Selectors].
- */
-function findElement(client, name) {
-  return client.findElement(Dialer.Selectors[name]);
-}
 
 Dialer.prototype = {
   /**
@@ -64,13 +58,32 @@ Dialer.prototype = {
    */
   launch: function() {
     this.client.apps.launch(Dialer.URL, 'dialer');
-    this.client.apps.switchToApp(Dialer.URL, 'dialer');
+    this.switchTo();
     this.client.helper.waitForElement('body');
   },
 
   relaunch: function() {
     this.client.apps.close(Dialer.URL, 'dialer');
     this.launch();
+  },
+
+  switchTo: function() {
+    this.client.switchToFrame();
+    // switchToApp already waits for the app to be displayed
+    this.client.apps.switchToApp(Dialer.URL, 'dialer');
+  },
+
+  get phoneNumber() {
+    return this.client.helper.waitForElement(Dialer.Selectors.phoneNumber)
+                             .getAttribute('value');
+  },
+
+  get keypadView() {
+    return new KeypadView(this.client);
+  },
+
+  get tabs() {
+    return new TabsView(this.client);
   }
 };
 

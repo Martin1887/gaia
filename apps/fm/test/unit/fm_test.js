@@ -1,13 +1,24 @@
+'use strict';
+/* global
+  $,
+  $$,
+  airplaneModeEnabled:true,
+  enabling,
+  favoritesList,
+  frequencyDialer,
+  historyList,
+  MockL10n,
+  mozFMRadio,
+  updateEnablingState,
+  updateFreqUI,
+  updateWarningModeUI */
+
 requireApp('shared/js/airplane_mode_helper.js');
 requireApp('fm/js/fm.js');
-
-var PerformanceTestingHelper = {
-  dispatch: function() { }
-};
+require('/shared/test/unit/load_body_html_helper.js');
+require('/shared/test/unit/mocks/mock_l20n.js');
 
 suite('FM', function() {
-  var tempNode;
-
   function setFrequency(frequency) {
     var setFreq = frequencyDialer.setFrequency(frequency);
     if (frequency < mozFMRadio.frequencyLowerBound) {
@@ -19,36 +30,50 @@ suite('FM', function() {
     }
   }
 
+  function testScreenReaderSwipe(swipeDirection, startFreq, expectedFreq) {
+      var modifier, key;
+
+      if (swipeDirection === 'up') {
+        modifier = 0.1;
+        key = 38; // DOM_VK_UP = 38
+      } else if (swipeDirection === 'down') {
+        modifier = -0.1;
+        key = 40; // DOM_VK_DOWN = 40
+      }
+
+      var keyEvent = document.createEvent('KeyboardEvent');
+      keyEvent.initKeyEvent('keypress',
+        true, true, window,
+        false, false, false, false,
+        key, 0);
+
+      frequencyDialer.setFrequency(startFreq);
+
+      $('dialer-container').dispatchEvent(keyEvent);
+      assert.equal(frequencyDialer._currentFreqency, expectedFreq);
+  }
+
+  function testPowerSwitchLabel() {
+    assert.equal(mozFMRadio.enabled ? 'power-switch-off' : 'power-switch-on',
+      $('power-switch').getAttribute('data-l10n-id'));
+  }
+
   suite('frequency dialer', function() {
+    var nativeL10n = document.l10n;
 
     suiteSetup(function() {
+      sinon.stub(favoritesList, '_save').returns(true);
+      favoritesList._favList = {};
+      sinon.stub(historyList, '_save').returns(true);
 
-      tempNode = document.createElement('div');
-      tempNode.id = 'test';
-      tempNode.innerHTML =
-        '<div id="frequency-bar">' +
-        '  <div id="frequency-display">' +
-        '    <a id="bookmark-button" href="#bookmark"' +
-        '      data-bookmarked="false"></a>' +
-        '    <div id="frequency">0</div>' +
-        '  </div>' +
-        '</div>' +
-        '<div id="dialer-bar">' +
-        '  <div id="dialer-container">' +
-        '    <div id="frequency-indicator"></div>' +
-        '    <div id="frequency-dialer" class="animation-on"></div>' +
-        '  </div>' +
-        '</div>' +
-        '<div id="antenna-warning" hidden="hidden"></div>';
-
-      document.body.appendChild(tempNode);
+      loadBodyHTML('/index.html');
+      document.l10n = MockL10n;
       frequencyDialer.init();
-
     });
 
     suiteTeardown(function() {
-      tempNode.parentNode.removeChild(tempNode);
-      tempNode = null;
+      document.l10n = nativeL10n;
+      document.body.innerHTML = '';
     });
 
     test('resolved frequency within bounds', function()  {
@@ -68,7 +93,46 @@ suite('FM', function() {
     });
 
     test('updated #frequency dom display digits', function() {
-      assert.equal($('frequency').textContent, 87.5);
+      assert.deepEqual(
+        document.l10n.getAttributes($('frequency')),
+        { id: 'frequency-MHz', args: { value: '87.5' } });
+    });
+
+    test('compare new set frequency with aria-valuenow', function() {
+      var frequency = 95.7;
+      frequencyDialer.setFrequency(frequency);
+      assert.equal($('dialer-container').getAttribute('aria-valuenow'),
+        frequency.toString());
+    });
+
+    test('screen reader swipe up on dialer', function() {
+      testScreenReaderSwipe('up', 95.7, 95.8);
+      testScreenReaderSwipe('down', 95.7, 95.6);
+    });
+
+    test('maintain aria-pressed on bookmark button', function() {
+      var bookmarkButton = $('bookmark-button');
+
+      // Start at arbitrary station
+      mozFMRadio.setFrequency(88.6);
+      updateFreqUI();
+      assert.equal('false', bookmarkButton.getAttribute('aria-pressed'));
+      // Add station to favorites
+      favoritesList.add(88.6);
+      updateFreqUI();
+      assert.equal('true', bookmarkButton.getAttribute('aria-pressed'));
+      // Browse to different station
+      mozFMRadio.setFrequency(99.5);
+      updateFreqUI();
+      assert.equal('false', bookmarkButton.getAttribute('aria-pressed'));
+      // Come back to first station
+      mozFMRadio.setFrequency(88.6);
+      updateFreqUI();
+      assert.equal('true', bookmarkButton.getAttribute('aria-pressed'));
+      // Remove station from favorites
+      favoritesList.remove(88.6);
+      updateFreqUI();
+      assert.equal('false', bookmarkButton.getAttribute('aria-pressed'));
     });
 
     // temporarily removing due to test not passing on TBPL Bug 876265
@@ -78,15 +142,18 @@ suite('FM', function() {
     //   assert.notEqual(frequencyDialer._translateX, prevX);
     // });
 
-    test('#frequency display percision to one decimal point', function() {
-        assert.ok($('frequency').textContent.indexOf('.') > -1);
-      });
+    test('#frequency display precision to one decimal point', function() {
+      var freq = document.l10n.getAttributes($('frequency')).args.value;
+      assert.ok(freq.indexOf('.') > -1);
+    });
 
   });
 
   suite('history list', function() {
     setup(function() {
-      historyList._save = function() {return true};
+      historyList._save = function() {
+        return true;
+      };
     });
 
     test('item added to history list', function() {
@@ -101,20 +168,17 @@ suite('FM', function() {
   });
 
   suite('favorite list', function() {
+    var nativeL10n = document.l10n;
+
 
     suiteSetup(function() {
-      favoritesList._save = function() {return true};
-      favoritesList._favList = {};
-      tempNode = document.createElement('div');
-      tempNode.id = 'test';
-      tempNode.innerHTML = '<div id="fav-list-container"></div>';
-
-      document.body.appendChild(tempNode);
+      loadBodyHTML('/index.html');
+      document.l10n = MockL10n;
     });
 
     suiteTeardown(function() {
-      tempNode.parentNode.removeChild(tempNode);
-      tempNode = null;
+      document.l10n = nativeL10n;
+      document.body.innerHTML = '';
     });
 
     test('item added to favorite list', function() {
@@ -161,27 +225,40 @@ suite('FM', function() {
       assert.ok(isAscending);
     });
 
+    test('set aria-selected = true on active favorite stations, else false',
+      function() {
+        var testFreqs = [88.6, 103.7, 104.8, 55.6];
+        var favorites = $$('#fav-list-container div.fav-list-item');
+
+        favoritesList.add(88.6);
+        favoritesList.add(103.7);
+        favoritesList.add(104.8);
+
+        testFreqs.forEach(function(testFreq, index, array) {
+          favoritesList.select(testFreq);
+          for (var i = 0; i < favorites.length; i++) {
+            assert.equal(favoritesList._getElemFreq(favorites[i]) === testFreq ?
+              'true' : 'false', favorites[i].getAttribute('aria-selected'));
+          }
+      });
+    });
+
   });
 
   suite('update display states', function() {
+    var nativeL10n = document.l10n;
+
     suiteSetup(function() {
       mozFMRadio.enabled = true;
       mozFMRadio.antennaAvailable = true;
-      tempNode = document.createElement('div');
-      tempNode.id = 'test';
-      tempNode.innerHTML =
-        '<div id="antenna-warning" hidden></div>' +
-        '<div id="frequency-bar"></div>' +
-        '<a id="power-switch" href="#power-switch" data-enabled="false"' +
-        '  data-enabling="false"></a></div>';
-
-      document.body.appendChild(tempNode);
+      loadBodyHTML('/index.html');
+      document.l10n = MockL10n;
       updateEnablingState(true);
     });
 
     suiteTeardown(function() {
-      tempNode.parentNode.removeChild(tempNode);
-      tempNode = null;
+      document.l10n = nativeL10n;
+      document.body.innerHTML = '';
     });
 
     suite('enabling UI', function() {
@@ -201,62 +278,93 @@ suite('FM', function() {
       test('#antenna-warning is hidden', function() {
         assert.ok(!!$('antenna-warning').hidden, mozFMRadio.antennaAvailable);
       });
+
+      test('#power-switch has appropriate aria-label based on enabled status',
+        function() {
+          testPowerSwitchLabel();
+          $('power-switch').click();
+          testPowerSwitchLabel();
+        }
+      );
     });
   });
 
   suite('update UI based on the airplane mode status', function() {
+    var nativeL10n = document.l10n;
+
     suiteSetup(function() {
-      tempNode = document.createElement('div');
-      tempNode.id = 'test';
-      tempNode.innerHTML = '<div id="airplane-mode-warning" hidden></div>';
-      document.body.appendChild(tempNode);
+      loadBodyHTML('/index.html');
+      document.l10n = MockL10n;
     });
 
     suiteTeardown(function() {
-      tempNode.parentNode.removeChild(tempNode);
-      tempNode = null;
+      document.l10n = nativeL10n;
+      document.body.innerHTML = '';
     });
 
     suite('airplane mode on', function() {
       setup(function() {
         airplaneModeEnabled = true;
-        updateAirplaneModeUI();
+        updateWarningModeUI();
       });
 
       test('#airplane-mode-warning is shown', function() {
         assert.equal(!!$('airplane-mode-warning').hidden, false);
       });
+
+      test('#container is hidden', function() {
+        assert.equal($('container').classList.contains('hidden-block'), true);
+      });
+
+      test('#antenna-warning is hidden', function() {
+        assert.equal(!!$('antenna-warning').hidden, true);
+      });
+
     });
 
     suite('airplane mode off', function() {
       setup(function() {
         airplaneModeEnabled = false;
-        updateAirplaneModeUI();
+        updateWarningModeUI();
       });
 
       test('#airplane-mode-warning is hidden', function() {
         assert.equal(!!$('airplane-mode-warning').hidden, true);
       });
+
+      test('#antenna-warning is on and container is hidden', function() {
+        mozFMRadio.antennaAvailable = false;
+        updateWarningModeUI();
+        assert.equal(!!$('antenna-warning').hidden, false);
+        assert.equal($('container').classList.contains('hidden-block'), true);
+      });
+
+      test('#antenna-warning is off and container is visible', function() {
+        mozFMRadio.antennaAvailable = true;
+        updateWarningModeUI();
+        assert.equal(!!$('antenna-warning').hidden, true);
+        assert.equal($('container').classList.contains('hidden-block'), false);
+      });
     });
   });
 
   suite('update UI based on the antenna status', function() {
+    var nativeL10n = document.l10n;
+
     suiteSetup(function() {
-      tempNode = document.createElement('div');
-      tempNode.id = 'test';
-      tempNode.innerHTML = '<div id="antenna-warning" hidden></div>';
-      document.body.appendChild(tempNode);
+      loadBodyHTML('/index.html');
+      document.l10n = MockL10n;
     });
 
     suiteTeardown(function() {
-      tempNode.parentNode.removeChild(tempNode);
-      tempNode = null;
+      document.l10n = nativeL10n;
+      document.body.innerHTML = '';
     });
 
     suite('antenna is plugged in', function() {
       setup(function() {
         mozFMRadio.antennaAvailable = true;
-        updateAntennaUI();
+        updateWarningModeUI();
       });
 
       test('#antenna-warning is hidden', function() {
@@ -267,7 +375,7 @@ suite('FM', function() {
     suite('antenna is not plugged in', function() {
       setup(function() {
         mozFMRadio.antennaAvailable = false;
-        updateAntennaUI();
+        updateWarningModeUI();
       });
 
       test('#antenna-warning is shown', function() {

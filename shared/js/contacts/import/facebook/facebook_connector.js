@@ -1,6 +1,7 @@
 'use strict';
 
-/* global fb, utils, contacts */
+/* global fb, utils */
+/* global Matcher */
 
 
 if (!window.FacebookConnector) {
@@ -72,7 +73,7 @@ if (!window.FacebookConnector) {
             onmismatch: successCb
           };
           // Try to match and if so merge is performed
-          contacts.Matcher.match(data, 'passive', cbs);
+          Matcher.match(data, 'passive', cbs);
         },
         error: errorCb
       };
@@ -103,6 +104,12 @@ if (!window.FacebookConnector) {
     }
 
     function setInfraForSync(existingContacts, friendsImported, callback) {
+      // From the FTU the infra for sync will not be loaded
+      if (!fb.sync) {
+        (typeof callback === 'function') && callback();
+        return;
+      }
+
       // Check wether we need to set the update alarm
       window.asyncStorage.getItem(fb.utils.ALARM_ID_KEY, function(data) {
         if (!data || (existingContacts && existingContacts.length === 0) &&

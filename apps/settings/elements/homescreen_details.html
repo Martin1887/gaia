@@ -1,20 +1,32 @@
 <element name="homescreen-details" extends="section">
   <template>
 
-    <header>
-      <a href="#homescreen"><span class="icon icon-back">back</span></a>
-      <h1> </h1>
-    </header>
+    <gaia-header action="back" data-href="#homescreens-list">
+      <h1 class="detail-title"></h1>
+    </gaia-header>
+
     <div>
-      <header>
-        <h2 class="description" data-l10n-id="description">Description</h2>
-      </header>
-      <p></p>
-      <header>
-        <h2 data-l10n-id="changeHomescreen">Change Homescreen</h2>
-      </header>
-      <button id="change-homescreen" data-l10n-id="changeHomescreenButton">Change</button>
+      <ul>
+        <li>
+          <label class="addon-details-info developer-infos">
+            <img class="addon-details-icon">
+            <span class="addon-details-title title"></span>
+            <small class="addon-details-name name"></small>
+          </label>
+          <p class="version"></p>
+          <p class="description"></p>
+          <p class="url"><small><a href="#" target="_blank"></a></small></p>
+        </li>
+      </ul>
+
+      <ul class="uninstall-homescreen-container">
+        <li>
+          <button class="danger uninstall-homescreen" data-l10n-id="delete-home-screen-button"></button>
+        </li>
+      </ul>
     </div>
+
+    <panel data-path="panels/homescreen_details/panel"></panel>
 
   </template>
 </element>

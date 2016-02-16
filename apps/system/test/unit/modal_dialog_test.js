@@ -1,13 +1,19 @@
 'use strict';
 
+/* global MocksHelper */
+/* global ModalDialog */
+/* global MockL10n */
+/* global MockLayoutManager */
+
 requireApp('system/test/unit/mock_app_window_manager.js');
-requireApp('system/test/unit/mock_statusbar.js');
-requireApp('system/test/unit/mock_l10n.js');
+requireApp('system/test/unit/mock_layout_manager.js');
+require('/shared/test/unit/mocks/mock_l20n.js');
+require('/shared/test/unit/mocks/mock_service.js');
 requireApp('system/js/modal_dialog.js');
 
 var mocksForDialog = new MocksHelper([
-  'StatusBar',
-  'AppWindowManager'
+  'AppWindowManager',
+  'Service'
 ]).init();
 
 suite('system/ModalDialog >', function() {
@@ -35,8 +41,10 @@ suite('system/ModalDialog >', function() {
   }
 
   suiteSetup(function() {
-    realL10n = navigator.mozL10n;
-    navigator.mozL10n = MockL10n;
+    realL10n = document.l10n;
+    document.l10n = MockL10n;
+
+    window.layoutManager = new MockLayoutManager();
 
     stubById = sinon.stub(document, 'getElementById', function() {
       return document.createElement('div');
@@ -47,7 +55,7 @@ suite('system/ModalDialog >', function() {
 
   suiteTeardown(function() {
     stubById.restore();
-    navigator.mozL10n = realL10n;
+    document.l10n = realL10n;
   });
 
   test('call buildSelectOneDialog >', function() {
@@ -56,10 +64,7 @@ suite('system/ModalDialog >', function() {
       {id: 'testId1', text: 'testText1'}
     ];
 
-    ModalDialog.buildSelectOneDialog({
-      title: 'testTitle',
-      options: testOptions
-    });
+    ModalDialog.buildSelectOneDialog(testOptions);
 
     assert.isNotNull(
       ModalDialog.elements.selectOneMenu.innerHTML.match(testOptions[0].id));
@@ -67,17 +72,18 @@ suite('system/ModalDialog >', function() {
 
   test('call selectone API directly >', function() {
 
-    ModalDialog.selectOne({
-      title: 'testTitle',
-      options: [
-        {id: 'testId1', text: 'searchName'}
-      ]
-    });
+    var testOptions = [
+      {id: 'testId1', text: 'testText1'}
+    ];
+
+    ModalDialog.selectOne(testObject.dialogTitle, testOptions);
 
     assert.isTrue(ModalDialog.elements.selectOne.classList.contains('visible'));
-    assert.isNull(
-      ModalDialog.elements.selectOneTitle.innerHTML.match(
-        testObject.dialogTitle));
+    assert.strictEqual(
+      ModalDialog.elements.selectOneTitle.getAttribute('data-l10n-id'),
+      testObject.dialogTitle);
+    assert.isNotNull(
+      ModalDialog.elements.selectOneMenu.innerHTML.match(testOptions[0].id));
 
     ModalDialogCleanUp();
   });
@@ -92,12 +98,12 @@ suite('system/ModalDialog >', function() {
     );
 
     assert.isTrue(ModalDialog.elements.confirm.classList.contains('visible'));
-    assert.isNotNull(
-      ModalDialog.elements.confirmTitle.innerHTML.match(
-        testObject.dialogTitle));
-    assert.isNotNull(
-      ModalDialog.elements.confirmMessage.innerHTML.match(
-        testObject.dialogText));
+    assert.strictEqual(
+      ModalDialog.elements.confirmTitle.getAttribute('data-l10n-id'),
+      testObject.dialogTitle);
+    assert.strictEqual(
+      ModalDialog.elements.confirmMessage.getAttribute('data-l10n-id'),
+      testObject.dialogText);
 
     ModalDialogCleanUp();
   });
@@ -109,15 +115,13 @@ suite('system/ModalDialog >', function() {
       testObject.dialogCancelObject
     );
 
-    // make sure XXX fix will not affect this case
-    assert.equal(ModalDialog.elements.alertTitle.textContent,
-      testObject.dialogTitle);
-
     assert.isTrue(ModalDialog.elements.alert.classList.contains('visible'));
-    assert.isNotNull(
-      ModalDialog.elements.alertTitle.innerHTML.match(testObject.dialogTitle));
-    assert.isNotNull(
-      ModalDialog.elements.alertMessage.innerHTML.match(testObject.dialogText));
+    assert.strictEqual(
+      ModalDialog.elements.alertTitle.getAttribute('data-l10n-id'),
+      testObject.dialogTitle);
+    assert.strictEqual(
+      ModalDialog.elements.alertMessage.getAttribute('data-l10n-id'),
+      testObject.dialogText);
 
     ModalDialogCleanUp();
   });
@@ -132,13 +136,96 @@ suite('system/ModalDialog >', function() {
     );
 
     assert.isTrue(ModalDialog.elements.prompt.classList.contains('visible'));
-    assert.isNotNull(
-      ModalDialog.elements.promptTitle.innerHTML.match(
-        testObject.dialogTitle));
-    assert.isNotNull(
-      ModalDialog.elements.promptMessage.innerHTML.match(
-        testObject.dialogText));
+    assert.strictEqual(
+      ModalDialog.elements.promptTitle.getAttribute('data-l10n-id'),
+      testObject.dialogTitle);
+    assert.strictEqual(
+      ModalDialog.elements.promptMessage.getAttribute('data-l10n-id'),
+      testObject.dialogText);
 
     ModalDialogCleanUp();
+  });
+
+  suite('not to localize strings >', function() {
+    var oldTestObject;
+    suiteSetup(function() {
+      oldTestObject = testObject;
+      testObject.dialogText = { raw: testObject.dialogText };
+    });
+
+    suiteTeardown(function() {
+      testObject = oldTestObject;
+    });
+
+    test('call confirm API directly >', function() {
+
+      ModalDialog.confirm(
+        testObject.dialogTitle,
+        testObject.dialogText,
+        testObject.dialogConfirmObject,
+        testObject.dialogCancelObject
+      );
+
+      assert.strictEqual(
+        ModalDialog.elements.confirmTitle.getAttribute('data-l10n-id'),
+        testObject.dialogTitle);
+      assert.strictEqual(
+        ModalDialog.elements.confirmMessage.getAttribute('data-l10n-id'),
+        null);
+      assert.strictEqual(
+        ModalDialog.elements.confirmMessage.textContent,
+        testObject.dialogText.raw);
+
+      ModalDialogCleanUp();
+    });
+
+    test('call alert API directly >', function() {
+      ModalDialog.alert(
+        testObject.dialogTitle,
+        testObject.dialogText,
+        testObject.dialogCancelObject
+      );
+
+      assert.strictEqual(
+        ModalDialog.elements.alertTitle.getAttribute('data-l10n-id'),
+        testObject.dialogTitle);
+      assert.strictEqual(
+        ModalDialog.elements.alertMessage.getAttribute('data-l10n-id'),
+        null);
+      assert.strictEqual(
+        ModalDialog.elements.alertMessage.textContent,
+        testObject.dialogText.raw);
+
+      ModalDialogCleanUp();
+    });
+
+    test('call prompt API directly >', function() {
+      ModalDialog.prompt(
+        testObject.dialogTitle,
+        testObject.dialogText,
+        testObject.dialogDefaultValue,
+        testObject.dialogConfirmObject,
+        testObject.dialogCancelObject
+      );
+
+      assert.strictEqual(
+        ModalDialog.elements.promptTitle.getAttribute('data-l10n-id'),
+        testObject.dialogTitle);
+      assert.strictEqual(
+        ModalDialog.elements.promptMessage.getAttribute('data-l10n-id'),
+        null);
+      assert.strictEqual(
+        ModalDialog.elements.promptMessage.textContent,
+        testObject.dialogText.raw);
+
+      ModalDialogCleanUp();
+    });
+
+    test('should not updateHeight on resize event and not visible', function() {
+      ModalDialog.overlay.style.height = '';
+      this.sinon.stub(ModalDialog, 'isVisible').returns(false);
+      window.dispatchEvent(new CustomEvent('resize'));
+      assert.isFalse(parseInt(ModalDialog.overlay.style.height, 10) > 0);
+    });
   });
 });

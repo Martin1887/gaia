@@ -1,10 +1,13 @@
 Keyboards['bg-Pho-Trad'] = {
   label: 'Bulgarian (Phonetic)',
+  shortLabel: 'Bg',
   menuLabel: 'Български (Фонетична)',
-  types: ['text', 'url', 'email'],
+  types: ['text', 'url', 'email', 'password'],
   imEngine: 'latin',
   autoCorrectLanguage: 'bg',
+  basicLayoutKey: 'AБB',
   width: 11,
+  lang: 'bg',
   alt: {
     'и': 'ѝ'
   },

@@ -1,6 +1,7 @@
 'use strict';
 
-/* global SettingsListener, SettingsURL, AttentionScreen, lockScreen */
+/* global SettingsListener, SettingsURL */
+/* global Service, LazyLoader, toneUpgrader */
 /* r=? dialer+system peers for changes in this file. */
 
 (function(exports) {
@@ -11,7 +12,6 @@
    *
    * This simple module keeps the ringtone (blob) around and starts alerting the
    * user as soon as a new incoming call is detected via the mozTelephony API.
-   * And it opens an AttentionScreen with the preloaded callscreen app inside.
    *
    * We also listen for the sleep and volumedown hardware buttons to provide
    * the user with an easy way to stop the ringing.
@@ -24,10 +24,10 @@
    * @class    DialerAgent
    * @requires SettingsListener
    * @requires SettingsURL
+   * @requires Service
+   * @requires LazyLoader
    *
    **/
-
-  var CSORIGIN = window.location.origin.replace('system', 'callscreen') + '/';
 
   var DialerAgent = function DialerAgent() {
     var telephony = navigator.mozTelephony;
@@ -38,7 +38,6 @@
     this._telephony = telephony;
 
     this._started = false;
-    this._shouldRing = null;
     this._shouldVibrate = true;
     this._alerting = false;
     this._vibrateInterval = null;
@@ -63,22 +62,28 @@
     this._started = true;
 
     SettingsListener.observe('audio.volume.notification', 7, function(value) {
-      this._shouldRing = !!value;
-      if (this._shouldRing && this._alerting) {
-        this._player.play();
-      }
+      this._playRing();
     }.bind(this));
 
     SettingsListener.observe('dialer.ringtone', '', function(value) {
-      var phoneSoundURL = new SettingsURL();
+      LazyLoader.load(['shared/js/settings_url.js']).then(function() {
+        var phoneSoundURL = new SettingsURL();
 
-      this._player.pause();
-      this._player.src = phoneSoundURL.set(value);
-
-      if (this._shouldRing && this._alerting) {
-        this._player.play();
-      }
+        this._player.pause();
+        this._player.src = phoneSoundURL.set(value);
+        this._playRing();
+      }.bind(this)).catch((err) => {
+        console.error(err);
+      });
     }.bind(this));
+
+    // We have new default ringtones in 2.0, so check if the version is upgraded
+    // then execute the necessary migration.
+    if (Service.query('justUpgraded')) {
+      LazyLoader.load('js/tone_upgrader.js').then(() => {
+        toneUpgrader.perform('ringtone');
+      });
+    }
 
     SettingsListener.observe('vibration.enabled', true, function(value) {
       this._shouldVibrate = !!value;
@@ -87,16 +92,10 @@
     this._telephony.addEventListener('callschanged', this);
 
     window.addEventListener('sleep', this);
+    window.addEventListener('wake', this);
     window.addEventListener('volumedown', this);
 
-    this._callScreen = this._createCallScreen();
-    var callScreen = this._callScreen;
-    callScreen.src = CSORIGIN + 'index.html';
-    callScreen.dataset.preloaded = true;
-    // We need the iframe in the DOM
-    AttentionScreen.attentionScreen.appendChild(callScreen);
-
-    callScreen.setVisible(false);
+    Service.registerState('onCall', this);
 
     return this;
   };
@@ -110,7 +109,10 @@
     this._telephony.removeEventListener('callschanged', this);
 
     window.removeEventListener('sleep', this);
+    window.removeEventListener('wake', this);
     window.removeEventListener('volumedown', this);
+
+    Service.unregisterState('onCall', this);
 
     // TODO: should remove the settings listener once the helper
     // allows it.
@@ -118,8 +120,29 @@
   };
 
   DialerAgent.prototype.handleEvent = function da_handleEvent(evt) {
-    if (evt.type === 'sleep' || evt.type === 'volumedown') {
+    if (evt.type === 'volumedown') {
       this._stopAlerting();
+      return;
+    }
+
+    if ((evt.type === 'sleep') && this._alerting) {
+      this._stopAlerting();
+      return;
+    }
+
+    if ((evt.type === 'sleep') && this.onCall()) {
+      // Hangup all calls
+      this._telephony.calls.forEach(call => call.hangUp());
+
+      if (this._telephony.conferenceGroup.calls.length > 0) {
+        this._telephony.conferenceGroup.hangUp();
+      }
+
+      return;
+    }
+
+    if ((evt.type === 'wake') && this.onCall()) {
+      Service.request('turnScreenOn');
       return;
     }
 
@@ -128,22 +151,31 @@
     }
 
     var calls = this._telephony.calls;
-    if (calls.length !== 1) {
+    if (calls.length === 0) {
+      Service.request('turnScreenOn');
       return;
     }
 
-    if (calls[0].state === 'incoming' || calls[0].state === 'dialing') {
-      this._openCallScreen();
+    var calling = calls.some(function(call) {
+      if (call.state === 'incoming' || call.state === 'dialing') {
+        return true;
+      }
+    });
+
+    if (calling) {
+      // Show the callscreen window if it already exists.
+      Service.request('AttentionWindowManager:showCallscreenWindow');
     }
 
-    if (this._alerting || calls[0].state !== 'incoming') {
+    var incomingCall = calls[calls.length - 1];
+    if (this._alerting || incomingCall.state !== 'incoming') {
       return;
     }
 
-    var incomingCall = calls[0];
     var self = this;
+    // Silence the ringtone if more than one call is present
+    this._startAlerting(/* silent */ (this.numOpenLines() > 1));
 
-    self._startAlerting();
     incomingCall.addEventListener('statechange', function callStateChange() {
       incomingCall.removeEventListener('statechange', callStateChange);
 
@@ -151,7 +183,17 @@
     });
   };
 
-  DialerAgent.prototype._startAlerting = function da_startAlerting() {
+  DialerAgent.prototype._playRing = function da_playRing() {
+    // Notice that, even we are in the vibration mode, we would still play the
+    // silence ringer. That is because when the incoming call is coming, other
+    // playing sound should be paused. Therefore, we need to a silence ringer
+    // to compete for the audio output.
+    if (this._alerting) {
+      this._player.play();
+    }
+  };
+
+  DialerAgent.prototype._startAlerting = function da_startAlerting(silent) {
     this._alerting = true;
 
     if ('vibrate' in navigator && this._shouldVibrate) {
@@ -161,9 +203,8 @@
       navigator.vibrate([200]);
     }
 
-    if (this._shouldRing) {
-      this._player.play();
-    }
+    this._player.volume = silent ? 0.0 : 1.0;
+    this._playRing();
   };
 
   DialerAgent.prototype._stopAlerting = function da_stopAlerting() {
@@ -178,40 +219,13 @@
     window.clearInterval(this._vibrateInterval);
   };
 
-  DialerAgent.prototype._createCallScreen = function da_createCallScreen() {
-    // TODO: use a BrowswerFrame
-    // https://bugzilla.mozilla.org/show_bug.cgi?id=995979
-    var iframe = document.createElement('iframe');
-    iframe.setAttribute('name', 'call_screen');
-    iframe.setAttribute('mozbrowser', 'true');
-    iframe.setAttribute('remote', 'false');
-    iframe.setAttribute('mozapp', CSORIGIN + 'manifest.webapp');
-    iframe.dataset.frameOrigin = CSORIGIN;
-    iframe.dataset.hidden = 'true';
-
-    return iframe;
+  DialerAgent.prototype.numOpenLines = function() {
+    return this._telephony.calls.length +
+      (this._telephony.conferenceGroup.calls.length ? 1 : 0);
   };
 
-  DialerAgent.prototype._openCallScreen = function da_openCallScreen() {
-    var callScreen = this._callScreen;
-    var timestamp = new Date().getTime();
-
-    var src = CSORIGIN + 'index.html' + '#' +
-              (lockScreen.locked ? 'locked' : '');
-    src = src + '&timestamp=' + timestamp;
-    callScreen.src = src;
-    callScreen.setVisible(true);
-
-    var asRequest = {
-      target: callScreen,
-      stopPropagation: function() {},
-      detail: {
-        features: 'attention',
-        name: 'call_screen',
-        frameElement: callScreen
-      }
-    };
-    AttentionScreen.open(asRequest);
+  DialerAgent.prototype.onCall = function() {
+    return (this.numOpenLines() > 0);
   };
 
   exports.DialerAgent = DialerAgent;

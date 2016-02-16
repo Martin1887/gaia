@@ -1,12 +1,29 @@
-/* globals _, ConfirmDialog, Contacts, LazyLoader, utils, ValueSelector */
+/* globals ConfirmDialog, Contacts, LazyLoader, utils, ActionMenu, HeaderUI,
+   ContactToVcardBlob, VcardFilename, VcardActivityHandler, MainNavigation */
 /* exported ActivityHandler */
 
 'use strict';
+
+/**
+ * Per RFC 6350, text/vcard is the canonical MIME media type for vCards, but
+ * there are also deprecated types as well.  Whenever we disambiguate what an
+ * activity is requesting based on its MIME media type, we need to check if it
+ * is any of these, and not just text/vcard.
+ */
+const VCARD_MIME_TYPES = [
+  'text/vcard',
+  'text/x-vcard',
+  'text/directory'
+];
 
 var ActivityHandler = {
   _currentActivity: null,
 
   _launchedAsInlineActivity: (window.location.search == '?pick'),
+
+  mozContactParam: null,
+
+  _actionMenu: null,
 
   get currentlyHandling() {
     return !!this._currentActivity;
@@ -28,12 +45,54 @@ var ActivityHandler = {
     return this._currentActivity.source.data.type;
   },
 
+  get activityData() {
+    if (!this._currentActivity) {
+      return null;
+    }
+
+    return this._currentActivity.source.data;
+  },
+
+  get activityContactProperties() {
+    if (!this._currentActivity) {
+      return null;
+    }
+
+    return this._currentActivity.source.data.contactProperties;
+  },
+
+  /* checks first if we are handling an activity, then if it is
+   * of the same type of any of the items from the list provided.
+   * @param list Array with types of activities to be checked
+   */
+  currentActivityIs: function(list) {
+    return this.currentlyHandling && list.indexOf(this.activityName) !== -1;
+  },
+
+  /* checks first if we are handling an activity, then checks that
+   * it is NOT of the same type of any of the items from the list provided.
+   * @param list Array with types of activities to be checked
+   */
+  currentActivityIsNot: function(list) {
+    return this.currentlyHandling && list.indexOf(this.activityName) === -1;
+  },
+
+  isCancelable: function() {
+    return new Promise(resolve => {
+      resolve(!!this.currentlyHandling);
+    });
+  },
+
   launch_activity: function ah_launch(activity, action) {
     if (this._launchedAsInlineActivity) {
       return;
     }
 
     this._currentActivity = activity;
+    this.isCancelable().then(isCancelable => {
+      HeaderUI.updateHeader(isCancelable);
+    });
+
     var hash = action;
     var param, params = [];
     if (activity.source &&
@@ -48,14 +107,18 @@ var ActivityHandler = {
     }
     document.location.hash = hash;
   },
-  handle: function ah_handle(activity) {
 
+  handle: function ah_handle(activity) {
+    const VCARD_DEPS = '/contacts/js/activities_vcard.js';
     switch (activity.source.name) {
       case 'new':
         this.launch_activity(activity, 'view-contact-form');
         break;
+      case 'import':
       case 'open':
-        this.launch_activity(activity, 'view-contact-details');
+        LazyLoader.load(VCARD_DEPS, () => {
+          VcardActivityHandler.handle(activity, this);
+        });
         break;
       case 'update':
         this.launch_activity(activity, 'add-parameters');
@@ -65,14 +128,14 @@ var ActivityHandler = {
           return;
         }
         this._currentActivity = activity;
-        Contacts.navigation.home();
-        break;
-      case 'import':
-        this.importContactsFromFile(activity);
+        this.isCancelable().then(isCancelable => {
+          HeaderUI.updateHeader(isCancelable);
+        });
+        MainNavigation.home();
         break;
     }
-    Contacts.checkCancelableActivity();
   },
+
 
   importContactsFromFile: function ah_importContactFromVcard(activity) {
     var self = this;
@@ -84,16 +147,18 @@ var ActivityHandler = {
         '/shared/js/contacts/import/utilities/import_from_vcard.js',
         '/shared/js/contacts/import/utilities/overlay.js'
       ], function loaded() {
-        utils.importFromVcard(activity.source.data.blob,
-          function imported(numberOfContacts, id) {
-            if (numberOfContacts === 1) {
-              activity.source.data.params = {id: id};
-              self.launch_activity(activity, 'view-contact-details');
-            } else {
-              self.launch_activity(activity, 'view-contact-list');
+        Contacts.loadFacebook(function() {
+          utils.importFromVcard(activity.source.data.blob,
+            function imported(numberOfContacts, id) {
+              if (numberOfContacts === 1) {
+                activity.source.data.params = {id: id};
+                self.launch_activity(activity, 'view-contact-details');
+              } else {
+                self.launch_activity(activity, 'view-contact-list');
+              }
             }
-          }
-        );
+          );
+        });
       });
     } else {
       this._currentActivity.postError('wrong parameters');
@@ -103,44 +168,104 @@ var ActivityHandler = {
 
   dataPickHandler: function ah_dataPickHandler(theContact) {
     var type, dataSet, noDataStr;
+    var result = {};
+    var self = this;
+
+    // Keeping compatibility with previous implementation. If
+    // we want to get the full contact, just pass the parameter
+    // 'fullContact' equal true.
+    if (this.activityDataType === 'webcontacts/contact' &&
+        this.activityData.fullContact === true) {
+      result = utils.misc.toMozContact(theContact);
+      this.postPickSuccess(result);
+      return;
+    }
+
+    // Was this a request for vCard export as a blob?  Check all supported MIME
+    // types.
+    var isVcardDataType = VCARD_MIME_TYPES.some((mime) => {
+      return this.activityDataType.indexOf(mime) !== -1;
+    });
+
+    if (isVcardDataType) {
+      // Normalize the type to text/vcard so other places that check MIME types
+      // (ex: the Facebook guards) experience a consistent MIME type.
+      this._currentActivity.source.data.type = 'text/vcard';
+      LazyLoader.load([
+                       '/shared/js/text_normalizer.js',
+                       '/shared/js/contact2vcard.js',
+                       '/shared/js/setImmediate.js'
+                      ], function lvcard() {
+        ContactToVcardBlob([theContact], function blobReady(vcardBlob) {
+          VcardFilename(theContact).then(filename => {
+            self.postPickSuccess({
+              name: filename,
+              blob: vcardBlob
+            });
+          });
+        }, {
+          // Some MMS gateways prefer this MIME type for vcards
+          type: 'text/x-vcard'
+        });
+      });
+      return;
+    }
 
     switch (this.activityDataType) {
       case 'webcontacts/tel':
         type = 'contact';
         dataSet = theContact.tel;
-        noDataStr = _('no_contact_phones');
+        noDataStr = 'no_contact_phones';
         break;
       case 'webcontacts/contact':
         type = 'number';
         dataSet = theContact.tel;
-        noDataStr = _('no_contact_phones');
+        noDataStr = 'no_contact_phones';
         break;
       case 'webcontacts/email':
         type = 'email';
         dataSet = theContact.email;
-        noDataStr = _('no_contact_email');
+        noDataStr = 'no_contact_email';
+        break;
+      case 'webcontacts/select':
+        type = 'select';
+        var data = [];
+        if (this.activityContactProperties.indexOf('tel') !== -1) {
+          if (theContact.tel && theContact.tel.length) {
+            data = data.concat(theContact.tel);
+          }
+        }
+        if (this.activityContactProperties.indexOf('email') !== -1) {
+          if (theContact.email && theContact.email.length) {
+            data = data.concat(theContact.email);
+          }
+        }
+
+        dataSet = data;
+        noDataStr = 'no_contact_data_available';
         break;
     }
     var hasData = dataSet && dataSet.length;
     var numOfData = hasData ? dataSet.length : 0;
 
-    var result = {};
+
     result.name = theContact.name;
     switch (numOfData) {
       case 0:
         // If no required type of data
         var dismiss = {
-          title: _('ok'),
+          title: 'ok',
           callback: function() {
             ConfirmDialog.hide();
           }
         };
-        Contacts.confirmDialog(null, noDataStr, dismiss);
+        ConfirmDialog.show(null, noDataStr, dismiss);
         break;
       case 1:
         // if one required type of data
-        if (this.activityDataType == 'webcontacts/tel') {
-          result = utils.misc.toMozContact(theContact);
+        if (this.activityDataType == 'webcontacts/tel' ||
+            this.activityDataType == 'webcontacts/select') {
+          result = this.pickContactsResult(theContact);
         } else {
           result[type] = dataSet[0].value;
         }
@@ -149,36 +274,80 @@ var ActivityHandler = {
         break;
       default:
         // if more than one required type of data
-        var prompt1 = new ValueSelector();
-        var data;
-        for (var i = 0; i < dataSet.length; i++) {
-          data = dataSet[i].value;
-          var carrier = dataSet[i].carrier || '';
-          prompt1.addToList(data + ' ' + carrier, data);
-        }
-
-        prompt1.onchange = (function onchange(itemData) {
-          if (this.activityDataType == 'webcontacts/tel') {
-            // filter phone from data.tel to take out the rest
-            result = utils.misc.toMozContact(theContact);
-            result.tel =
-              this.filterPhoneNumberForActivity(itemData, result.tel);
+        LazyLoader.load('/contacts/js/action_menu.js', function() {
+          if (!self._actionMenu) {
+            self._actionMenu = new ActionMenu();
           } else {
-            result[type] = itemData;
+            // To be sure that the action menu is empty
+            self._actionMenu.hide();
           }
-          prompt1.hide();
-          this.postPickSuccess(result);
-        }).bind(this);
-        prompt1.show();
+
+          var itemData;
+          var capture = function(itemData) {
+            return function() {
+              if (self.activityDataType == 'webcontacts/tel' ||
+                  self.activityDataType == 'webcontacts/select') {
+                result = self.pickContactsResult(theContact, itemData);
+              } else {
+                result[type] = itemData;
+              }
+              self._actionMenu.hide();
+              self.postPickSuccess(result);
+            };
+          };
+          for (var i = 0, l = dataSet.length; i < l; i++) {
+            itemData = dataSet[i].value;
+            var carrier = dataSet[i].carrier || '';
+            self._actionMenu.addToList(
+              {
+                id: 'pick_destination',
+                args: {destination: itemData, carrier: carrier}
+              },
+              capture(itemData)
+            );
+          }
+          self._actionMenu.show();
+        });
     } // switch
   },
 
-  /*
-   * We only need to return the phone number that user chose from the select
-   * Hence we filter out the rest of the phones from the contact
-   */
-  filterPhoneNumberForActivity:
-  function ah_filterPhoneNumberForActivity(itemData, dataSet) {
+  pickContactsResult:
+  function ah_pickContactsResult(theContact, itemData) {
+    var pickResult = {};
+    var contact = utils.misc.toMozContact(theContact);
+
+    if (this.activityDataType == 'webcontacts/tel') {
+      pickResult = contact;
+
+      if (itemData) {
+        pickResult.tel = this.filterDestinationForActivity(
+                            itemData, pickResult.tel);
+      }
+    } else if (this.activityDataType == 'webcontacts/select') {
+      pickResult.contact = contact;
+
+      if (!itemData) {
+        pickResult.select = pickResult.contact.tel;
+
+        if (!pickResult.select || !pickResult.select.length) {
+          pickResult.select = pickResult.contact.email;
+        }
+      } else {
+        pickResult.select = this.filterDestinationForActivity(
+                                itemData, pickResult.contact.tel);
+
+        if (!pickResult.select || !pickResult.select.length) {
+          pickResult.select = this.filterDestinationForActivity(
+                                  itemData, pickResult.contact.email);
+        }
+      }
+    }
+
+    return pickResult;
+  },
+
+  filterDestinationForActivity:
+  function ah_filterDestinationForActivity(itemData, dataSet) {
     return dataSet.filter(function isSamePhone(item) {
       return item.value == itemData;
     });

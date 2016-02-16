@@ -1,10 +1,10 @@
-/* globals LazyLoader, SettingsListener, SimPicker */
+/* globals LazyLoader, SettingsListener */
 /* exported MultiSimActionButton */
 
 'use strict';
 
 // Keep this in sync with SimSettingsHelper.
-const ALWAYS_ASK_OPTION_VALUE = '-1';
+const ALWAYS_ASK_OPTION_VALUE = -1;
 
 var MultiSimActionButton = function MultiSimActionButton(
   button, callCallback, settingsKey, phoneNumberGetter) {
@@ -12,6 +12,7 @@ var MultiSimActionButton = function MultiSimActionButton(
   this._callCallback = callCallback;
   this._settingsKey = settingsKey;
   this._phoneNumberGetter = phoneNumberGetter;
+  this._simPicker = null;
 
   this._button.addEventListener('click', this._click.bind(this));
 
@@ -37,9 +38,16 @@ var MultiSimActionButton = function MultiSimActionButton(
 MultiSimActionButton.prototype._settingsObserver = function(cardIndex) {
   this._defaultCardIndex = cardIndex;
   this._updateUI();
+
+  if (this._clickQueued) {
+    this._clickQueued = false;
+    this._click();
+  }
 };
 
-MultiSimActionButton.prototype._getCardIndex = function() {
+// Returns the currently in-use SIM, or default card index for this service if
+// it has been loaded. Returns undefined if the setting hasn't been loaded yet.
+MultiSimActionButton.prototype._getCardIndexIfLoaded = function() {
   if (window.TelephonyHelper) {
     var inUseSim = window.TelephonyHelper.getInUseSim();
     if (inUseSim !== null) {
@@ -60,38 +68,58 @@ MultiSimActionButton.prototype._click = function(event) {
     return;
   }
 
-  if (navigator.mozIccManager.iccIds.length === 1) {
-    this.performAction();
+  if (event) {
+    // Prevent the KeypadManager handler from triggering.
+    event.stopImmediatePropagation();
+  }
+
+  if (navigator.mozIccManager.iccIds.length === 0) {
+    // We don't care what slot to call on, as emergency calls for example will
+    // go through on any slot.
+    this.performAction(0);
     return;
   }
 
-  var cardIndex = this._getCardIndex();
-  // The user has requested that we ask them every time for this key,
-  // so we prompt them to pick a SIM even when they only click.
-  if (cardIndex == ALWAYS_ASK_OPTION_VALUE) {
-    var self = this;
-    LazyLoader.load(['/shared/js/sim_picker.js'], function() {
-      SimPicker.getOrPick(cardIndex, phoneNumber,
-                          self.performAction.bind(self));
-    });
+  var cardIndex = this._getCardIndexIfLoaded();
+  // Poor man's promise. If the default card index hasn't been loaded yet, then
+  // queue up a click and come back here when we have it.
+  if (cardIndex === undefined) {
+    this._clickQueued = true;
+    return;
+  }
+
+  if (cardIndex === ALWAYS_ASK_OPTION_VALUE) {
+    // The user has requested that we ask them every time for this key,
+    // so we prompt them to pick a SIM even when they only click.
+    this._getOrPickSim(cardIndex, phoneNumber);
   } else {
     this.performAction(cardIndex);
   }
 };
 
+MultiSimActionButton.prototype._getOrPickSim =
+function(cardIndex, phoneNumber) {
+  var self = this;
+  LazyLoader.load(['/shared/elements/gaia_sim_picker/script.js'], function() {
+    self._simPicker = document.getElementById('sim-picker');
+    self._simPicker.getOrPick(cardIndex, phoneNumber,
+                              self.performAction.bind(self));
+  });
+};
+
 MultiSimActionButton.prototype._updateUI = function() {
-  var cardIndex = this._getCardIndex();
+  var cardIndex = this._getCardIndexIfLoaded();
 
   if (cardIndex >= 0 &&
       navigator.mozIccManager &&
       navigator.mozIccManager.iccIds.length > 1) {
     if (this._simIndication) {
       var self = this;
-      navigator.mozL10n.ready(function() {
-        navigator.mozL10n.localize(self._simIndication,
-                                   'sim-picker-button',
-                                   {n: cardIndex+1});
-      });
+      var l10nId = this._simIndication.dataset.l10nId ||
+                   'gaia-sim-picker-button';
+      navigator.mozL10n.setAttributes(self._simIndication,
+                                      l10nId,
+                                      {n: cardIndex+1});
     }
 
     document.body.classList.add('has-preferred-sim');
@@ -114,15 +142,18 @@ MultiSimActionButton.prototype._contextmenu = function(event) {
     return;
   }
 
+  // We generally expect that the setting would be loaded by the time a
+  // contextmenu event could be fired (since it's usually triggered by long
+  // pressing for ~0.4s), but if not, we bail out.
+  if (this._getCardIndexIfLoaded() === undefined) {
+    return;
+  }
+
   if (event) {
     event.preventDefault();
   }
 
-  var self = this;
-  LazyLoader.load(['/shared/js/sim_picker.js'], function() {
-    SimPicker.getOrPick(self._getCardIndex(), phoneNumber,
-                        self.performAction.bind(self));
-  });
+  this._getOrPickSim(this._getCardIndexIfLoaded(), phoneNumber);
 };
 
 MultiSimActionButton.prototype.performAction = function(cardIndex) {
@@ -132,7 +163,7 @@ MultiSimActionButton.prototype.performAction = function(cardIndex) {
   }
 
   if (cardIndex === undefined) {
-    cardIndex = this._getCardIndex();
+    cardIndex = this._getCardIndexIfLoaded();
   }
 
   this._callCallback(phoneNumber, cardIndex);

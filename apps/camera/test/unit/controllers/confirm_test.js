@@ -1,11 +1,10 @@
 /*jshint maxlen:false*/
-/*global req*/
 'use strict';
 
 suite('controllers/confirm', function() {
   suiteSetup(function(done) {
     var modules = this.modules = {};
-    req([
+    requirejs([
       'controllers/confirm',
       'views/confirm'
     ], function(Controller, ConfirmView) {
@@ -39,6 +38,42 @@ suite('controllers/confirm', function() {
   suite('ConfirmController()', function() {
     test('Should bind to app `newmedia` event', function() {
       assert.ok(this.app.on.calledWith('newmedia'));
+    });
+  });
+
+  suite('ConfirmController#onRecordingChange()', function() {
+    setup(function() {
+      this.app.activity.pick = true;
+      this.controller.recording = true;
+      sinon.stub(this.controller, 'renderView');
+    });
+
+    test('Should set `recording` to true if starting', function() {
+      this.controller.recording = false;
+      this.controller.onRecordingChange('starting');
+      assert.isTrue(this.controller.recording);
+    });
+
+    test('Should set `recording` to false if error', function() {
+      this.controller.onRecordingChange('error');
+      assert.isFalse(this.controller.recording);
+    });
+
+    test('Should render view if stopped', function() {
+      this.controller.onRecordingChange('stopped');
+      sinon.assert.called(this.controller.renderView);
+    });
+
+    test('Should not do anything if recording failed and stopped', function() {
+      this.controller.recording = false;
+      this.controller.onRecordingChange('stopped');
+      sinon.assert.notCalled(this.controller.renderView);
+    });
+
+    test('Should not do anything if there is no active activity', function() {
+      this.app.activity.pick = false;
+      this.controller.onRecordingChange('stopped');
+      sinon.assert.notCalled(this.controller.renderView);
     });
   });
 

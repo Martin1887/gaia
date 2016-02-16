@@ -1,16 +1,17 @@
+/* global SettingsListener, Service */
 'use strict';
 
-(function(window) {
+(function(exports) {
   /**
    * OrientationManager manages the orientation.
    *
    *
    * There're some cases we need to reset the orientation of the top window:
    * * LockScreen is unlocked.
-   * * AttentionScreen is hidden.
-   * * AttentionScreen is closed.
+   * * An attention window is opened.
+   * * All attention window is closed.
    * * TrustedUI is closed.
-   * * SleepMenu is hidden.
+   * * sleepMenu is hidden.
    *
    * Any of them occurs would trigger OrientationManager to dispatch
    * <code>reset-orientation</code> event and AppWindowManager would reset the
@@ -20,8 +21,10 @@
    *
    * @module OrientationManager
    */
-  window.OrientationManager = {
-    init: function om_init() {
+  var OrientationManager = {
+    name: 'OrientationManager',
+
+    start: function() {
       this.fetchDefaultOrientation();
       if (SettingsListener) {
         SettingsListener.observe('screen.orientation.lock', false,
@@ -32,23 +35,28 @@
           }.bind(this));
       }
 
-      window.addEventListener('will-unlock', this);
-      window.addEventListener('attentionscreenhide', this);
-      window.addEventListener('status-active', this);
+      window.addEventListener('lockscreen-appclosing', this);
+      window.addEventListener('attentionclosed', this);
       window.addEventListener('sleepmenuhide', this);
       window.addEventListener('trusteduiclose', this);
       window.addEventListener('shrinking-stop', this);
+      window.addEventListener('searchclosing', this);
+      Service.registerState('globalOrientation', this);
+      Service.registerState('defaultOrientation', this);
+      Service.registerState('fetchCurrentOrientation', this);
+      Service.registerState('isDefaultPortrait', this);
+      Service.registerState('isOnRealDevice', this);
     },
 
     handleEvent: function om_handleEvent(evt) {
       switch (evt.type) {
-        case 'attentionscreenhide':
-        case 'status-active':
+        case 'attentionclosed':
         case 'sleepmenuhide':
         case 'trusteduiclose':
-        case 'will-unlock':
+        case 'lockscreen-appclosing':
+        case 'searchclosing':
           // We don't need to reset orientation if lockscreen is locked.
-          if (window.lockScreen && window.lockScreen.locked) {
+          if (Service.query('locked')) {
             return;
           }
         /**
@@ -99,8 +107,9 @@
      * @memberOf module:OrientationManager
      */
     isOnRealDevice: function sl_isOnRealDevice() {
-      if (typeof(this._isOnRealDevice) !== 'undefined')
+      if (typeof(this._isOnRealDevice) !== 'undefined') {
         return this._isOnRealDevice;
+      }
 
       // XXX: A hack to know we're using real device or not
       // is to detect screen size.
@@ -163,5 +172,5 @@
     }
   };
 
-  OrientationManager.init();
-}(this));
+  exports.OrientationManager = OrientationManager;
+}(window));

@@ -1,3 +1,7 @@
+* {
+  -moz-user-select: none;
+}
+
 html {
   font-size: 10px;
   font-weight: 500;
@@ -16,6 +20,12 @@ body {
   color: #fff;
 }
 
+input,
+textarea,
+[contenteditable="true"] {
+  -moz-user-select: text;
+}
+
 #screen {
   position: absolute;
   overflow: hidden;
@@ -25,14 +35,6 @@ body {
   background-size: cover; /* Possible memory over-consumption with huge images, it should be removed for improving stability*/
   background-repeat: no-repeat;
   background-position: 50% 50%;
-}
-
-#screen.screenoff {
-  background: #000 !important;
-}
-
-#screen.screenoff * {
-  visibility: hidden !important;
 }
 
 /*
@@ -48,7 +50,7 @@ body {
 }
 
 #screen > div#poweroff-splash.step1 {
-  animation: poweroff-splash-fade-in 0.5s;
+  animation: poweroff-splash-fade-in var(--transition-duration);
 }
 
 @keyframes poweroff-splash-fade-in {
@@ -76,26 +78,26 @@ body {
   display: block;
   position: absolute;
   border-radius: 50%;
-  width: 6rem;
-  height: 6rem;
-  margin-left: -3rem;
-  margin-top: -3rem;
-  left: 50%;
+  width: 19vw;
+  height: 19vw;
+  margin-inline-start: -9.5vw;
+  margin-top: -9.5vw;
+  offset-inline-start: 50%;
   opacity: 0;
 }
 
 #poweroff-ring-1 {
-  top: 12rem;
+  top: 25%;
   background-color: #e66600;
 }
 
 #poweroff-ring-2 {
-  top: 24rem;
+  top: 50%;
   background-color: #dc4e00;
 }
 
 #poweroff-ring-3 {
-  top: 36rem;
+  top: 75%;
   background-color: #d24500;
 }
 
@@ -104,13 +106,29 @@ body {
   position: absolute;
   border-radius: 50%;
   top: 50%;
-  left: 50%;
+  offset-inline-start: 50%;
   margin: auto;
   background-color: black;
-  width: 4rem;
-  height: 4rem;
-  margin-top: -2rem;
-  margin-left: -2rem;
+  width: 12vw;
+  height: 12vw;
+  margin-top: -6vw;
+  margin-inline-start: -6vw;
+}
+
+@media all and (orientation:landscape) {
+  .poweroff-ring {
+    width: 19vh;
+    height: 19vh;
+    margin-inline-start: -9.5vh;
+    margin-top: -9.5vh;
+  }
+
+  .poweroff-ring > span {
+    width: 12vh;
+    height: 12vh;
+    margin-top: -6vh;
+    margin-inline-start: -6vh;
+  }
 }
 
 #poweroff-ring-2 > span {
@@ -198,14 +216,14 @@ body {
 
 
 
-#system-overlay {
+#system-overlay,
+#fullscreen-dialog-overlay {
   width: 100%;
   height: 100%;
   position: absolute;
   top: 0;
   left: 0;
   visibility: hidden;
-
   pointer-events: none;
 }
 
@@ -224,13 +242,13 @@ body {
   overflow: hidden;
 }
 
-#windows::before {
+#windows .appWindow:not(.homescreen):not(.lockScreenInputWindow)::before {
   position: absolute;
   top: 0;
   width: 100%;
-  height: 2.4rem;
+  height: var(--statusbar-height);
 
-  background: black;
+  background: rgba(0, 0, 0, .15);
   content: '';
 }
 
@@ -247,33 +265,23 @@ body {
 
 #dialog-overlay {
   position: absolute;
-  top: 2.4rem;
+  top: var(--statusbar-height);
+  right: 0;
+  bottom: 0;
   left: 0;
-  width: 100%;
-  height: calc(100% - 2.4rem);
   visibility: hidden;
   pointer-events: none;
 }
 
-#screen.software-button-enabled #windows + #dialog-overlay {
-  bottom: 5rem;
-  height: calc(100% - 2.4rem - 5rem);
-}
-
-#screen.active-statusbar #dialog-overlay,
-#screen.active-statusbar.fullscreen-app #dialog-overlay {
-  top: 4rem;
-  height: calc(100% - 4rem);
-}
-
 #screen:-moz-full-screen-ancestor #dialog-overlay,
-#screen.fullscreen-app #dialog-overlay {
+#dialog-overlay.fullscreen {
   top: 0;
-  height: 100%;
+  bottom: 0;
 }
 
-#screen:not(.crash-dialog) #crash-dialog {
-  visibility: hidden;
+#screen:not(.crash-dialog) #crash-dialog,
+#screen:not(.trustedui) #trustedui-container {
+  display: none;
 }
 
 /* `.dialog` is set by system_dialog.js when a dialog is shown */
@@ -294,34 +302,7 @@ body {
   pointer-events: auto;
 }
 
-@keyframes banner-bounce {
-  from, to {
-    transform: translateY(100%);
-    opacity: 0;
-  }
-  12.5%, 87.5% {
-    transform: translateY(0);
-    opacity: 1;
-  }
-}
-
-.generic-dialog.banner {
-  z-index: 0;
-  visibility: hidden;
-  opacity: 0;
-  transform: translateY(100%);
-}
-
-.generic-dialog.banner.visible {
-  animation: banner-bounce 4s;
-  visibility: visible;
-}
-
-.generic-dialog.banner button {
-  width: auto;
-}
-
-.generic-dialog.banner[data-button="false"] button {
+#screen.locked #dialog-overlay {
   visibility: hidden;
 }
 
@@ -335,3 +316,11 @@ body {
     background: url(../themes/default/images/ui/menu_bg.png) no-repeat;
   }
 }
+
+/* DIALOGS */
+/* We'll potentially move this code into the components */
+
+gaia-dialog > .dialog-content {
+  padding: 1.8rem;
+}
+

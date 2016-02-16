@@ -269,6 +269,11 @@
           // proxy characteristic nodes that the logical proxy must contain.
           for (var l = 0; l < toProxyNodes.length; l++) {
             var pxPhysicalNodes = this.getPxPhysicalNodes(toProxyNodes[l]);
+
+            if (!pxPhysicalNodes) {
+              continue;
+            }
+
             for (var m = 0; m < pxPhysicalNodes.length; m++) {
               proxy = parsePxPhysicalNode(pxPhysicalNodes[m],
                                           (TYPE_MAPPING[appId] === 'mms'));
@@ -277,7 +282,7 @@
                 napDefNode = this.getNapDefNode(proxy['TO-NAPID'][n]);
                 apn = parseNapDefNode(napDefNode);
                 // Add type property.
-                apn.type = type;
+                apn.types = type;
                 // Add mmsc property when MMS APN
                 if ((TYPE_MAPPING[appId] === 'mms') && addr) {
                   apn.mmsc = addr;
@@ -296,7 +301,7 @@
             napDefNode = this.getNapDefNode(toNapId);
             apn = parseNapDefNode(napDefNode);
             // Add type property.
-            apn.type = type;
+            apn.types = type;
             this._apns.push(apn);
           }
         }

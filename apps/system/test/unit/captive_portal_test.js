@@ -1,41 +1,57 @@
 // Captive Portal Test
 
+/* global CaptivePortal,
+   MockService,
+   MocksHelper,
+   MockChromeEvent,
+   MockL10n,
+   MockMozActivity,
+   MockNavigatorSettings,
+   MockWifiManager,
+   Notification,
+   MockNotificationHelper,
+   Promise
+*/
+
 'use strict';
 
 requireApp('system/test/unit/mock_chrome_event.js');
 requireApp('system/test/unit/mock_app.js');
 requireApp('system/test/unit/mocks_helper.js');
-requireApp('system/test/unit/mock_l10n.js');
+require('/shared/test/unit/mocks/mock_service.js');
+require('/shared/test/unit/mocks/mock_l20n.js');
+require('/shared/test/unit/mocks/mock_notification_helper.js');
 requireApp('system/shared/test/unit/mocks/mock_settings_listener.js');
 requireApp('system/shared/test/unit/mocks/mock_navigator_moz_settings.js');
 requireApp('system/test/unit/mock_wifi_manager.js');
 requireApp('system/test/unit/mock_activity.js');
-requireApp('system/test/unit/mock_notification_screen.js');
 requireApp('system/test/unit/mock_app_window_manager.js');
+requireApp('system/test/unit/mock_lazy_loader.js');
 
 requireApp('system/js/browser_frame.js');
 requireApp('system/js/entry_sheet.js');
 requireApp('system/js/captive_portal.js');
-requireApp('system/js/ftu_launcher.js');
 
 var mocksForCaptivePortal = new MocksHelper([
   'SettingsListener',
-  'NotificationScreen',
-  'AppWindowManager'
+  'AppWindowManager',
+  'Service',
+  'LazyLoader'
 ]).init();
-
-mocha.globals(['MozActivity']);
 
 suite('captive portal > ', function() {
   var realWifiManager;
   var realL10n;
   var realSettings;
   var realActivity;
-  var mocksHelper;
-  var timeout = 10;
-  var subject;
+  var realNotificationHelper;
   var event;
+  var successEvent;
+  var abortEvent;
   var fakeScreenNode;
+  var expectedBody, expectedTag;
+  var notificationGetStub;
+  var previousCaptiveNotification, previousSpy;
 
   mocksForCaptivePortal.attachTestHelpers();
   suiteSetup(function() {
@@ -43,8 +59,10 @@ suite('captive portal > ', function() {
     navigator.mozWifiManager = MockWifiManager;
     realSettings = navigator.mozSettings;
     navigator.mozSettings = MockNavigatorSettings;
-    realL10n = navigator.mozL10n;
-    navigator.mozL10n = MockL10n;
+    realL10n = document.l10n;
+    document.l10n = MockL10n;
+    realNotificationHelper = window.NotificationHelper;
+    window.NotificationHelper = MockNotificationHelper;
     try {
       realActivity = window.MozActivity;
     } catch (e) {
@@ -64,39 +82,107 @@ suite('captive portal > ', function() {
     } catch (e) {
       console.log('Access MozActivity failed, passed MozActivity assignment');
     }
-    navigator.mozL10n = realL10n;
+    document.l10n = realL10n;
     navigator.mozSettings = realSettings;
+    window.NotificationHelper = realNotificationHelper;
     document.body.appendChild(fakeScreenNode);
   });
 
-  setup(function() {
+  setup(function(done) {
     event = new MockChromeEvent({
       type: 'captive-portal-login',
-      url: 'http://developer.mozilla.org'
+      url: 'http://developer.mozilla.org',
+      id: 0
     });
-    CaptivePortal.init();
+
+    successEvent = new MockChromeEvent({
+      type: 'captive-portal-login-success',
+      url: 'http://developer.mozilla.org',
+      id: 0
+    });
+
+    abortEvent = new MockChromeEvent({
+      type: 'captive-portal-login-abort',
+      url: 'http://developer.mozilla.org',
+      id: 0
+    });
+
+    var expectedSSID = window.navigator.mozWifiManager.connection.network.ssid;
+    expectedTag = 'captivePortal:' + expectedSSID;
+    expectedBody = {
+      id: 'captive-wifi-available',
+      args: {
+        networkName: expectedSSID
+      }
+    };
+
+    previousCaptiveNotification = new Notification('', {
+      body: 'previousCaptiveNotification',
+      tag: expectedTag
+    });
+
+    notificationGetStub = function notificationGet() {
+      return Promise.resolve([previousCaptiveNotification]);
+    };
+    this.sinon.stub(window.Notification, 'get', notificationGetStub);
+    previousSpy = this.sinon.spy(previousCaptiveNotification, 'close');
+
+    CaptivePortal.init().then(function() {
+      done();
+    }, done);
   });
 
-  test('system/captive portal login w manual enable wifi', function() {
-    CaptivePortal.handleEvent(event);
-    MockSettingsListener.mCallback(true);
-    assert.ok(MockNotificationScreen.wasMethodCalled['addNotification']);
+  test('system/captive portal notification cleanup', function() {
+    sinon.assert.called(previousSpy);
   });
 
-  test('system/captive portal login w/o manual enable wifi', function() {
+  test('system/captive portal login', function() {
+    var sendSpy = this.sinon.spy(window.NotificationHelper, 'send');
     CaptivePortal.handleEvent(event);
-    MockSettingsListener.mCallback(true);
-    assert.equal(mockMozActivityInstance.name, 'view');
+    sinon.assert.called(sendSpy);
+    var notification = sendSpy.firstCall.args[1];
+    assert.deepEqual(notification.bodyL10n, expectedBody);
+    assert.equal(notification.tag, expectedTag);
+    assert.equal(notification.mozbehavior.showOnlyOnce, true);
+  });
+
+  test('system/captive portal open activity url', function() {
+    var expectedActivity = {
+      name: 'view',
+      data: { type: 'url', url: event.detail.url }
+    };
+    var activitySpy = this.sinon.spy(window, 'MozActivity');
+    CaptivePortal.handleEvent(event);
+    CaptivePortal.captiveNotification_onClick();
+    sinon.assert.calledWith(activitySpy, expectedActivity);
+  });
+
+  test('system/captive portal login success', function() {
+    CaptivePortal.handleEvent(event);
+    CaptivePortal.handleEvent(successEvent);
+    sinon.assert.called(CaptivePortal.notification.close);
+  });
+
+  test('system/captive portal login again', function() {
+    var sendSpy = this.sinon.spy(window.NotificationHelper, 'send');
+    CaptivePortal.handleEvent(event);
+    sinon.assert.called(sendSpy);
+    var notification = sendSpy.firstCall.args[1];
+    assert.deepEqual(notification.bodyL10n, expectedBody);
+    assert.equal(notification.tag, expectedTag);
+    assert.equal(notification.mozbehavior.showOnlyOnce, true);
+  });
+
+  test('system/captive portal login abort', function() {
+    CaptivePortal.handleEvent(event);
+    CaptivePortal.handleEvent(abortEvent);
+    sinon.assert.called(CaptivePortal.notification.close);
   });
 
   test('system/captive portal while FTU running..', function() {
-    FtuLauncher._isRunningFirstTime = true;
+    MockService.mockQueryWith('isFtuRunning', true);
 
     CaptivePortal.handleEvent(event);
     assert.equal(CaptivePortal.hasOwnProperty('entrySheet'), true);
-  });
-
-  teardown(function() {
-    FtuLauncher._isRunningFirstTime = false;
   });
 });

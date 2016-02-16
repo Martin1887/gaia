@@ -7,15 +7,16 @@
 requireApp('/system/test/unit/fxa_test/load_element_helper.js');
 
 // Real code
-requireApp('system/fxa/js/utils.js');
+require('/shared/js/utilities.js');
 requireApp('system/fxa/js/fxam_module.js');
 requireApp('system/fxa/js/fxam_states.js');
 requireApp('system/fxa/js/fxam_manager.js');
+requireApp('system/fxa/js/fxam_navigation.js');
 requireApp('system/fxa/js/fxam_overlay.js');
 requireApp('system/fxa/js/fxam_error_overlay.js');
 
 // Mockuped code
-requireApp('/system/test/unit/mock_l10n.js');
+require('/shared/test/unit/mocks/mock_l20n.js');
 requireApp('/system/test/unit/fxa_test/mock_fxam_ui.js');
 requireApp('/system/test/unit/fxa_test/mock_fxam_server_request.js');
 requireApp('/system/test/unit/fxa_test/mock_fxam_errors.js');
@@ -33,25 +34,15 @@ var mocksHelperForCoppaModule = new MocksHelper([
   'LazyLoader'
 ]);
 
-mocha.globals([
-  'LazyLoader',
-  'FxaModuleErrors',
-  'FxModuleServerRequest',
-  'FxaModuleUI'
-]);
-
 suite('Screen: COPPA', function() {
   var realL10n;
   suiteSetup(function(done) {
-    realL10n = navigator.mozL10n;
-    navigator.mozL10n = MockL10n;
+    realL10n = document.l10n;
+    document.l10n = MockL10n;
 
     mocksHelperForCoppaModule.suiteSetup();
     // Load real HTML
     loadBodyHTML('/fxa/fxa_module.html');
-    // wrap the body in an 'fxa-dialog' node for ftu testing
-    document.body.innerHTML =
-      '<div id="fxa-dialog">' + document.body.innerHTML + '</div>';
     // Load element to test
     LoadElementHelper.load('fxa-coppa.html');
     // Import the element and execute the right init
@@ -61,7 +52,7 @@ suite('Screen: COPPA', function() {
   });
 
   suiteTeardown(function() {
-    navigator.mozL10n = realL10n;
+    document.l10n = realL10n;
     document.body.innerHTML = '';
     mocksHelperForCoppaModule.suiteTeardown();
   });
@@ -105,26 +96,12 @@ suite('Screen: COPPA', function() {
       assert.ok(fxamUIIncStepsSpy.calledOnce);
       done();
     });
-  });
 
-  suite(' > Second call to init', function() {
-    var fxamUIEnableSpy;
-    var fxamUIIncStepsSpy;
-    setup(function() {
-      fxamUIEnableSpy = this.sinon.spy(FxaModuleUI, 'enableNextButton');
-      fxamUIIncStepsSpy = this.sinon.spy(FxaModuleUI, 'increaseMaxStepsBy');
+    test(' > We only populate the age selection element once', function() {
+      var fxaAgeSelect = document.getElementById('fxa-age-select');
+      var selectLength = fxaAgeSelect.length;
       FxaModuleCoppa.init();
-    });
-
-    teardown(function() {
-      fxamUIEnableSpy = null;
-      fxamUIIncStepsSpy = null;
-    });
-
-    test(' > FxaModuleUI should not be called', function(done) {
-      assert.isFalse(fxamUIEnableSpy.calledOnce);
-      assert.isFalse(fxamUIIncStepsSpy.calledOnce);
-      done();
+      assert.equal(selectLength, fxaAgeSelect.length);
     });
   });
 
@@ -137,7 +114,6 @@ suite('Screen: COPPA', function() {
       showErrorOverlaySpy = this.sinon.spy(FxaModuleErrorOverlay, 'show');
       showErrorResponse = this.sinon.spy(FxaModuleCoppa, 'showErrorResponse');
       fxaAgeSelect.value = new Date().getFullYear();
-
     });
 
     teardown(function() {

@@ -5,21 +5,22 @@ suite('app', function() {
 
   suiteSetup(function(done) {
     var self = this;
-
-    window.req([
+    requirejs([
       'app',
-      'lib/camera',
-      'vendor/view',
+      'lib/camera/camera',
+      'view',
       'lib/geo-location',
-      'lib/activity',
+      'lib/orientation',
       'lib/setting',
-    ], function(App, Camera, View, GeoLocation, Activity, Setting) {
+      'lib/pinch'
+    ], function(App, Camera, View, GeoLocation, orientation, Setting, Pinch) {
       self.App = App;
       self.View = View;
       self.Camera = Camera;
       self.Geolocation = GeoLocation;
-      self.Activity = Activity;
+      self.orientation = orientation;
       self.Setting = Setting;
+      self.Pinch = Pinch;
       done();
     });
   });
@@ -34,6 +35,7 @@ suite('app', function() {
     win: function() {
       return {
         addEventListener: sinon.spy(),
+        dispatchEvent: sinon.stub(),
         location: {
           hash: ''
         }
@@ -52,44 +54,46 @@ suite('app', function() {
       };
     }
 
-    navigator.mozL10n = { readyState: null };
+    navigator.mozSettings = {
+      addObserver: function() {},
+      removeObserver: function() {}
+    };
 
     var options = this.options = {
       doc: mocks.doc(),
       win: mocks.win(),
       el: document.createElement('div'),
       geolocation: sinon.createStubInstance(this.Geolocation),
-      activity: new this.Activity(),
+      orientation: this.orientation,
+      pinch: sinon.createStubInstance(this.Pinch),
+      activity: {},
       camera: sinon.createStubInstance(this.Camera),
       require: sinon.stub(),
       settings: {
         geolocation: sinon.createStubInstance(this.Setting),
-        loadingScreen: sinon.createStubInstance(this.Setting)
+        spinnerTimeouts: sinon.createStubInstance(this.Setting),
+        keyDownEvents: sinon.createStubInstance(this.Setting),
+        countdown: sinon.createStubInstance(this.Setting)
       },
-      views: {
-        viewfinder: new this.View({ name: 'viewfinder' }),
-        focusRing: new this.View({ name: 'focus-ring' }),
-        hud: new this.View({ name: 'hud' })
-      },
+      views: {},
       controllers: {
+        battery: sinon.spy(),
+        overlay: sinon.spy(),
         hud: sinon.spy(),
-        timer: sinon.spy(),
+        countdown: sinon.spy(),
         controls: sinon.spy(),
         viewfinder: sinon.spy(),
-        overlay: sinon.spy(),
         camera: sinon.spy(),
         settings: sinon.spy(),
         activity: sinon.spy(),
-        recordingTimer: sinon.spy(),
-        zoomBar: sinon.spy(),
-        indicators: sinon.spy(),
+        storage: sinon.spy(),
 
         // Lazy loaded
-        previewGallery: 'controllers/preview-gallery',
-        storage: 'controllers/storage',
-        confirm: 'controllers/confirm',
-        battery: 'controllers/battery',
-        sounds: 'controllers/sounds'
+        lazy: [
+          'controllers/preview-gallery',
+          'controllers/confirm',
+          'controllers/sounds'
+        ]
       }
     };
 
@@ -105,16 +109,21 @@ suite('app', function() {
 
     // Stub out all methods
     this.sandbox.stub(options.activity);
-    this.sandbox.stub(options.viewfinder);
     this.sandbox.stub(options.focusRing);
     this.sandbox.stub(options.hud);
 
-    // More complex stubs
-    options.activity.check.callsArg(0);
+    // Sometimes we have to spy on the prototype,
+    // this is because methods get bound and passed
+    // directly as callbacks. We set spys on prototype
+    // methods before any of this happens, so that the
+    // spy is always at the root of any call.
     this.sandbox.spy(this.App.prototype, 'boot');
+    this.sandbox.spy(this.App.prototype, 'showSpinner');
+    this.sandbox.spy(this.App.prototype, 'clearSpinner');
 
     // Aliases
     this.settings = options.settings;
+    this.pinch = options.pinch;
 
     // Create the app
     this.app = new this.App(options);
@@ -169,20 +178,12 @@ suite('app', function() {
       var controllers = this.app.controllers;
       var app = this.app;
 
+      assert.ok(controllers.overlay.calledWith(app));
+      assert.ok(controllers.battery.calledWith(app));
       assert.ok(controllers.hud.calledWith(app));
       assert.ok(controllers.controls.calledWith(app));
       assert.ok(controllers.viewfinder.calledWith(app));
-      assert.ok(controllers.overlay.calledWith(app));
       assert.ok(controllers.camera.calledWith(app));
-      assert.ok(controllers.zoomBar.calledWith(app));
-    });
-
-    test('Should put each of the views into the root element', function() {
-      var el = this.app.el;
-
-      assert.ok(el.querySelector('.viewfinder'));
-      assert.ok(el.querySelector('.focus-ring'));
-      assert.ok(el.querySelector('.hud'));
     });
 
     test('Should bind to `visibilitychange` event', function() {
@@ -208,6 +209,36 @@ suite('app', function() {
     test('Should watch location only once storage confirmed healthy', function() {
       var geolocationWatch = this.app.geolocationWatch;
       assert.ok(this.app.once.calledWith('storage:checked:healthy', geolocationWatch));
+    });
+
+    test('Should clear loading screen when camera is ready', function() {
+      var on = this.app.on.withArgs('ready');
+      var callback = on.args[0][1];
+
+      // Call the callback and make sure
+      // that `clearSpinner` was called.
+      callback();
+      sinon.assert.calledOnce(this.App.prototype.clearSpinner);
+    });
+
+    test('It calls `showSpinner`', function() {
+      sinon.assert.calledWith(this.App.prototype.showSpinner, 'requestingCamera');
+    });
+
+    suite('pinch', function() {
+      test('It listens to the pinch `changed` event', function() {
+        sinon.assert.called(this.pinch.on, 'changed');
+      });
+
+      test('It disables pinch while the preview-gallery is open', function() {
+        sinon.assert.called(this.app.on, 'previewgallery:opened', this.pinch.disable);
+        sinon.assert.called(this.app.on, 'previewgallery:closed', this.pinch.enable);
+      });
+
+      test('It disables pinch while settings is open', function() {
+        sinon.assert.called(this.app.on, 'settings:opened', this.pinch.disable);
+        sinon.assert.called(this.app.on, 'settings:closed', this.pinch.enable);
+      });
     });
 
     suite('App#geolocationWatch()', function() {
@@ -241,9 +272,8 @@ suite('app', function() {
         this.spy = this.app.once.withArgs('viewfinder:visible');
         this.callback = this.spy.args[0][1];
 
-        sinon.stub(this.app, 'clearLoading');
-        sinon.spy(this.app, 'loadController');
-        sinon.spy(this.app, 'loadL10n');
+        sinon.spy(this.app, 'loadLazyControllers');
+        sinon.stub(this.app, 'clearSpinner');
 
         // Call the callback to test
         this.callback();
@@ -257,44 +287,76 @@ suite('app', function() {
         assert.isTrue(this.app.criticalPathDone);
       });
 
-      test('Should load l10n', function() {
-        assert.isTrue(this.app.loadL10n.calledOnce);
-      });
-
       test('Should load non-critical controllers', function() {
-        var loadController = this.app.loadController;
-        var controllers = this.app.controllers;
-
-        assert.isTrue(loadController.calledWith(controllers.previewGallery));
-        assert.isTrue(loadController.calledWith(controllers.storage));
-        assert.isTrue(loadController.calledWith(controllers.confirm));
-        assert.isTrue(loadController.calledWith(controllers.battery));
-        assert.isTrue(loadController.calledWith(controllers.sounds));
-      });
-
-      test('Should clear loading screen', function() {
-        sinon.assert.called(this.app.clearLoading);
+        sinon.assert.called(this.app.loadLazyControllers);
       });
     });
   });
 
   suite('App#bindEvents()', function() {
     setup(function() {
+      this.app.firer.restore();
+
+      sinon.stub(this.app, 'firer');
+
+      this.app.firer
+        .withArgs('busy')
+        .returns('<busy-firer>');
+
+      this.app.firer
+        .withArgs('localized')
+        .returns('<localized-firer>');
+
+      this.sandbox.stub(this.app, 'onCountdown');
+      this.options.settings.countdown.selected.returns('off');
+    });
+
+    suite('default', function() {
+      setup(function() {
+        this.app.bindEvents();
+      });
+
+      test('Should listen for visibilitychange on document', function() {
+        sinon.assert.calledWith(this.app.doc.addEventListener, 'visibilitychange');
+      });
+
+      test('Should relay window \'localized\' event', function() {
+        sinon.assert.calledWith(this.app.doc.addEventListener, 'DOMRetranslated', '<localized-firer>');
+      });
+
+      test('It indicates the app is \'busy\' when the camera \'willchange\'', function() {
+        sinon.assert.calledWith(this.app.on, 'camera:willchange', '<busy-firer>');
+      });
+
+      test('Should listen for \'willchange\' to lazy load once', function() {
+        sinon.assert.calledWith(this.app.once, 'camera:willchange', this.app.onWillChange);
+      });
+
+      test('Should listen for \'activity\' to lazy load once', function() {
+        sinon.assert.calledWith(this.app.once, 'activity', this.app.onActivity);
+      });
+
+      test('Should listen for \'preview\' to lazy load once', function() {
+        sinon.assert.calledWith(this.app.once, 'preview', this.app.onPreview);
+      });
+
+      test('Should listen for \'newthumbnail\' to lazy load once', function() {
+        sinon.assert.calledWith(this.app.once, 'newthumbnail', this.app.onNewThumbnail);
+      });
+
+      test('Should listen for change:selected on countdown if disabled', function() {
+        sinon.assert.calledWith(this.options.settings.countdown.once, 'change:selected', this.app.onCountdown);
+      });
+    });
+
+    test('Should listen for change:selected on countdown if disabled', function() {
+      this.options.settings.countdown.selected.returns('2sec');
       this.app.bindEvents();
-    });
-
-    test('Should listen for visibilitychange on document', function() {
-      assert.isTrue(this.app.doc.addEventListener.calledWith('visibilitychange'));
-    });
-
-    test('Should relay window \'localized\' event', function() {
-      assert.isTrue(this.app.win.addEventListener.calledWith('localized'));
-      assert.isTrue(this.app.firer.calledWith('localized'));
+      sinon.assert.called(this.app.onCountdown);
     });
   });
 
   suite('App#onVisibilityChange', function() {
-
     test('Should update the `app.hidden` property', function() {
       this.app.doc.hidden = true;
       this.app.onVisibilityChange();
@@ -331,43 +393,84 @@ suite('app', function() {
   suite('App#onVisible()', function() {
     setup(function() {
       sinon.spy(this.app, 'geolocationWatch');
+      this.sandbox.spy(this.app.orientation, 'lock');
       this.app.onVisible();
     });
 
     test('Should begin watching location again', function() {
-      assert.ok(this.app.geolocationWatch.called);
+      sinon.assert.called(this.app.geolocationWatch);
+    });
+
+    test('It locks the orientation to portrait', function() {
+      sinon.assert.called(this.app.orientation.lock);
     });
   });
 
-  suite('App#loadL10n()', function() {
-    test('Should require l10n', function() {
-      this.app.loadL10n();
-      assert.equal(this.app.require.args[0][0][0], 'l10n');
-    });
-  });
-
-  suite('App#showLoading()', function() {
+  suite('App#onBusy()', function() {
     setup(function() {
-      this.settings.loadingScreen.get.withArgs('delay').returns(400);
+      this.app.settings.spinnerTimeouts.get
+        .withArgs('takingPicture')
+        .returns(1500);
+
+      this.app.settings.spinnerTimeouts.get
+        .withArgs('requestingCamera')
+        .returns(600);
+
+      sinon.stub(this.app, 'showSpinner');
+    });
+
+    test('It calls showSpinner with type if busy type recongnised', function() {
+      this.app.onBusy('takingPicture');
+      sinon.assert.calledWith(this.app.showSpinner, 'takingPicture');
+      this.app.showSpinner.reset();
+
+      this.app.onBusy('requestingCamera');
+      sinon.assert.calledWith(this.app.showSpinner, 'requestingCamera');
+      this.app.showSpinner.reset();
+    });
+
+    test('Should not show loading screen if busy type not recongnised', function() {
+      this.app.onBusy('unknownType');
+      sinon.assert.notCalled(this.app.showSpinner);
+    });
+  });
+
+  suite('App#showSpinner()', function() {
+    setup(function() {
       this.sandbox.spy(window, 'clearTimeout');
+
+      this.app.settings.spinnerTimeouts.get
+        .withArgs('takingPicture')
+        .returns(1500);
+
+      this.app.settings.spinnerTimeouts.get
+        .withArgs('requestingCamera')
+        .returns(600);
+
     });
 
     test('Should append a loading view to the app element and show', function() {
-      this.app.showLoading();
-      this.clock.tick(400);
+      this.app.showSpinner('takingPicture');
+      this.clock.tick(1500);
       sinon.assert.calledWith(this.app.views.loading.appendTo, this.app.el);
       sinon.assert.called(this.app.views.loading.show);
     });
 
     test('Should clear any existing timeouts', function() {
       this.sandbox.stub(window, 'setTimeout').returns('<timeout-id>');
-      this.app.showLoading();
-      this.app.showLoading();
+      this.app.showSpinner('requestingCamera');
+      this.app.showSpinner('requestingCamera');
       sinon.assert.calledWith(window.clearTimeout, '<timeout-id>');
+    });
+
+    test('It should not require a type', function() {
+      this.app.showSpinner();
+      this.clock.tick(1);
+      sinon.assert.calledWith(this.app.views.loading.appendTo, this.app.el);
     });
   });
 
-  suite('App#clearLoading()', function() {
+  suite('App#clearSpinner()', function() {
     setup(function() {
       this.sandbox.spy(window, 'clearTimeout');
       this.sandbox.stub(window, 'setTimeout').returns('<timeout-id>');
@@ -376,17 +479,200 @@ suite('app', function() {
     });
 
     test('Should clear loadingTimeout', function() {
-      this.app.showLoading();
-      this.app.clearLoading();
+      this.app.views.loading = null;
+      this.app.showSpinner();
+      this.app.clearSpinner();
       sinon.assert.calledWith(window.clearTimeout, '<timeout-id>');
     });
 
     test('Should hide, then destroy the view', function() {
       var view = this.app.views.loading;
-      this.app.clearLoading();
+      this.app.clearSpinner();
 
       sinon.assert.called(view.hide);
       assert.ok(view.destroy.calledAfter(view.hide));
+    });
+
+    test('Should clear reference to `app.views.loading`', function() {
+      this.app.clearSpinner();
+      assert.equal(this.app.views.loading, null);
+    });
+  });
+
+  suite('App#onActivity', function() {
+    setup(function() {
+      this.sandbox.stub(this.app, 'loadLazyController');
+      this.app.onActivity();
+    });
+
+    test('Should lazy load confirm controller', function() {
+      sinon.assert.calledWith(this.app.loadLazyController, 'controllers/confirm');
+    });
+  });
+
+  suite('App#onCountdown', function() {
+    setup(function() {
+      this.sandbox.stub(this.app, 'loadLazyController');
+      this.app.onCountdown();
+    });
+
+    test('Should lazy load countdown controller', function() {
+      sinon.assert.calledWith(this.app.loadLazyController, 'controllers/countdown');
+    });
+  });
+
+  suite('App#onWillChange', function() {
+    setup(function() {
+      this.sandbox.stub(this.app, 'loadLazyController');
+      this.app.onWillChange();
+    });
+
+    test('Should lazy load recording-timer controller', function() {
+      sinon.assert.calledWith(this.app.loadLazyController, 'controllers/recording-timer');
+    });
+  });
+
+  suite('App#onNewThumbnail', function() {
+    setup(function() {
+      this.sandbox.stub(this.app, 'loadLazyController');
+      this.app.onNewThumbnail();
+    });
+
+    test('Should lazy load recording-timer controller', function() {
+      sinon.assert.calledWith(this.app.loadLazyController, 'controllers/preview-gallery');
+    });
+  });
+
+  suite('App#onPreview', function() {
+    setup(function() {
+      this.sandbox.stub(this.app, 'loadLazyController').returns({
+        then: sinon.stub().callsArg(0)
+      });
+      this.app.onPreview();
+    });
+
+    test('Should lazy load preview gallery controller', function() {
+      sinon.assert.calledWith(this.app.loadLazyController, 'controllers/preview-gallery');
+    });
+
+    test('Should re-emit `preview`', function() {
+      sinon.assert.calledWith(this.app.emit, 'preview');
+    });
+  });
+
+  suite('App#loadLazyController()', function() {
+    setup(function() {
+      this.sandbox.stub(this.app, 'loadLazyControllers').returns('<promise>');
+      this.app.controllers.lazy = [];
+    });
+
+    test('Should add to lazy load controllers if critical path not reached', function() {
+      var promise = this.app.loadLazyController('<controller>');
+      assert.isTrue(this.app.controllers.lazy[0] === '<controller>');
+      assert.isTrue(promise === undefined);
+    });
+
+    test('Should lazy load immediately if critical path done', function() {
+      this.app.criticalPathDone = true;
+      var promise = this.app.loadLazyController('<controller>');
+      sinon.assert.called(this.app.loadLazyControllers);
+      assert.isTrue(promise === '<promise>');
+      assert.isTrue(this.app.dynamicLazy['<controller>'] === '<promise>');
+    });
+
+    test('Should return existing lazy load promise', function() {
+      this.app.criticalPathDone = true;
+      this.app.dynamicLazy['<controller>'] = '<existing-promise>';
+      var promise = this.app.loadLazyController('<controller>');
+      sinon.assert.notCalled(this.app.loadLazyControllers);
+      assert.isTrue(promise === '<existing-promise>');
+    });
+  });
+
+  suite('App#loadLazyControllers()', function() {
+    setup(function() {
+      this.fakeControllers = [ sinon.spy(), sinon.spy(), sinon.spy() ];
+      this.lazyPromise = this.app.loadLazyControllers(this.app.controllers.lazy);
+      this.callback = this.app.require.withArgs(this.app.controllers.lazy).args[0][1];
+      this.callback.apply(window, this.fakeControllers);
+    });
+
+    test('It requires the lazy controllers', function() {
+      sinon.assert.calledWith(this.app.require, this.app.controllers.lazy);
+    });
+
+    test('It runs each controller, passing in the App instance', function() {
+      var self = this;
+      this.fakeControllers.forEach(function(fakeController) {
+        sinon.assert.calledWith(fakeController, self.app);
+      });
+    });
+
+    test('It emits `lazyloaded`', function() {
+      sinon.assert.calledWith(this.app.emit, 'lazyloaded');
+    });
+
+    test('It fulfills the promise', function(done) {
+      this.lazyPromise.then(done);
+    });
+  });
+
+  suite('after critical path', function() {
+    setup(function() {
+
+      // Stop annoying logs
+      this.sandbox.stub(console, 'log');
+      this.app.boot();
+      this.app.emit('viewfinder:visible');
+    });
+
+    test('It loads lazy controllers', function() {
+      sinon.assert.calledWith(this.app.require, this.app.controllers.lazy);
+    });
+
+    test('It fires the \'loaded\' event only when:', function(done) {
+      var loadLazyControllersRequireCallback = this.app.require.args[0][1];
+
+      // 1. Lazy controllers have loaded
+      loadLazyControllersRequireCallback();
+
+      // 2. Storage has been checked
+      this.app.emit('storage:checked');
+
+      this.app.once('loaded', done);
+    });
+  });
+
+  suite('App#onKeyDown', function() {
+    setup(function() {
+      this.settings.keyDownEvents.get.withArgs('volumedown')
+        .returns('capture');
+      this.settings.keyDownEvents.get.withArgs('volumeup')
+        .returns('capture');
+      this.settings.keyDownEvents.get.withArgs('camera')
+        .returns('capture');
+      this.settings.keyDownEvents.get.withArgs('mozcamerafocusadjust')
+        .returns('focus');
+    });
+
+    test('`volumedown` key emits a `keydown:capture` event', function() {
+      this.app.onKeyDown({ key: 'volumedown' });
+      sinon.assert.calledWith(this.app.emit, 'keydown:capture');
+    });
+
+    test('`volumeup` key emits a `keydown:capture` event', function() {
+      this.app.onKeyDown({ key: 'volumeup' });
+      sinon.assert.calledWith(this.app.emit, 'keydown:capture');
+    });
+
+    test('`camera` key emits a `keydown:capture` event', function() {
+      this.app.onKeyDown({ key: 'camera' });
+      sinon.assert.calledWith(this.app.emit, 'keydown:capture');
+    });
+
+    test('`focus` key emits a `keydown:focus` event', function() {
+      this.app.onKeyDown({ key: 'mozcamerafocusadjust' });
+      sinon.assert.calledWith(this.app.emit, 'keydown:focus');
     });
   });
 });

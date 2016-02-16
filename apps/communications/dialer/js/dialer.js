@@ -1,111 +1,25 @@
 'use strict';
 
-/* global AccessibilityHelper, CallLog, CallLogDBManager, Contacts,
-          KeypadManager,LazyL10n, LazyLoader, MmiManager, Notification,
-          NotificationHelper, SettingsListener, SimSettingsHelper,
-          SuggestionBar, TelephonyHelper, TonePlayer, Utils, Voicemail */
+/* global CallLog, CallLogDBManager, Contacts, KeypadManager, LazyLoader,
+          MmiManager, Notification, NotificationHelper, SettingsListener,
+          SimSettingsHelper, SuggestionBar, TelephonyHelper, Utils, Voicemail,
+          MozActivity, Navigation */
 
 var NavbarManager = {
   init: function nm_init() {
-    this.update();
-    var self = this;
-    window.addEventListener('hashchange' , function nm_hashChange(event) {
-      // TODO Implement it with building blocks:
-      // https://github.com/jcarpenter/Gaia-UI-Building-Blocks/blob/master/inprogress/tabs.css
-      // https://github.com/jcarpenter/Gaia-UI-Building-Blocks/blob/master/inprogress/tabs.html
-      self.update();
-    });
+    Navigation.show('keypad');
 
-    var contacts = document.getElementById('option-contacts');
-    contacts.addEventListener('click', this.contactsTabTap);
-  },
-  resourcesLoaded: false,
-  /*
-   * Ensures resources are loaded
-   */
-  ensureResources: function(cb) {
-    if (this.resourcesLoaded) {
-      if (cb && typeof cb === 'function') {
-        cb();
-      }
-      return;
-    }
-    var self = this;
-    LazyLoader.load(['/shared/js/accessibility_helper.js',
-                     '/shared/js/async_storage.js',
-                     '/shared/js/notification_helper.js',
-                     '/shared/js/simple_phone_matcher.js',
-                     '/shared/js/contact_photo_helper.js',
-                     '/shared/js/dialer/contacts.js',
-                     '/shared/js/dialer/voicemail.js',
-                     '/dialer/js/call_log.js',
-                     '/dialer/style/call_log.css'], function rs_loaded() {
-                    self.resourcesLoaded = true;
-                    if (cb && typeof cb === 'function') {
-                      cb();
-                    }
-                  });
-  },
-
-  update: function nm_update() {
-    var recent = document.getElementById('option-recents');
-    var contacts = document.getElementById('option-contacts');
-    var keypad = document.getElementById('option-keypad');
-    var tabs = [recent, contacts, keypad];
-
-    recent.classList.remove('toolbar-option-selected');
-    contacts.classList.remove('toolbar-option-selected');
-    keypad.classList.remove('toolbar-option-selected');
-
-    // XXX : Move this to whole activity approach, so far
-    // we don't have time to do a deep modification of
-    // contacts activites. Postponed to v2
-    var checkContactsTab = function() {
-      var contactsIframe = document.getElementById('iframe-contacts');
-      if (!contactsIframe) {
-        return;
-      }
-
-      var index = contactsIframe.src.indexOf('#add-parameters');
-      if (index != -1) {
-        contactsIframe.src = contactsIframe.src.substr(0, index);
-      }
-    };
-
-    var destination = window.location.hash;
-    switch (destination) {
-      case '#call-log-view':
-        checkContactsTab();
-        this.ensureResources(function() {
-          recent.classList.add('toolbar-option-selected');
-          AccessibilityHelper.setAriaSelected(recent, tabs);
-          CallLog.init();
-        });
-        break;
-      case '#contacts-view':
-        var frame = document.getElementById('iframe-contacts');
-        if (!frame) {
-          var view = document.getElementById('iframe-contacts-container');
-          frame = document.createElement('iframe');
-          frame.src = '/contacts/index.html';
-          frame.id = 'iframe-contacts';
-          frame.setAttribute('frameBorder', 'no');
-          frame.classList.add('grid-wrapper');
-
-          view.appendChild(frame);
+    document.getElementById('views').addEventListener(
+      'click',
+      function(e) {
+        var destination = e.target.dataset &&
+                          e.target.dataset.destination;
+        if (!destination) {
+          return;
         }
-
-        contacts.classList.add('toolbar-option-selected');
-        AccessibilityHelper.setAriaSelected(contacts, tabs);
-        break;
-      case '#keyboard-view':
-        checkContactsTab();
-        keypad.classList.add('toolbar-option-selected');
-        this.ensureResources(function() {
-          AccessibilityHelper.setAriaSelected(keypad, tabs);
-        });
-        break;
-    }
+        Navigation.show(destination);
+      }
+    );
   },
 
   hide: function() {
@@ -117,35 +31,19 @@ var NavbarManager = {
     var views = document.getElementById('views');
     views.classList.remove('hide-toolbar');
   },
-
-  contactsTabTap: function() {
-    // If we are not in the contacts-view, it's a first tap, do nothing
-    if (window.location.hash != '#contacts-view') {
-      return;
-    }
-    this._contactsHome();
-  },
-
-  _contactsHome: function() {
-    var contactsIframe = document.getElementById('iframe-contacts');
-    if (!contactsIframe) {
-      return;
-    }
-
-    var forceHashChange = new Date().getTime();
-    // Go back to contacts home
-    contactsIframe.src = '/contacts/index.html#home?forceHashChange=' +
-                         forceHashChange;
-  }
 };
 
 var CallHandler = (function callHandler() {
   var COMMS_APP_ORIGIN = document.location.protocol + '//' +
     document.location.host;
+  var callScreenWindow = null;
+  var callScreenWindowReady = false;
+  var btCommandsToForward = [];
   var FB_SYNC_ERROR_PARAM = 'isSyncError';
 
   /* === Settings === */
   var screenState = null;
+  var engineeringModeKey = null;
 
   /* === WebActivity === */
   function handleActivity(activity) {
@@ -159,18 +57,35 @@ var CallHandler = (function callHandler() {
     var number = activity.source.data.number;
     if (number) {
       KeypadManager.updatePhoneNumber(number, 'begin', false);
-      if (window.location.hash != '#keyboard-view') {
-        window.location.hash = '#keyboard-view';
+      if (Navigation.currentView != 'keypad') {
+        Navigation.showKeypad();
       }
     } else {
-      if (window.location.hash != '#contacts-view') {
-        window.location.hash = '#contacts-view';
+      if (Navigation.currentView != 'contacts') {
+        Navigation.showContacts();
       }
-      NavbarManager._contactsHome();
     }
   }
 
   /* === Notifications support === */
+
+  /**
+   * Retrieves the parameters from an URL and forms an object with them.
+   *
+   * @param {String} input A string holding the parameters attached to an URL.
+   * @return {Object} An object built using the parameters.
+   */
+  function deserializeParameters(input) {
+    var rparams = /([^?=&]+)(?:=([^&]*))?/g;
+    var parsed = {};
+
+    input.replace(rparams, function($0, $1, $2) {
+      parsed[$1] = decodeURIComponent($2);
+    });
+
+    return parsed;
+  }
+
   function handleNotification(evt) {
     if (!evt.clicked) {
       return;
@@ -182,9 +97,20 @@ var CallHandler = (function callHandler() {
       var location = document.createElement('a');
       location.href = evt.imageURL;
       if (location.search.indexOf(FB_SYNC_ERROR_PARAM) !== -1) {
-        window.location.hash = '#contacts-view';
+        Navigation.showContacts();
+      } else if (location.search.indexOf('ussdMessage') !== -1) {
+        var params = deserializeParameters(evt.imageURL);
+
+        Notification.get({ tag: evt.tag }).then(function(notifications) {
+          for (var i = 0; i < notifications.length; i++) {
+            notifications[i].close();
+          }
+        });
+
+        MmiManager.handleMMIReceived(evt.body, /* sessionEnded */ true,
+                                     params.cardIndex);
       } else {
-        window.location.hash = '#call-log-view';
+        Navigation.showCalllog();
       }
     };
   }
@@ -193,47 +119,52 @@ var CallHandler = (function callHandler() {
   function sendNotification(number, serviceId) {
     LazyLoader.load('/shared/js/dialer/utils.js', function() {
       Contacts.findByNumber(number, function lookup(contact, matchingTel) {
-        LazyL10n.get(function localized(_) {
-          var title;
-          if (navigator.mozIccManager.iccIds.length > 1) {
-            title = _('missedCallMultiSims', {n: serviceId + 1});
-          } else {
-            title = _('missedCall');
-          }
+        var title;
+        if (navigator.mozIccManager.iccIds.length > 1) {
+          title = { id: 'missedCallMultiSims', args: { n: serviceId + 1 } };
+        } else {
+          title = 'missedCall';
+        }
 
-          var body;
-          if (!number) {
-            body = _('from-withheld-number');
-          } else if (contact) {
-            var primaryInfo = Utils.getPhoneNumberPrimaryInfo(matchingTel,
-              contact);
-            if (primaryInfo) {
-              if (primaryInfo !== matchingTel.value) {
-                // primaryInfo is an object here
-                body = _('from-contact', {contact: primaryInfo.toString()});
-              } else {
-                body = _('from-number', {number: primaryInfo});
-              }
+        var body;
+        if (!number) {
+          body = 'from-withheld-number';
+        } else if (contact) {
+          var primaryInfo = Utils.getPhoneNumberPrimaryInfo(matchingTel,
+            contact);
+          if (primaryInfo) {
+            if (primaryInfo !== matchingTel.value) {
+              // primaryInfo is an object here
+              body = {
+                id: 'from-contact',
+                args: { contact: primaryInfo.toString() }
+              };
             } else {
-              body = _('from-withheld-number');
+              body = { id: 'from-number', args: { number: primaryInfo } };
             }
           } else {
-            body = _('from-number', {number: number});
+            body = 'from-withheld-number';
           }
+        } else {
+          body = { id: 'from-number', args: { number: number } };
+        }
 
-          navigator.mozApps.getSelf().onsuccess = function getSelfCB(evt) {
-            var app = evt.target.result;
+        navigator.mozApps.getSelf().onsuccess = function getSelfCB(evt) {
+          var app = evt.target.result;
 
-            var iconURL = NotificationHelper.getIconURI(app, 'dialer');
-            var clickCB = function() {
-              app.launch('dialer');
-              window.location.hash = '#call-log-view';
-            };
-            var notification =
-              new Notification(title, {body: body, icon: iconURL});
-            notification.addEventListener('click', clickCB);
+          var iconURL = NotificationHelper.getIconURI(app, 'dialer');
+          var clickCB = function() {
+            app.launch('dialer');
+            Navigation.showCalllog();
           };
-        });
+
+          NotificationHelper.send(title, {
+            bodyL10n: body,
+            icon: iconURL
+          }).then(function(notification) {
+            notification.addEventListener('click', clickCB);
+          });
+        };
       });
     });
   }
@@ -243,53 +174,58 @@ var CallHandler = (function callHandler() {
     var number = data.number;
     var incoming = data.direction === 'incoming';
 
-    NavbarManager.ensureResources(function() {
-      // Missed call
-      if (incoming && !data.duration) {
-        sendNotification(number, data.serviceId);
-      }
+    // Missed call when not rejected by user
+    if (incoming && !data.duration && !data.hangUpLocal) {
+      sendNotification(number, data.serviceId);
+    }
 
-      Voicemail.check(number, function(isVoicemailNumber) {
-        var entry = {
-          date: Date.now() - parseInt(data.duration),
-          type: incoming ? 'incoming' : 'dialing',
-          number: number,
-          serviceId: data.serviceId,
-          emergency: data.emergency || false,
-          voicemail: isVoicemailNumber,
-          status: (incoming && data.duration > 0) ? 'connected' : null
-        };
+    Voicemail.check(number, data.serviceId).then(function(isVoicemailNumber) {
+      var entry = {
+        date: Date.now() - parseInt(data.duration),
+        duration: data.duration,
+        type: incoming ? 'incoming' : 'dialing',
+        number: number,
+        serviceId: data.serviceId,
+        emergency: data.emergency || false,
+        voicemail: isVoicemailNumber,
+        status: (incoming && data.duration > 0) ? 'connected' : null
+      };
 
-        CallLogDBManager.add(entry, function(logGroup) {
+      // Store and display the call that ended
+      CallLogDBManager.add(entry, function(logEntry) {
+        CallLog.appendGroup(logEntry);
+
+        // A CDMA call can contain two calls. If it only has one call,
+        // we have nothing left to do and release the lock.
+        if (!data.secondNumber) {
           highPriorityWakeLock.unlock();
-          CallLog.appendGroup(logGroup);
-        });
+          return;
+        }
+
+        _addSecondCdmaCall(data, isVoicemailNumber, highPriorityWakeLock);
       });
     });
-   }
-
-  /* === postMessage support === */
-  function handleMessage(evt) {
-    if (evt.origin !== COMMS_APP_ORIGIN) {
-      return;
-    }
-
-    var data = evt.data;
-
-    if (!data.type) {
-      return;
-    }
-
-    if (data.type === 'contactsiframe') {
-      handleContactsIframeRequest(data.message);
-    } else if (data.type === 'hide-navbar') {
-      NavbarManager.hide();
-    } else if (data.type === 'show-navbar') {
-      NavbarManager.show();
-    }
   }
-  window.addEventListener('message', handleMessage);
 
+  function _addSecondCdmaCall(data, isVoicemailNumber, wakeLock) {
+    var entryCdmaSecond = {
+      date: Date.now() - parseInt(data.duration),
+      duration: data.duration,
+      type: 'incoming',
+      number: data.secondNumber,
+      serviceId: data.serviceId,
+      emergency: false,
+      voicemail: isVoicemailNumber,
+      status: 'connected'
+    };
+
+    CallLogDBManager.add(entryCdmaSecond, function(logGroupCdmaSecondCall) {
+      CallLog.appendGroup(logGroupCdmaSecondCall);
+      wakeLock.unlock();
+    });
+  }
+
+  /* === Handle messages recevied from iframe === */
   function handleContactsIframeRequest(message) {
     switch (message) {
       case 'back':
@@ -297,46 +233,194 @@ var CallHandler = (function callHandler() {
         // disable the function of receiving the messages posted from the iframe
         contactsIframe.contentWindow.history.pushState(null, null,
           '/contacts/index.html');
-        window.location.hash = '#call-log-view';
+        Navigation.showCalllog();
         break;
     }
+  }
+
+  /* === ALL calls === */
+  function newCall() {
+    var telephony = navigator.mozTelephony;
+
+    function dialer_oncallschanged() {
+      if (telephony.calls.length !== 0) {
+        openCallScreen();
+        telephony.removeEventListener('callschanged', dialer_oncallschanged);
+      }
+    }
+
+    telephony.addEventListener('callschanged', dialer_oncallschanged);
+    // The handler is invoked explicitly to prevent races
+    dialer_oncallschanged();
   }
 
   /* === Bluetooth Support === */
   function btCommandHandler(message) {
     var command = message.command;
-    var isAtd = command.startsWith('ATD');
+    var partialCommand = command.substring(0, 3);
+    if (command === 'BLDN') {
+      // Bluetooth last dialed number command
+      CallLogDBManager.getGroupAtPosition(1, 'lastEntryDate', true, 'dialing',
+        function(result) {
+          if (result && (typeof result === 'object') && result.number) {
+            LazyLoader.load(['/shared/js/sim_settings_helper.js'], function() {
+              SimSettingsHelper.getCardIndexFrom('outgoingCall', function(ci) {
+                // If the default outgoing call SIM is set to "Always ask", or
+                // is unset, we place this call on the SIM that was used the
+                // last time we were in a phone call with this number/contact.
+                if (ci === undefined || ci === null ||
+                    ci == SimSettingsHelper.ALWAYS_ASK_OPTION_VALUE) {
+                  ci = result.serviceId;
+                }
 
-    // Not a dialing request
-    if (command !== 'BLDN' && !isAtd) {
+                CallHandler.call(result.number, ci);
+              });
+            });
+          } else {
+            console.log('Could not get the last outgoing group ' + result);
+          }
+        });
       return;
-    }
-
-    // Dialing a specific number
-    if (isAtd && command[3] !== '>') {
-      var phoneNumber = command.substring(3);
-      CallHandler.call(phoneNumber);
-      return;
-    }
-
-    // Dialing from the call log
-    // ATD>3 means we have to call the 3rd recent number.
-    var position = isAtd ? parseInt(command.substring(4), 10) : 1;
-    CallLogDBManager.getGroupAtPosition(position, 'lastEntryDate', true, null,
-    function(result) {
-      if (result && (typeof result === 'object') && result.number) {
-        CallHandler.call(result.number);
+    } else if (partialCommand === 'ATD') {
+      // Dialing a specific number
+      if (command[3] !== '>') {
+        var phoneNumber = command.substring(3);
+        LazyLoader.load(['/shared/js/sim_settings_helper.js'], function() {
+          SimSettingsHelper.getCardIndexFrom('outgoingCall',
+          function(defaultCardIndex) {
+            if (defaultCardIndex === SimSettingsHelper.ALWAYS_ASK_OPTION_VALUE)
+            {
+              LazyLoader.load(['/shared/js/component_utils.js',
+                               '/shared/elements/gaia_sim_picker/script.js'],
+              function() {
+                var simPicker = document.getElementById('sim-picker');
+                simPicker.getOrPick(defaultCardIndex, phoneNumber,
+                function(ci) {
+                  CallHandler.call(phoneNumber, ci);
+                });
+                // Show the dialer so the user can select the SIM.
+                navigator.mozApps.getSelf().onsuccess = function(selfEvt) {
+                  var app = selfEvt.target.result;
+                  app.launch('dialer');
+                };
+              });
+            } else {
+              CallHandler.call(phoneNumber, defaultCardIndex);
+            }
+          });
+        });
       } else {
-        console.log('Could not get the group at: ' + position +
-                    '. Error: ' + result);
+        // Dialing from the call log
+        // ATD>3 means we have to call the 3rd recent number.
+        var position = parseInt(command.substring(4), 10);
+        CallLogDBManager.getGroupAtPosition(
+          position, 'lastEntryDate', true, 'dialing',
+        function(result) {
+          if (result && (typeof result === 'object') && result.number) {
+            LazyLoader.load(['/shared/js/sim_settings_helper.js'], function() {
+              SimSettingsHelper.getCardIndexFrom('outgoingCall', function(ci) {
+                // If the default outgoing call SIM is set to "Always ask", or
+                // is unset, we place this call on the SIM that was used the
+                // last time we were in a phone call with this number/contact.
+                if (ci === undefined || ci === null ||
+                    ci == SimSettingsHelper.ALWAYS_ASK_OPTION_VALUE) {
+                  ci = result.serviceId;
+                }
+
+                CallHandler.call(result.number, ci);
+              });
+            });
+          } else {
+            console.log('Could not get the group at: ' + position +
+                        '. Error: ' + result);
+          }
+        });
       }
-    });
+
+      return;
+    }
+
+    // Other commands needs to be handled from the call screen
+    if (callScreenWindowReady) {
+      sendCommandToCallScreen('BT', command);
+    } else {
+      // We queue the commands while the call screen is loading
+      btCommandsToForward.push(command);
+    }
   }
+
+  /* === Headset Support === */
+  function headsetCommandHandler(message) {
+    sendCommandToCallScreen('HS', message);
+  }
+
+  /*
+    Send commands to the callScreen via post message.
+    @type: Handler to be used in the CallHandler. Currently managing to
+           kind of commands:
+           'BT': bluetooth
+           'HS': headset
+           '*' : for general cases, not specific to hardware control
+    @command: The specific message to each kind of type
+  */
+  function sendCommandToCallScreen(type, command) {
+    if (!callScreenWindow) {
+      return;
+    }
+
+    var message = {
+      type: type,
+      command: command
+    };
+
+    callScreenWindow.postMessage(message, COMMS_APP_ORIGIN);
+  }
+
+  /* === postMessage support === */
+
+  // Receiving messages from the callscreen via post message
+  //   - when the call screen is closing
+  //   - when the call screen is ready to receive messages
+  //   - when we need to hide or show navbar
+  function handleMessage(evt) {
+    if (evt.origin !== COMMS_APP_ORIGIN) {
+      return;
+    }
+
+    var data = evt.data;
+
+    if (data === 'closing') {
+      handleCallScreenClosing();
+    } else if (data === 'ready') {
+      handleCallScreenReady();
+    } else if (!data.type) {
+      return;
+    } else if (data.type === 'contactsiframe') {
+      handleContactsIframeRequest(data.message);
+    } else if (data.type === 'hide-navbar') {
+      NavbarManager.hide();
+    } else if (data.type === 'show-navbar') {
+      NavbarManager.show();
+    }
+  }
+
+  window.addEventListener('message', handleMessage);
 
   /* === Calls === */
   function call(number, cardIndex) {
-    if (MmiManager.isMMI(number, cardIndex)) {
-      MmiManager.send(number, cardIndex);
+    if (engineeringModeKey && number === engineeringModeKey) {
+      var activity = new MozActivity({
+        name: 'internal-system-engineering-mode'
+      });
+      activity.onerror = function() {
+        console.log('Could not launch engineering mode');
+      };
+      return;
+    }
+
+    if (MmiManager.isImei(number)) {
+      MmiManager.showImei();
+
       // Clearing the code from the dialer screen gives the user immediate
       // feedback.
       KeypadManager.updatePhoneNumber('', 'begin', true);
@@ -349,61 +433,145 @@ var CallHandler = (function callHandler() {
       KeypadManager.updatePhoneNumber('', 'begin', true);
     };
 
-    var error = function() {
-      KeypadManager.updatePhoneNumber(number, 'begin', true);
-    };
-
     var oncall = function() {
+      if (callScreenWindow) {
+        return;
+      }
+
+      openCallScreen();
       SuggestionBar.hideOverlay();
       SuggestionBar.clear();
     };
 
-    LazyLoader.load(['/dialer/js/telephony_helper.js',
-                     '/shared/js/sim_settings_helper.js'], function() {
-      // FIXME/bug 982163: Temporarily load a cardIndex from SimSettingsHelper
-      // if we were not given one as an argument.
-      if (cardIndex === undefined) {
-        SimSettingsHelper.getCardIndexFrom('outgoingCall', function(ci) {
-          TelephonyHelper.call(
-            number, ci, oncall, connected, disconnected, error);
-        });
-      } else {
-        TelephonyHelper.call(
-          number, cardIndex, oncall, connected, disconnected, error);
-      }
+    LazyLoader.load(['/dialer/js/telephony_helper.js'], function() {
+      TelephonyHelper.call(
+        number, cardIndex, oncall, connected, disconnected
+      ).catch(function() {
+        KeypadManager.updatePhoneNumber(number, 'begin', false);
+        sendCommandToCallScreen('*', 'exitCallScreen');
+      });
     });
   }
 
+  /* === Attention Screen === */
+  // Each window gets a unique name to prevent a possible race condition
+  // where we want to open a new call screen while the previous one is
+  // animating out of the screen.
+  var callScreenId = 0;
+  var openingWindow = false;
+  function openCallScreen() {
+    if (callScreenWindow || openingWindow) {
+      return;
+    }
+
+    openingWindow = true;
+    var host = document.location.host;
+    var protocol = document.location.protocol;
+    var urlBase = protocol + '//' + host + '/dialer/oncall.html';
+
+    var highPriorityWakeLock = navigator.requestWakeLock('high-priority');
+    var openWindow = function dialer_openCallScreen(state) {
+      openingWindow = false;
+      callScreenWindow = window.open(urlBase + '#' + state,
+                  ('call_screen' + callScreenId++), 'attention');
+
+      callScreenWindow.onload = function onload() {
+        highPriorityWakeLock.unlock();
+      };
+    };
+
+    // if screenState was initialized, use this value directly to openWindow()
+    // else if mozSettings doesn't exist, use default value 'unlocked'
+    if (screenState || !navigator.mozSettings) {
+      screenState = screenState || 'unlocked';
+      openWindow(screenState);
+      return;
+    }
+
+    var req = navigator.mozSettings.createLock().get('lockscreen.locked');
+    req.onsuccess = function dialer_onsuccess() {
+      if (req.result['lockscreen.locked']) {
+        screenState = 'locked';
+      } else {
+        screenState = 'unlocked';
+      }
+      openWindow(screenState);
+    };
+    req.onerror = function dialer_onerror() {
+      // fallback to default value 'unlocked'
+      screenState = 'unlocked';
+      openWindow(screenState);
+    };
+  }
+
+  function handleCallScreenClosing() {
+    callScreenWindow = null;
+    callScreenWindowReady = false;
+  }
+
+  function handleCallScreenReady() {
+    callScreenWindowReady = true;
+
+    // Have any BT commands queued?
+    btCommandsToForward.forEach(function btIterator(command) {
+      sendCommandToCallScreen('BT', command);
+    });
+    btCommandsToForward = [];
+  }
+
+  /* === MMI === */
+  function onUssdReceived(evt) {
+    var lock = null;
+    var safetyId;
+
+    function releaseWakeLock() {
+      if (lock) {
+        lock.unlock();
+        lock = null;
+        clearTimeout(safetyId);
+      }
+    }
+
+    if (document.hidden) {
+      lock = navigator.requestWakeLock('high-priority');
+      safetyId = setTimeout(releaseWakeLock, 30000);
+      document.addEventListener('visibilitychange', releaseWakeLock);
+    }
+
+    if (!document.hidden || evt.session) {
+      MmiManager.handleMMIReceived(evt.message, evt.session, evt.serviceId);
+    } else if (evt.message) {
+      /* If the dialer is not visible and the session ends with this message
+       * then this is most likely an unsollicited message. To prevent
+       * interrupting the user we post a notification for it instead of
+       * displaying the dialer UI. */
+      MmiManager.sendNotification(evt.message, evt.serviceId)
+                .then(releaseWakeLock);
+    } else {
+      releaseWakeLock();
+    }
+  }
+
   function init() {
-    /* === MMI === */
     LazyLoader.load(['/shared/js/mobile_operator.js',
                      '/dialer/js/mmi.js',
                      '/dialer/js/mmi_ui.js',
-                     '/shared/style/headers.css',
-                     '/shared/style/input_areas.css',
                      '/shared/style/progress_activity.css',
                      '/dialer/style/mmi.css'], function() {
 
       if (window.navigator.mozSetMessageHandler) {
+        window.navigator.mozSetMessageHandler('telephony-new-call', newCall);
         window.navigator.mozSetMessageHandler('telephony-call-ended',
                                               callEnded);
         window.navigator.mozSetMessageHandler('activity', handleActivity);
         window.navigator.mozSetMessageHandler('notification',
                                               handleNotification);
         window.navigator.mozSetMessageHandler('bluetooth-dialer-command',
-                                               btCommandHandler);
+                                              btCommandHandler);
+        window.navigator.mozSetMessageHandler('headset-button',
+                                              headsetCommandHandler);
 
-        window.navigator.mozSetMessageHandler('ussd-received', function(evt) {
-          if (document.hidden) {
-            var request = window.navigator.mozApps.getSelf();
-            request.onsuccess = function() {
-              request.result.launch('dialer');
-            };
-          }
-
-          MmiManager.handleMMIReceived(evt.message, evt.sessionEnded,
-                                       evt.serviceId);
-        });
+        window.navigator.mozSetMessageHandler('ussd-received', onUssdReceived);
       }
     });
     LazyLoader.load('/shared/js/settings_listener.js', function() {
@@ -413,6 +581,9 @@ var CallHandler = (function callHandler() {
         } else {
           screenState = 'unlocked';
         }
+      });
+      SettingsListener.observe('engineering-mode.key', null, function(value) {
+        engineeringModeKey = value || null;
       });
     });
   }
@@ -427,23 +598,8 @@ var CallHandler = (function callHandler() {
 // Waiting for issue 787444 being fixed
 window.onresize = function(e) {
   if (window.innerHeight < 440) {
-    document.body.classList.add('with-keyboard');
+    NavbarManager.hide();
   } else {
-    document.body.classList.remove('with-keyboard');
+    NavbarManager.show();
   }
 };
-
-// If the app loses focus, close the audio stream.
-document.addEventListener('visibilitychange', function visibilitychanged() {
-  if (!document.hidden) {
-    TonePlayer.ensureAudio();
-  } else {
-    // Reset the audio stream. This ensures that the stream is shutdown
-    // *immediately*.
-    TonePlayer.trashAudio();
-    // Just in case stop any dtmf tone
-    if (navigator.mozTelephony) {
-      navigator.mozTelephony.stopTone();
-    }
-  }
-});

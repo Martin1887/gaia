@@ -9,9 +9,10 @@ var MockNotifications = [];
 function MockNotification(title, options) {
   this.id = options.id || 0;
   this.title = title;
-  this.icon = options.icon || undefined;
-  this.body = options.body || undefined;
-  this.tag = options.tag || undefined;
+  this.icon = options.icon;
+  this.body = options.body;
+  this.tag = options.tag;
+  this.data = options.data;
   this.mEvents = {};
 
   MockNotifications.push(this);
@@ -30,8 +31,19 @@ MockNotification.prototype.addEventListener =
   this.mEvents[evt] = callback;
 };
 
+MockNotification.prototype.removeEventListener =
+  function mockNotification_removeEventListener(evt, callback) {
+  delete this.mEvents[evt];
+};
+
 MockNotification.get = function mockNotification_get(options) {
   return {
     then: function() {}
   };
 };
+
+MockNotification.mTeardown = function mn_mTeardown() {
+  MockNotifications = [];
+};
+
+MockNotification.requestPermission = function() {};

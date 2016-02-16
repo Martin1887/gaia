@@ -25,10 +25,11 @@ module.exports.ConfirmController = ConfirmController;
  * @param {Object} options
  */
 function ConfirmController(app) {
+  this.app = app;
+  this.settings = app.settings;
   this.activity = app.activity;
   this.camera = app.camera;
   this.container = app.el;
-  this.app = app;
 
   // Allow these dependencies
   // to be injected if need be.
@@ -41,19 +42,24 @@ function ConfirmController(app) {
 }
 
 ConfirmController.prototype.renderView = function() {
-  if (!this.activity.pick) {
-    return;
+  if (!this.activity.pick) { return; }
+
+  if (!this.view) {
+    this.view = new this.ConfirmView();
+    this.view.maxPreviewSize = window.CONFIG_MAX_IMAGE_PIXEL_SIZE;
+    this.view.render().appendTo(this.container);
+
+    // We want to listen to select events exactly once
+    // The media is selected, the confirm view dismissed
+    // and the activity returns
+    this.view.once('click:select', this.onSelectMedia);
+    this.view.on('click:retake', this.onRetakeMedia);
+    this.view.on('loadingvideo', this.app.firer('busy'));
+    this.view.on('playingvideo', this.app.firer('ready'));
   }
 
-  if (this.confirmView) {
-    this.confirmView.show();
-    return;
-  }
-
-  this.confirmView = new this.ConfirmView();
-  this.confirmView.render().appendTo(this.container);
-  this.confirmView.on('click:select', this.onSelectMedia);
-  this.confirmView.on('click:retake', this.onRetakeMedia);
+  this.view.show();
+  this.app.set('confirmViewVisible', true);
 };
 
 /**
@@ -67,12 +73,24 @@ ConfirmController.prototype.bindEvents = function() {
   // This prevents the 'Capture'/'Stop' button from being able to be
   // triggered multiple times before the confirm view appears.
   this.camera.on('newimage', this.renderView);
-  this.camera.on('newvideo', this.renderView);
+  this.camera.on('change:recording', this.onRecordingChange);
 
   // Update the MediaFrame contents with the image/video upon
   // receiving the `newmedia` event. This event is slightly delayed
   // since it waits for the storage callback to complete.
   this.app.on('newmedia', this.onNewMedia);
+};
+
+ConfirmController.prototype.onRecordingChange = function(recording) {
+  if (!this.activity.pick) { return; }
+
+  if (recording === 'starting') {
+    this.recording = true;
+  } else if (recording === 'error') {
+    this.recording = false;
+  } else if (recording === 'stopped' && this.recording) {
+    this.renderView();
+  }
 };
 
 /**
@@ -90,9 +108,9 @@ ConfirmController.prototype.onNewMedia = function(newMedia) {
 
   this.newMedia = newMedia;
   if (newMedia.isVideo) { // Is video
-    this.confirmView.showVideo(newMedia);
+    this.view.showVideo(newMedia);
   } else { // Is Image
-    this.prepareBlob(this.newMedia.blob, this.confirmView.showImage);
+    this.prepareBlob(this.newMedia.blob, this.view.showImage);
   }
 };
 
@@ -101,8 +119,9 @@ ConfirmController.prototype.onSelectMedia = function() {
 };
 
 ConfirmController.prototype.onRetakeMedia = function() {
-  this.confirmView.hide();
-  this.confirmView.clearMediaFrame();
+  this.view.hide();
+  this.view.clearMediaFrame();
+  this.app.set('confirmViewVisible', false);
 };
 
 });

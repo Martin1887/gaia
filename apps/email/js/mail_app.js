@@ -1,280 +1,82 @@
 /**
  * Application logic that isn't specific to cards, specifically entailing
- * startup and eventually notifications.
+ * startup and mozSetMessageHandler message listening.
  **/
-/*jshint browser: true */
-/*global define, requirejs, console, TestUrlResolver */
+ /*global globalOnAppMessage */
 'use strict';
 
-// Set up loading of scripts, but only if not in tests, which set up
-// their own config.
-if (typeof TestUrlResolver === 'undefined') {
-  requirejs.config({
-    // waitSeconds is set to the default here; the build step rewrites
-    // it to 0 in build/email.build.js so that we never timeout waiting
-    // for modules in production. This is important when the device is
-    // under super-low-memory stress, as it may take a while for the
-    // device to get around to loading things email for background tasks
-    // like periodic sync.
-    waitSeconds: 7,
-    baseUrl: 'js',
-    paths: {
-      l10nbase: '../shared/js/l10n',
-      l10ndate: '../shared/js/l10n_date',
-      style: '../style',
-      shared: '../shared',
+define(function(require, exports, module) {
 
-      'mailapi/main-frame-setup': 'ext/mailapi/main-frame-setup',
-      'mailapi/main-frame-backend': 'ext/mailapi/main-frame-backend'
-    },
-    map: {
-      '*': {
-        'api': 'mailapi/main-frame-setup'
-      }
-    },
-    shim: {
-      l10ndate: ['l10nbase'],
-
-      'shared/js/mime_mapper': {
-        exports: 'MimeMapper'
-      },
-
-      'shared/js/notification_helper': {
-        exports: 'NotificationHelper'
-      },
-
-      'shared/js/accessibility_helper': {
-        exports: 'AccessibilityHelper'
-      }
-    },
-    definePrim: 'prim'
-  });
-}
-
-// Named module, so it is the same before and after build, and referenced
-// in the require at the end of this file.
-define('mail_app', function(require, exports, module) {
-
-var appMessages = require('app_messages'),
-    htmlCache = require('html_cache'),
-    mozL10n = require('l10n!'),
-    common = require('mail_common'),
+var mozL10n = require('l10n!'),
+    activityComposerData = require('activity_composer_data'),
+    cards = require('cards'),
     evt = require('evt'),
-    model = require('model'),
-    headerCursor = require('header_cursor').cursor,
-    Cards = common.Cards,
-    waitingForCreateAccountPrompt = false,
-    activityCallback = null;
+    model = require('model_create').defaultModel,
+    HeaderCursor = require('header_cursor'),
+    htmlCache = require('html_cache'),
+    waitingRawActivity, activityCallback;
 
-require('sync');
+require('font_size_utils');
+require('metrics');
 require('wake_locks');
 
-model.latestOnce('api', function(api) {
-  // If our password is bad, we need to pop up a card to ask for the updated
-  // password.
-  api.onbadlogin = function(account, problem, whichSide) {
-    switch (problem) {
-      case 'bad-user-or-pass':
-        Cards.pushCard('setup_fix_password', 'default', 'animate',
-                  { account: account,
-                    whichSide: whichSide,
-                    restoreCard: Cards.activeCardIndex },
-                  'right');
-        break;
-      case 'imap-disabled':
-      case 'pop3-disabled':
-        Cards.pushCard('setup_fix_gmail', 'default', 'animate',
-                  { account: account, restoreCard: Cards.activeCardIndex },
-                  'right');
-        break;
-      case 'needs-app-pass':
-        Cards.pushCard('setup_fix_gmail_twofactor', 'default', 'animate',
-                  { account: account, restoreCard: Cards.activeCardIndex },
-                  'right');
-        break;
-    }
-  };
-
-  api.useLocalizedStrings({
-    wrote: mozL10n.get('reply-quoting-wrote'),
-    originalMessage: mozL10n.get('forward-original-message'),
-    forwardHeaderLabels: {
-      subject: mozL10n.get('forward-header-subject'),
-      date: mozL10n.get('forward-header-date'),
-      from: mozL10n.get('forward-header-from'),
-      replyTo: mozL10n.get('forward-header-reply-to'),
-      to: mozL10n.get('forward-header-to'),
-      cc: mozL10n.get('forward-header-cc')
-    },
-    folderNames: {
-      inbox: mozL10n.get('folder-inbox'),
-      sent: mozL10n.get('folder-sent'),
-      drafts: mozL10n.get('folder-drafts'),
-      trash: mozL10n.get('folder-trash'),
-      queue: mozL10n.get('folder-queue'),
-      junk: mozL10n.get('folder-junk'),
-      archives: mozL10n.get('folder-archives'),
-      localdrafts: mozL10n.get('folder-localdrafts')
-    }
-  });
-});
-
-// Handle cases where a default card is needed for back navigation
-// after a non-default entry point (like an activity) is triggered.
-Cards.pushDefaultCard = function(onPushed) {
-  model.latestOnce('foldersSlice', function() {
-    Cards.pushCard('message_list', 'nonsearch', 'none', {
-      onPushed: onPushed
-    },
-    // Default to "before" placement.
-    'left');
-  });
-};
-
-Cards._init();
-
-var finalCardStateCallback,
-    waitForAppMessage = false,
-    startedInBackground = false,
-    cachedNode = Cards._cardsNode.children[0],
-    startCardId = cachedNode && cachedNode.getAttribute('data-type');
-
-var startCardArgs = {
-  'setup_account_info': [
-    'setup_account_info', 'default', 'immediate',
-    {
-      onPushed: function(impl) {
-        htmlCache.delayedSaveFromNode(impl.domNode.cloneNode(true));
-      }
-    }
-  ],
-  'message_list': [
-    'message_list', 'nonsearch', 'immediate', {}
-  ]
-};
+var started = false;
 
 function pushStartCard(id, addedArgs) {
-  var args = startCardArgs[id];
-  if (!args) {
-    throw new Error('Invalid start card: ' + id);
-  }
+  var args = {
+    model: model
+  };
 
-  //Add in cached node to use (could be null)
-  args[3].cachedNode = cachedNode;
-
-  // Mix in addedArgs to the args object that is passed to pushCard.
+  // Mix in addedArgs to the args object that is passed to pushCard. Use a new
+  // object in case addedArgs is reused again by the caller.
   if (addedArgs) {
     Object.keys(addedArgs).forEach(function(key) {
-      args[3][key] = addedArgs[key];
+      args[key] = addedArgs[key];
     });
   }
 
-  return Cards.pushCard.apply(Cards, args);
-}
+  if (!started) {
+    var cachedNode = cards._cardsNode.children[0];
 
-if (appMessages.hasPending('activity') ||
-    appMessages.hasPending('notification')) {
-  // There is an activity, do not use the cache node, start fresh,
-  // and block normal first card selection, wait for activity.
-  cachedNode = null;
-  waitForAppMessage = true;
-}
+    // Add in cached node to use, if it matches the ID type.
+    if (cachedNode && id === htmlCache.nodeToKey(cachedNode)) {
+      // l10n may not see this as it was injected before l10n.js was loaded,
+      // so let it know it needs to translate it.
+      mozL10n.translateFragment(cachedNode);
+      args.cachedNode = cachedNode;
+    }
 
-if (appMessages.hasPending('alarm')) {
-  // There is an alarm, do not use the cache node, start fresh,
-  // as we were woken up just for the alarm.
-  cachedNode = null;
-  startedInBackground = true;
-}
-
-// If still have a cached node, then show it.
-if (cachedNode) {
-  // Wire up a card implementation to the cached node.
-  if (startCardId) {
-    pushStartCard(startCardId);
-  } else {
-    cachedNode = null;
+    //Set body class to a solid background, see bug 1077605.
+    document.body.classList.add('content-visible');
   }
+
+  cards.pushCard(id, 'immediate', args);
+
+  started = true;
 }
 
-/**
- * When determination of real start state is known after
- * getting data, then make sure the correct card is
- * shown. If the card used from cache is not correct,
- * wipe out the cards and start fresh.
- * @param  {String} cardId the desired card ID.
- */
-function resetCards(cardId, args) {
-  cachedNode = null;
-
-  var startArgs = startCardArgs[cardId],
-      query = [startArgs[0], startArgs[1]];
-
-  if (!Cards.hasCard(query)) {
-    Cards.removeAllCards();
-    pushStartCard(cardId, args);
+// Handles visibility changes: if the app becomes visible after starting up
+// hidden because of an alarm, start showing some UI.
+document.addEventListener('visibilitychange', function onVisibilityChange() {
+  if (!document.hidden && !started &&
+      startupData && startupData.entry === 'alarm') {
+    pushStartCard('message_list');
   }
-}
+}, false);
 
 /*
  * Determines if current card is a nonsearch message_list
  * card, which is the default kind of card.
  */
 function isCurrentCardMessageList() {
-  var cardType = Cards.getCurrentCardType();
-  return (cardType &&
-          cardType[0] === 'message_list' &&
-          cardType[1] === 'nonsearch');
+  var cardType = cards.getCurrentCardType();
+  return (cardType && cardType === 'message_list');
 }
 
-/**
- * Tracks what final card state should be shown. If the
- * app started up hidden for a cronsync, do not actually
- * show the UI until the app becomes visible, so that
- * extra work can be avoided for the hidden cronsync case.
- */
-function showFinalCardState(fn) {
-  if (startedInBackground && document.hidden) {
-    finalCardStateCallback = fn;
-  } else {
-    fn();
-  }
-}
-
-/**
- * Shows the message list. Assumes that the correct
- * account and inbox have already been selected.
- */
-function showMessageList(args) {
-  showFinalCardState(function() {
-    resetCards('message_list', args);
-  });
-}
-
-// Handles visibility changes: if the app becomes visible
-// being hidden via a cronsync startup, trigger UI creation.
-document.addEventListener('visibilitychange', function onVisibilityChange() {
-  if (startedInBackground && finalCardStateCallback && !document.hidden) {
-    finalCardStateCallback();
-    finalCardStateCallback = null;
-  }
-}, false);
-
-// Some event modifications during setup do not have full account
-// IDs. This listener catches those modifications and applies
-// them when the data is available.
-evt.on('accountModified', function(accountId, data) {
-  model.latestOnce('acctsSlice', function() {
-    var account = model.getAccount(accountId);
-    if (account) {
-      account.modifyAccount(data);
-    }
-  });
-});
 
 // The add account UI flow is requested.
 evt.on('addAccount', function() {
-  Cards.removeAllCards();
+  cards.removeAllCards();
 
   // Show the first setup card again.
   pushStartCard('setup_account_info', {
@@ -284,243 +86,212 @@ evt.on('addAccount', function() {
 
 function resetApp() {
   // Clear any existing local state and reset UI/model state.
-  waitForAppMessage = false;
-  waitingForCreateAccountPrompt = false;
-  activityCallback = null;
+  activityCallback = waitingRawActivity = undefined;
+  cards.removeAllCards();
 
-  Cards.removeAllCards();
-  model.init();
+  model.init(false, function() {
+    var cardId = model.hasAccount() ?
+                 'message_list' : 'setup_account_info';
+    pushStartCard(cardId);
+  });
 }
 
-function activityContinued() {
-  if (activityCallback) {
-    var activityCb = activityCallback;
-    activityCallback = null;
-    activityCb();
-    return true;
-  }
-  return false;
-}
-
-// An account was deleted. Burn it all to the ground and
-// rise like a phoenix. Prefer a UI event vs. a slice
-// listen to give flexibility about UI construction:
-// an acctsSlice splice change may not warrant removing
-// all the cards.
+// An account was deleted. Burn it all to the ground and rise like a phoenix.
+// Prefer a UI event vs. a slice listen to give flexibility about UI
+// construction: an acctsSlice splice change may not warrant removing all the
+// cards.
 evt.on('accountDeleted', resetApp);
 evt.on('resetApp', resetApp);
 
-// A request to show the latest account in the UI.
-// Usually triggered after an account has been added.
+// Called when account creation canceled, most likely from setup_account_info.
+// Need to complete the activity postError flow if an activity is waiting, then
+// update the UI to the latest state.
+evt.on('setupAccountCanceled', function(fromCard) {
+  if (waitingRawActivity) {
+    waitingRawActivity.postError('cancelled');
+  }
+
+  if (!model.foldersSlice) {
+    // No account has been formally initialized, but one likely exists given
+    // that this back button should only be available for cases that have
+    // accounts. Likely just need the app to reset to load model.
+    evt.emit('resetApp');
+  } else {
+    cards.removeCardAndSuccessors(fromCard, 'animate', 1);
+  }
+});
+
+// A request to show the latest account in the UI. Usually triggered after an
+// account has been added.
 evt.on('showLatestAccount', function() {
-  Cards.removeAllCards();
+  cards.removeAllCards();
 
   model.latestOnce('acctsSlice', function(acctsSlice) {
     var account = acctsSlice.items[acctsSlice.items.length - 1];
 
     model.changeAccount(account, function() {
       pushStartCard('message_list', {
-        // If waiting to complete an activity, do so after pushing the
-        // message list card.
-        onPushed: activityContinued
+        // If waiting to complete an activity, do so after pushing the message
+        // list card.
+        onPushed: function() {
+          if (activityCallback) {
+            var activityCb = activityCallback;
+            activityCallback = null;
+            activityCb();
+            return true;
+          }
+          return false;
+        }
       });
     });
   });
 });
 
-model.on('acctsSlice', function() {
-  if (!model.hasAccount()) {
-    if (!waitingForCreateAccountPrompt) {
-      resetCards('setup_account_info');
-    }
-  } else {
-    model.latestOnce('foldersSlice', function() {
-      if (waitForAppMessage) {
-        return;
-      }
-
-      // If an activity was waiting for an account, trigger it now.
-      if (activityContinued()) {
-        return;
-      }
-
-      showMessageList();
-    });
+evt.on('apiBadLogin', function(account, problem, whichSide) {
+  switch (problem) {
+    case 'bad-user-or-pass':
+      cards.pushCard('setup_fix_password', 'animate',
+                { account: account,
+                  whichSide: whichSide,
+                  restoreCard: cards.activeCardIndex },
+                'right');
+      break;
+    case 'imap-disabled':
+    case 'pop3-disabled':
+      cards.pushCard('setup_fix_gmail', 'animate',
+                { account: account, restoreCard: cards.activeCardIndex },
+                'right');
+      break;
+    case 'needs-app-pass':
+      cards.pushCard('setup_fix_gmail_twofactor', 'animate',
+                { account: account, restoreCard: cards.activeCardIndex },
+                'right');
+      break;
+    case 'needs-oauth-reauth':
+      cards.pushCard('setup_fix_oauth2', 'animate',
+                { account: account, restoreCard: cards.activeCardIndex },
+                'right');
+      break;
   }
 });
 
-var lastActivityTime = 0;
-appMessages.on('activity', function(type, data, rawActivity) {
-  // Rate limit rapid fire activity triggers, like an accidental
-  // double tap. While the card code adjusts for the taps, in
-  // the case of configured account, user can end up with multiple
-  // compose cards in the stack, which is probably confusing,
-  // and the rapid tapping is likely just an accident, or an
-  // incorrect user belief that double taps are needed for
-  // activation.
-  var activityTime = Date.now();
-  if (activityTime < lastActivityTime + 1000) {
-    return;
-  }
-  lastActivityTime = activityTime;
+// Start init of main view/model modules now that all the registrations for
+// top level events have happened, and before triggering of entry points start.
+cards.init();
 
-  function initComposer() {
-    Cards.pushCard('compose', 'default', 'immediate', {
-      activity: rawActivity,
-      composerData: {
-        onComposer: function(composer, composeCard) {
-          var attachmentBlobs = data.attachmentBlobs;
-          /* to/cc/bcc/subject/body all have default values that shouldn't
-          be clobbered if they are not specified in the URI*/
-          if (data.to) {
-            composer.to = data.to;
-          }
-          if (data.subject) {
-            composer.subject = data.subject;
-          }
-          if (data.body) {
-            composer.body = { text: data.body };
-          }
-          if (data.cc) {
-            composer.cc = data.cc;
-          }
-          if (data.bcc) {
-            composer.bcc = data.bcc;
-          }
-          if (attachmentBlobs) {
-            var attachmentsToAdd = [];
-            for (var iBlob = 0; iBlob < attachmentBlobs.length; iBlob++) {
-              attachmentsToAdd.push({
-                name: data.attachmentNames[iBlob],
-                blob: attachmentBlobs[iBlob]
-              });
-            }
-            composeCard.addAttachmentsSubjectToSizeLimits(attachmentsToAdd);
-          }
+// If config could have already started up the model if there was no cache set
+// up, so only trigger init if it is not already started up, for efficiency.
+if (!model.inited) {
+  model.init();
+}
+
+/**
+ * Register setMozMessageHandler listeners with the plumbing set up in
+ * html_cache_restore
+ */
+var startupData = globalOnAppMessage({
+  activity: function(rawActivity) {
+    // Remove previous cards because the card stack could get weird if inserting
+    // a new card that would not normally be at that stack level. Primary
+    // concern: going to settings, then trying to add a compose card at that
+    // stack level. More importantly, the added card could have a "back"
+    // operation that does not mean "back to previous state", but "back in
+    // application flowchart". Message list is a good known jump point, so do
+    // not needlessly wipe that one out if it is the current one.
+    if (!isCurrentCardMessageList()) {
+      cards.removeAllCards();
+    }
+
+    function activityCompose() {
+      var cardArgs = {
+        activity: rawActivity,
+        composerData: activityComposerData(rawActivity)
+      };
+
+      pushStartCard('compose', cardArgs);
+    }
+
+    if (globalOnAppMessage.hasAccount()) {
+      activityCompose();
+    } else {
+      activityCallback = activityCompose;
+      waitingRawActivity = rawActivity;
+      pushStartCard('setup_account_info', {
+        allowBack: true,
+        launchedFromActivity: true
+      });
+    }
+  },
+
+  notification: function(data) {
+    data = data || {};
+    var type = data.type || '';
+    var folderType = data.folderType || 'inbox';
+
+    model.latestOnce('foldersSlice', function latestFolderSlice() {
+      function onCorrectFolder() {
+        // Remove previous cards because the card stack could get weird if
+        // inserting a new card that would not normally be at that stack level.
+        // Primary concern: going to settings, then trying to add a reader or
+        // message list card at that stack level. More importantly, the added
+        // card could have a "back" operation that does not mean "back to
+        // previous state", but "back in application flowchart". Message list is
+        // a good known jump point, so do not needlessly wipe that one out if it
+        // is the current one.
+        if (!isCurrentCardMessageList()) {
+          cards.removeAllCards();
+        }
+
+        if (type === 'message_list') {
+          pushStartCard('message_list', {});
+        } else if (type === 'message_reader') {
+          var headerCursor = new HeaderCursor(model);
+          headerCursor.setCurrentMessageBySuid(data.messageSuid);
+
+          pushStartCard(type, {
+              messageSuid: data.messageSuid,
+              headerCursor: headerCursor
+          });
+        } else {
+          console.error('unhandled notification type: ' + type);
         }
       }
-    });
-  }
 
-  function promptEmptyAccount() {
-    common.ConfirmDialog.show(mozL10n.get('setup-empty-account-prompt'),
-    function(confirmed) {
-      if (!confirmed) {
-        rawActivity.postError('cancelled');
-      }
+      var acctsSlice = model.acctsSlice,
+          accountId = data.accountId;
 
-      waitingForCreateAccountPrompt = false;
-
-      // No longer need to wait for the activity to complete, it needs
-      // normal card flow
-      waitForAppMessage = false;
-
-      activityCallback = initComposer;
-
-      // Always just reset to setup account in case the system does
-      // not properly close out the email app on a cancelled activity.
-      resetCards('setup_account_info');
-    });
-  }
-
-  // Remove previous cards because the card stack could get
-  // weird if inserting a new card that would not normally be
-  // at that stack level. Primary concern: going to settings,
-  // then trying to add a compose card at that stack level.
-  // More importantly, the added card could have a "back"
-  // operation that does not mean "back to previous state",
-  // but "back in application flowchart". Message list is a
-  // good known jump point, so do not needlessly wipe that one
-  // out if it is the current one. Message list is a good
-  // known jump point, so do not needlessly wipe that one out
-  // if it is the current one.
-  if (!isCurrentCardMessageList()) {
-    Cards.removeAllCards();
-  }
-
-  if (model.inited) {
-    if (model.hasAccount()) {
-      initComposer();
-    } else {
-      waitingForCreateAccountPrompt = true;
-      promptEmptyAccount();
-    }
-  } else {
-    // Be optimistic and start rendering compose as soon as possible
-    // In the edge case that email is not configured, then the empty
-    // account prompt will be triggered quickly in the next section.
-    initComposer();
-
-    waitingForCreateAccountPrompt = true;
-    model.latestOnce('acctsSlice', function activityOnAccount() {
-      if (!model.hasAccount()) {
-        promptEmptyAccount();
-      }
-    });
-  }
-});
-
-appMessages.on('notification', function(data) {
-  var type = data ? data.type : '';
-
-  model.latestOnce('foldersSlice', function latestFolderSlice() {
-    function onCorrectFolder() {
-      function onPushed() {
-        waitForAppMessage = false;
-      }
-
-      // Remove previous cards because the card stack could get
-      // weird if inserting a new card that would not normally be
-      // at that stack level. Primary concern: going to settings,
-      // then trying to add a reader or message list card at that
-      // stack level. More importantly, the added card could have
-      // a "back" operation that does not mean "back to previous
-      // state", but "back in application flowchart". Message
-      // list is a good known jump point, so do not needlessly
-      // wipe that one out if it is the current one.
-      if (!isCurrentCardMessageList()) {
-        Cards.removeAllCards();
-      }
-
-      if (type === 'message_list') {
-        showMessageList({
-          onPushed: onPushed
-        });
-      } else if (type === 'message_reader') {
-        headerCursor.setCurrentMessageBySuid(data.messageSuid);
-
-        Cards.pushCard(type, 'default', 'immediate', {
-            messageSuid: data.messageSuid,
-            onPushed: onPushed
-        });
+      if (model.account.id === accountId) {
+        // folderType will often be 'inbox' (in the case of a new message
+        // notification) or 'outbox' (in the case of a "failed send"
+        // notification).
+        return model.selectFirstFolderWithType(folderType, onCorrectFolder);
       } else {
-        console.error('unhandled notification type: ' + type);
-      }
-    }
+        var newAccount;
+        acctsSlice.items.some(function(account) {
+          if (account.id === accountId) {
+            newAccount = account;
+            return true;
+          }
+        });
 
-    var acctsSlice = model.acctsSlice,
-        accountId = data.accountId;
-
-    if (model.account.id === accountId) {
-      return model.selectInbox(onCorrectFolder);
-    } else {
-      var newAccount;
-      acctsSlice.items.some(function(account) {
-        if (account.id === accountId) {
-          newAccount = account;
-          return true;
+        if (newAccount) {
+          model.changeAccount(newAccount, function() {
+            model.selectFirstFolderWithType(folderType, onCorrectFolder);
+          });
         }
-      });
-
-      if (newAccount) {
-        model.changeAccount(newAccount, onCorrectFolder);
       }
-    }
-  });
+    });
+  }
 });
 
-model.init();
-});
+console.log('startupData: ' + JSON.stringify(startupData, null, '  '));
 
-// Run the app module, bring in fancy logging
-requirejs(['console_hook', 'cards/message_list', 'mail_app']);
+// If not a mozSetMessageHandler entry point, start up the UI now. Or, if
+// an alarm started the app, but the app became visible during the
+// startup. In that case, make sure we show something to the user.
+if (startupData.entry === 'default' ||
+   (startupData.entry === 'alarm' && !document.hidden)) {
+  pushStartCard(startupData.view);
+}
+
+});

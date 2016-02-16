@@ -1,4 +1,4 @@
-/* global applications, ManifestHelper */
+/* global applications, ManifestHelper, RecordingIcon, LazyLoader, Service */
 (function(exports) {
   'use strict';
 
@@ -12,6 +12,8 @@
   }
 
   MediaRecording.prototype = {
+    name: 'MediaRecording',
+
     /**
      * To tell if the current state is using any recording device, like mic or
      * camera. Used to control the present of statusbar status.
@@ -30,10 +32,16 @@
      * @memberof MediaRecording.prototype
      */
     start: function mr_start() {
-      this.container = document.getElementById('media-recoding-status-list');
+      this.container = document.getElementById('media-recording-status-list');
 
       window.addEventListener('mozChromeEvent', this);
-      return this;
+      LazyLoader.load(['js/recording_icon.js']).then(function() {
+        this.icon = new RecordingIcon(this);
+        this.icon.start();
+      }.bind(this)).catch(function(err) {
+        console.error(err);
+      });
+      Service.registerState('isRecording', this);
     },
 
     /**
@@ -42,10 +50,14 @@
      */
     stop: function mr_stop() {
       this.isRecording = false;
+      if (this.icon) {
+        this.icon.stop();
+      }
       this.messages = [];
       this.container = null;
 
       window.removeEventListener('mozChromeEvent', this);
+      Service.unregisterState('isRecording', this);
     },
 
     /**
@@ -66,16 +78,13 @@
       var message;
 
       if (isAudio && isVideo) {
-        icon =
-            'url(style/media_recording/images/VideoRecorder.png)';
-          message = 'media-is-on';
+        icon = 'video-mic';
+        message = 'media-is-on';
       } else if (isAudio) {
-        icon =
-          'url(style/media_recording/images/Microphone.png)';
+        icon = 'mic';
         message = 'microphone-is-on';
       } else if (isVideo) {
-        icon =
-          'url(style/media_recording/images/Camera.png)';
+        icon = 'video';
         message = 'camera-is-on';
       }
 
@@ -87,7 +96,7 @@
         origin: this.getOrigin(detail),
         icon: icon,
         message: message,
-        updateTime: this.getFormattedTimeString(new Date())
+        timestamp: new Date()
       };
     },
 
@@ -146,35 +155,48 @@
       this.messages.push(item);
 
       // attach panel
-      var _ = navigator.mozL10n.get;
-      var panelElement, iconElement, originElement,
+      var panelElement, iconElement, titleContainerElement, originElement,
           messageElement, timerElement;
       /* create panel
-       <div class="media-recoding-status">
-         <div class="icon"></div>
-         <div class="origin"></div>
+       <div class="media-recording-status fake-notification" role="listitem">
+         <div data-icon="video" aria-hidden="true"></div>
+         <div class="title-container">
+           <div class="origin"></div>
+           <div class="timestamp"></div>
+         </div>
          <div class="message"></div>
-         <div class="timer"></div>
        </div>
       */
       panelElement = document.createElement('div');
-      panelElement.className = 'media-recoding-status';
+      panelElement.className = 'media-recording-status fake-notification';
+      panelElement.setAttribute('role', 'listitem');
+
       iconElement = document.createElement('div');
-      iconElement.className = 'icon';
-      iconElement.style.backgroundImage = item.icon;
+      iconElement.dataset.icon = item.icon;
+      iconElement.setAttribute('aria-hidden', true);
+      iconElement.className = 'alert';
       panelElement.appendChild(iconElement);
+
+      titleContainerElement = document.createElement('div');
+      titleContainerElement.className = 'title-container';
+      panelElement.appendChild(titleContainerElement);
+
       originElement = document.createElement('div');
-      originElement.className = 'origin';
+      originElement.className = 'title';
       originElement.textContent = item.origin;
-      panelElement.appendChild(originElement);
-      messageElement = document.createElement('div');
-      messageElement.className = 'message';
-      messageElement.textContent = _(item.message);
-      panelElement.appendChild(messageElement);
+      titleContainerElement.appendChild(originElement);
+
       timerElement = document.createElement('div');
-      timerElement.className = 'timer';
-      timerElement.innerHTML = item.updateTime;
-      panelElement.appendChild(timerElement);
+      timerElement.className = 'timestamp';
+      timerElement.dataset.timestamp = item.timestamp;
+      titleContainerElement.appendChild(timerElement);
+      panelElement.appendChild(titleContainerElement);
+
+      messageElement = document.createElement('div');
+      messageElement.className = 'message detail';
+      messageElement.setAttribute('data-l10n-id', item.message);
+      panelElement.appendChild(messageElement);
+
       // remember element in item
       item.element = panelElement;
 
@@ -226,21 +248,8 @@
         }
       });
       window.dispatchEvent(event);
+      this.icon && this.icon.update();
     },
-
-    /**
-     * Return the formatted time string
-     * @memberof MediaRecording.prototype
-     * @param {Date} now The date/time where we receive the object.
-     * @returns {String}
-     */
-    getFormattedTimeString: function mr_getFormattedTimeString(now) {
-      var _ = navigator.mozL10n.get;
-      var f = new navigator.mozL10n.DateTimeFormat();
-      var timeFormat = _('shortTimeFormat').replace('%p', '<span>%p</span>');
-      var formatted = f.localeFormat(now, timeFormat);
-      return formatted;
-    }
   };
 
   exports.MediaRecording = MediaRecording;

@@ -1,26 +1,25 @@
-/* globals Contacts, utils, contactsRemover, Promise, ConfirmDialog */
+/* globals Contacts, utils, contactsRemover, Promise,
+   Search, ConfirmDialog, Loader */
 'use strict';
 
 var contacts = window.contacts || {};
 
-contacts.BulkDelete = (function() {
+(function(exports) {
 
   var cancelled = false;
-
-  var _ = navigator.mozL10n.get;
 
   /**
    * Loads the overlay class before showing
    */
   function requireOverlay(callback) {
-    Contacts.utility('Overlay', callback, Contacts.SHARED_UTILITIES);
+    Loader.utility('Overlay', callback);
   }
 
   // Shows a dialog to confirm the bulk delete
   var showConfirm = function showConfirm(n) {
     return new Promise(function doShowConfirm(resolve, reject) {
       var cancelObject = {
-        title: _('cancel'),
+        title: 'cancel',
         callback: function onCancel() {
           ConfirmDialog.hide();
           reject();
@@ -28,7 +27,7 @@ contacts.BulkDelete = (function() {
       };
 
       var removeObject = {
-        title: _('delete'),
+        title: 'delete',
         isDanger: true,
         callback: function onRemove() {
           ConfirmDialog.hide();
@@ -36,14 +35,15 @@ contacts.BulkDelete = (function() {
         }
       };
 
-      Contacts.confirmDialog(null, _('ContactConfirmDel', {n: n}), cancelObject,
-                             removeObject);
+      ConfirmDialog.show(null,
+        {'id': 'ContactConfirmDel', 'args': {n: n}}, cancelObject,
+          removeObject);
     });
   };
 
   var doDelete = function doDelete(ids, done) {
     cancelled = false;
-    var progress = utils.overlay.show(_('DeletingContacts'), 'progressBar');
+    var progress = utils.overlay.show('DeletingContacts', 'progressBar');
     progress.setTotal(ids.length);
     utils.overlay.showMenu();
 
@@ -58,31 +58,28 @@ contacts.BulkDelete = (function() {
     });
 
     contactsRemoverObj.onDeleted = function onDeleted(currentId) {
-      if (contacts.Search && contacts.Search.isInSearchMode()) {
-        contacts.Search.invalidateCache();
-        contacts.Search.removeContact(currentId);
+      if (window.Search && Search.isInSearchMode()) {
+        Search.invalidateCache();
+        Search.removeContact(currentId);
       }
       contacts.List.remove(currentId);
       progress.update();
     };
 
-    contactsRemoverObj.onCancelled = function onCancelled() {
-      Contacts.hideOverlay();
-      Contacts.showStatus(_('DeletedTxt',
-        {n: contactsRemoverObj.getDeletedCount()}));
-      contacts.Settings.refresh();
-    };
-
     contactsRemoverObj.onError = function onError() {
       Contacts.hideOverlay();
-      Contacts.showStatus(_('deleteError-general'));
+      utils.status.show({
+        id: 'deleteError-general'
+      });
       contacts.Settings.refresh();
     };
 
     contactsRemoverObj.onFinished = function onFinished() {
       Contacts.hideOverlay();
-      Contacts.showStatus(_('DeletedTxt',
-        {n: contactsRemoverObj.getDeletedCount()}));
+      utils.status.show({
+        id: 'DeletedTxt',
+        args: {n: contactsRemoverObj.getDeletedCount()}
+      });
       contacts.Settings.refresh();
 
       if (typeof done === 'function') {
@@ -90,25 +87,22 @@ contacts.BulkDelete = (function() {
       }
     };
 
+    contactsRemoverObj.onCancelled = contactsRemoverObj.onFinished;
+
   };
   // Start the delete of the contacts
   var performDelete = function performDelete(promise, done) {
+    var self = this;
     requireOverlay(function onOverlay() {
-      utils.overlay.show(_('preparing-contacts'), 'spinner');
       promise.onsuccess = function onSuccess(ids) {
-        Contacts.hideOverlay();
-        showConfirm(ids.length).then(
-                          contacts.BulkDelete.doDelete.bind(null, ids, done));
-      };
-      promise.onerror = function onError() {
-        Contacts.hideOverlay();
+        showConfirm(ids.length).then(self.doDelete.bind(null, ids, done));
       };
     });
   };
 
-  return {
+  exports.BulkDelete = {
     'performDelete': performDelete,
     'doDelete': doDelete
   };
 
-})();
+})(window);

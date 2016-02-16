@@ -17,17 +17,17 @@ function ScreenLockPanel(client) {
 module.exports = ScreenLockPanel;
 
 ScreenLockPanel.Selectors = {
-  'screenLockLabel': 'span[data-l10n-id="lockScreen"]',
+  'screenLockLabel': 'label[data-l10n-id="lockScreen"]',
   'screenLockCheckbox': '.lockscreen-enable',
-  'backButton': 'a[href="#screenLock"]',
-  'passcodeLockLabel': 'span[data-l10n-id="passcode-lock"]',
+  'header': 'gaia-header',
+  'passcodeLockLabel': 'label[data-l10n-id="passcode-lock"]',
   'passcodeInput': '.passcode-input',
   'passcodeCheckbox': '.passcode-enable',
   'passcodeIsNotMatchedLabel': 'div[data-l10n-id="passcode-doesnt-match"]',
   'passcodeIncorrectLabel': 'div[data-l10n-id="incorrect-passcode"]',
-  'passcodeCreateButton': '.passcode-create',
+  'passcodeCreateButton': 'button[type="submit"]',
   'passcodeEditButton': '.passcode-edit',
-  'passcodeChangeButton': '.passcode-change',
+  'passcodeChangeButton': 'button[type="submit"]',
   'passcodePanel': '#screenLock-passcode',
   'screenLockHeaderLabel': 'h1[data-l10n-id="screenLock-header"]'
 };
@@ -41,7 +41,9 @@ ScreenLockPanel.prototype = {
   },
 
   isScreenLockChecked: function() {
-    return this.findElement('screenLockCheckbox').getAttribute('checked');
+    return !!this.findElement('screenLockCheckbox').scriptWith(function(el) {
+      return el.wrappedJSObject.checked;
+    });
   },
 
   isPasscodeLockEnabled: function() {
@@ -49,7 +51,9 @@ ScreenLockPanel.prototype = {
   },
 
   isPasscodeChecked: function() {
-    return this.findElement('passcodeCheckbox').getAttribute('checked');
+    return !!this.findElement('passcodeCheckbox').scriptWith(function(el) {
+      return el.wrappedJSObject.checked;
+    });
   },
 
   isPasscodeNotMatched: function() {
@@ -66,10 +70,6 @@ ScreenLockPanel.prototype = {
 
   isScreenLockHeaderLabelVisible: function() {
     return this.findElement('screenLockHeaderLabel').displayed();
-  },
-
-  getPasscode: function() {
-    return this.client.settings.get('lockscreen.passcode-lock.code');
   },
 
   enableScreenLock: function() {
@@ -91,7 +91,7 @@ ScreenLockPanel.prototype = {
     }
 
     // if we have passcode by default, then there is a popup
-    // when disabling screenLock, in this way, we have to 
+    // when disabling screenLock, in this way, we have to
     // type the correct code to disable passcodeLock at first
     if (this.isPasscodeLockEnabled()) {
       var code = this.getPasscode();
@@ -125,7 +125,7 @@ ScreenLockPanel.prototype = {
   },
 
   tapBackButton: function() {
-    this.waitForElement('backButton').tap();
+    this.waitForElement('header').tap(25, 25);
   },
 
   tapCreatePasscode: function() {

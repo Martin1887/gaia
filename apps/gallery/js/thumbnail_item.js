@@ -1,3 +1,5 @@
+'use strict';
+
 /**
  * ThumbnailItem is view object for a single gallery item data. It renders file
  * in listitem object.
@@ -19,6 +21,8 @@ function ThumbnailItem(fileData) {
 
   this.htmlNode = document.createElement('div');
   this.htmlNode.classList.add('thumbnail');
+  this.htmlNode.setAttribute('role', 'button');
+  this.htmlNode.setAttribute('tabindex', 0);
   this.imgNode = document.createElement('img');
   this.imgNode.alt = '';
   this.imgNode.classList.add('thumbnailImage');
@@ -28,4 +32,35 @@ function ThumbnailItem(fileData) {
   var url = URL.createObjectURL(fileData.metadata.thumbnail);
   this.imgNode.src = url;
   this.htmlNode.appendChild(this.imgNode);
+
+  this.localize();
 }
+
+ThumbnailItem.formatter = new Intl.DateTimeFormat(navigator.languages, {
+  hour: 'numeric',
+  minute: 'numeric',
+  month: 'long',
+  day: 'numeric',
+  year: 'numeric',
+});
+
+ThumbnailItem.resetFormatter = () => {
+  ThumbnailItem.formatter = new Intl.DateTimeFormat(navigator.languages, {
+    hour: 'numeric',
+    minute: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+};
+
+ThumbnailItem.prototype.localize = function() {
+  var date = new Date(this.data.date);
+
+  var descId = !this.data.metadata.video ?
+    'imageDated' : 'videoDated';
+
+  document.l10n.setAttributes(this.imgNode, descId, {
+    timeStamp: ThumbnailItem.formatter.format(date)
+  });
+};

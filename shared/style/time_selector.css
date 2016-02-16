@@ -4,7 +4,7 @@
 
 /* Main dialog setup */
 [role="dialog"][data-type="time-selector"] {
-  background: url(time_selector/images/ui/pattern.png) repeat left top, url(time_selector/images/ui/gradient.png) no-repeat left top / 100% 100%;
+  background: #2d2d2d;
   overflow: hidden;
   position: absolute;
   z-index: 100;
@@ -23,16 +23,16 @@
   line-height: 4.8rem;
   color: #fff;
   border-bottom: 0.1rem solid #616262;
-  background: rgba(0 ,0, 0, .2);
+  background-color: rgba(0, 0, 0, .2);
   margin: 0;
   padding: 0 3rem 1rem;
   height: 4.8rem;
-  -moz-box-sizing: border-box;
+  box-sizing: border-box;
 }
 
 /* Time Selector */
 [role="dialog"][data-type="time-selector"] .picker-container {
-  -moz-box-sizing: border-box;
+  box-sizing: border-box;
   position: relative;
   width: calc(100% - 5rem);
   height: 22.5rem;
@@ -71,31 +71,34 @@
   z-index: 10;
 }
 
+/**
+ * in 12h-format, the position of the AM/PM selector (.hours24) depends on:
+ *  - the direction of the document (first column in LTR, last column in RTL)
+ *  - the .format12hrev class (which reverses the position of the AM/PM column)
+ */
+
 [role="dialog"][data-type="time-selector"] .picker-bar-background {
   position: absolute;
   top: 0;
-  right: 0;
   width: calc(100% / 3);
   height: 100%;
-  background: url(time_selector/images/ui/pattern-time.png);
+  background: #4d4d4d;
 }
-
-[role="dialog"][data-type="time-selector"] .format12hrev .picker-bar-background {
+html[dir="ltr"] [role="dialog"][data-type="time-selector"] .format12h .picker-bar-background,
+html[dir="rtl"] [role="dialog"][data-type="time-selector"] .format12hrev .picker-bar-background {
+  right: 0;
+}
+html[dir="ltr"] [role="dialog"][data-type="time-selector"] .format12hrev .picker-bar-background,
+html[dir="rtl"] [role="dialog"][data-type="time-selector"] .format12h .picker-bar-background {
   left: 0;
-  right: auto;
-}
-
-#time-picker.format24h .picker-bar-background {
-  display: none;
 }
 
 [role="dialog"][data-type="time-selector"] .value-picker-hours-wrapper,
 [role="dialog"][data-type="time-selector"] .value-picker-minutes-wrapper,
 [role="dialog"][data-type="time-selector"] .value-picker-hour24-wrapper {
-  -moz-box-sizing: border-box;
+  box-sizing: border-box;
   position: absolute;
   top: 0;
-  left: 0;
   width: calc(100% / 3);
   height: 100%;
   padding-top: 8.3rem;
@@ -103,41 +106,56 @@
   -moz-border-right-colors: #1d1d1d #4a4a4a;
 }
 
-[role="dialog"][data-type="time-selector"] .format12h .value-picker-minutes-wrapper {
+/* hours */
+html[dir="ltr"] [role="dialog"][data-type="time-selector"] .format12h .value-picker-hours-wrapper,
+html[dir="rtl"] [role="dialog"][data-type="time-selector"] .format12hrev .value-picker-hours-wrapper {
+  left: 0;
+}
+html[dir="ltr"] [role="dialog"][data-type="time-selector"] .format12hrev .value-picker-hours-wrapper,
+html[dir="rtl"] [role="dialog"][data-type="time-selector"] .format12h .value-picker-hours-wrapper {
   left: calc(100% / 3);
 }
 
-[role="dialog"][data-type="time-selector"] .format12h .value-picker-hour24-wrapper {
-  left: auto;
+/* minutes */
+html[dir="ltr"] [role="dialog"][data-type="time-selector"] .format12h .value-picker-minutes-wrapper,
+html[dir="rtl"] [role="dialog"][data-type="time-selector"] .format12hrev .value-picker-minutes-wrapper {
+  right: calc(100% / 3);
+}
+html[dir="ltr"] [role="dialog"][data-type="time-selector"] .format12hrev .value-picker-minutes-wrapper,
+html[dir="rtl"] [role="dialog"][data-type="time-selector"] .format12h .value-picker-minutes-wrapper {
   right: 0;
   border: none;
 }
 
-[role="dialog"][data-type="time-selector"] .format12hrev .value-picker-hour24-wrapper {
+/* hour24 (= AM/PM) */
+html[dir="ltr"] [role="dialog"][data-type="time-selector"] .format12h .value-picker-hour24-wrapper,
+html[dir="rtl"] [role="dialog"][data-type="time-selector"] .format12hrev .value-picker-hour24-wrapper {
+  right: 0;
+  border: none;
+}
+html[dir="ltr"] [role="dialog"][data-type="time-selector"] .format12hrev .value-picker-hour24-wrapper,
+html[dir="rtl"] [role="dialog"][data-type="time-selector"] .format12h .value-picker-hour24-wrapper {
   left: 0;
 }
 
-[role="dialog"][data-type="time-selector"] .format12hrev .value-picker-hours-wrapper {
-  left: calc(100% / 3);
-}
+/**
+ * in 24h-format, there are only two colunns, always in the same order
+ */
 
-[role="dialog"][data-type="time-selector"] .format12hrev .value-picker-minutes-wrapper {
-  left: calc(100% * 2 / 3);
-}
-
-[role="dialog"][data-type="time-selector"] .format24h .value-picker-hours-wrapper,
-[role="dialog"][data-type="time-selector"] .format24h .value-picker-minutes-wrapper,
-[role="dialog"][data-type="time-selector"] .format24h .picker-bar-background {
+[role="dialog"][data-type="time-selector"] .format24h .value-picker-hours-wrapper {
   width: 50%;
+  left: 0;
 }
 
 [role="dialog"][data-type="time-selector"] .format24h .value-picker-minutes-wrapper {
-  left: auto;
+  width: 50%;
   right: 0;
   border: none;
 }
 
-[role="dialog"][data-type="time-selector"] .format24h .value-picker-hour24-wrapper {
+[role="dialog"][data-type="time-selector"] .format24h .value-picker-hour24-wrapper,
+[role="dialog"][data-type="time-selector"] .format24h .value-indicator-colon,
+[role="dialog"][data-type="time-selector"] .format24h .picker-bar-background {
   display: none;
 }
 
@@ -176,20 +194,21 @@
   pointer-events: none;
 }
 
-[role="dialog"][data-type="time-selector"] .format12hrev .value-indicator > .value-indicator-colon {
+html[dir="ltr"] [role="dialog"][data-type="time-selector"] .format12h .value-indicator > .value-indicator-colon,
+html[dir="rtl"] [role="dialog"][data-type="time-selector"] .format12hrev .value-indicator > .value-indicator-colon {
+  left: 0;
+}
+
+html[dir="ltr"] [role="dialog"][data-type="time-selector"] .format12hrev .value-indicator > .value-indicator-colon,
+html[dir="rtl"] [role="dialog"][data-type="time-selector"] .format12h .value-indicator > .value-indicator-colon {
   left: calc(100% / 3);
 }
 
-[role="dialog"][data-type="time-selector"] .format24h .value-indicator-colon {
-  display: none;
-}
-
 [role="dialog"][data-type="time-selector"] .animation-on {
-  transition-duration: 0.5s;
-  transition-property: transform;
+  transition: transform var(--transition-duration) cubic-bezier(0, 0, 0.4, 1);
 }
 
-[role="dialog"][data-type="time-selector"]  .picker-unit {
+[role="dialog"][data-type="time-selector"] .picker-unit {
   position: relative;
   font: 2.2rem/5.6rem Sans-serif;
   color: #fff;
@@ -198,21 +217,28 @@
   width: 100%;
   height: 5.6rem;
   pointer-events: none;
+  opacity: 0.6;
+  transform: scale(0.8);
 }
 
+[role="dialog"][data-type="time-selector"] .picker-unit.selected {
+  transform: scale(1);
+  opacity: 1;
+}
 
 /* Menu & buttons setup */
 [role="dialog"][data-type="time-selector"] menu {
   white-space: nowrap;
   margin: 0;
   padding: 1.5rem;
-  background: #2d2d2d url(time_selector/images/ui/pattern.png) repeat left top;
+  background: #4d4d4d;
   display: block;
   overflow: hidden;
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
+  font-size: 0; /* collapse the whitespaces around menu buttons */
 }
 
 [role="dialog"][data-type="time-selector"] menu button::-moz-focus-inner {
@@ -227,7 +253,7 @@
   height: 4rem;
   margin: 0 0 1rem;
   padding: 0 1.2rem;
-  -moz-box-sizing: border-box;
+  box-sizing: border-box;
   display: inline-block;
   vertical-align: middle;
   text-overflow: ellipsis;
@@ -275,7 +301,7 @@ button[disabled]::-moz-selection {
 }
 
 [role="dialog"][data-type="time-selector"] menu button:last-child {
-  margin-left: 1rem;
+  margin-inline-start: 1rem;
 }
 
 [role="dialog"][data-type="time-selector"] menu button,
@@ -286,3 +312,4 @@ button[disabled]::-moz-selection {
 [role="dialog"][data-type="time-selector"] menu button.full {
   width: 100%;
 }
+

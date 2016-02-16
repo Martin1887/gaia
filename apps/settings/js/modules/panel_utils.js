@@ -1,4 +1,3 @@
-/* global openLink, openDialog */
 /**
  * PanelUtils is a singleton that defines panel related utility functions.
  *
@@ -12,6 +11,63 @@ define(function(require) {
   var LazyLoader = require('shared/lazy_loader');
 
   var _settings = navigator.mozSettings;
+
+  /**
+   * These so-called "dialog boxes" are just standard Settings panels
+   * (<section role="region" />) with reset/submit buttons: these buttons both
+   * return to the previous panel when clicked, and each button has its own
+   * (optional) callback.
+   */
+  function openDialog(dialogID, onSubmit, onReset) {
+    if ('#' + dialogID === Settings.currentPanel) {
+      return;
+    }
+
+    var origin = Settings.currentPanel;
+
+    // Load dialog contents and show it.
+    Settings.currentPanel = dialogID;
+
+    var dialog = document.getElementById(dialogID);
+    var submit = dialog.querySelector('[type=submit]');
+    if (submit) {
+      submit.onclick = function onsubmit() {
+        if (typeof onSubmit === 'function') {
+          (onSubmit.bind(dialog))();
+        }
+        Settings.currentPanel = origin; // hide dialog box
+      };
+    }
+
+    var reset = dialog.querySelector('[type=reset]');
+    if (reset) {
+      reset.onclick = function onreset() {
+        if (typeof onReset === 'function') {
+          (onReset.bind(dialog))();
+        }
+        Settings.currentPanel = origin; // hide dialog box
+      };
+    }
+  }
+
+  /* Open a link with a web activity */
+  function openLink(url) {
+    if (url.startsWith('tel:')) { // dial a phone number
+      var telActivity = new window.MozActivity({
+        name: 'dial',
+        data: { type: 'webtelephony/number', number: url.substr(4) }
+      });
+      // For workaround jshint.
+      telActivity.onsuccess = function() {};
+    } else if (!url.startsWith('#')) { // browse a URL
+      var linkActivity = new window.MozActivity({
+        name: 'view',
+        data: { type: 'url', url: url }
+      });
+      // For workaround jshint.
+      linkActivity.onsuccess = function() {};
+    }
+  }
 
   /**
    * Opens the dialog of a specified id.
@@ -30,10 +86,11 @@ define(function(require) {
 
       request.onsuccess = function() {
         switch (input.type) {
-          case 'radio':
+          case 'gaia-radio':
             input.checked = (input.value == request.result[key]);
             break;
           case 'checkbox':
+          case 'gaia-checkbox':
             input.checked = request.result[key] || false;
             break;
           case 'select-one':
@@ -82,12 +139,13 @@ define(function(require) {
         fields.forEach(function(input) {
           key = input.dataset.setting;
           switch (input.type) {
-            case 'radio':
+            case 'gaia-radio':
               if (input.checked) {
                 cset[key] = input.value;
               }
               break;
             case 'checkbox':
+            case 'gaia-checkbox':
               cset[key] = input.checked;
               break;
             default:
@@ -117,8 +175,6 @@ define(function(require) {
      *                      The root element of the panel.
      */
     activate: function pu_activate(panel) {
-      navigator.mozL10n.translate(panel);
-
       // activate all scripts
       var scripts = panel.getElementsByTagName('script');
       var scripts_src = Array.prototype.map.call(scripts, function(script) {
@@ -126,8 +182,20 @@ define(function(require) {
       });
       LazyLoader.load(scripts_src);
 
-      var _onclick = function(callback, value) {
-        callback(value);
+      var _onclick = function(evt) {
+        if (!this.dataset.href) {
+          this.dataset.href = this.href;
+          this.href = '#';
+        }
+        var href = this.dataset.href;
+        if (!href.startsWith('#')) { // external link
+          evt.target.blur();
+          openLink(href);
+        } else if (!href.endsWith('Settings')) { // generic dialog
+          openDialog(href.substr(1));
+        } else { // Settings-specific dialog box
+          _openDialog(href.substr(1));
+        }
         return false;
       };
 
@@ -137,21 +205,18 @@ define(function(require) {
       var i, count;
 
       for (i = 0, count = links.length; i < count; i++) {
-        var link = links[i];
-        if (!link.dataset.href) {
-          link.dataset.href = link.href;
-          link.href = '#';
+        if (links[i].tagName !== 'GAIA-HEADER') {
+          links[i].addEventListener('click', _onclick);
         }
-        if (!link.dataset.href.startsWith('#')) { // external link
-          link.onclick = _onclick.bind(this, openLink,
-                                       link.dataset.href);
-        } else if (!link.dataset.href.endsWith('Settings')) { // generic dialog
-          link.onclick = _onclick.bind(this, openDialog,
-                                       link.dataset.href.substr(1));
-        } else { // Settings-specific dialog box
-          link.onclick = _onclick.bind(this, _openDialog,
-                                       link.dataset.href.substr(1));
-        }
+      }
+
+      // Setup back listener
+      var backHeader = panel.querySelector('gaia-header[action="back"]');
+      var href = backHeader && backHeader.dataset.href;
+      if (backHeader && href) {
+        backHeader.addEventListener('action', function() {
+          Settings.currentPanel = this.dataset.href;
+        });
       }
     },
 
@@ -174,7 +239,8 @@ define(function(require) {
         panel = panel || document;
 
         // preset all checkboxes
-        var rule = 'input[type="checkbox"]:not([data-ignore])';
+        var rule = 'input[type="checkbox"]:not([data-ignore]), gaia-switch, ' +
+          'gaia-checkbox';
         var checkboxes = panel.querySelectorAll(rule);
         var i, count, key;
         for (i = 0, count = checkboxes.length; i < count; i++) {
@@ -195,7 +261,7 @@ define(function(require) {
         }, 0);
 
         // preset all radio buttons
-        rule = 'input[type="radio"]:not([data-ignore])';
+        rule = 'gaia-radio:not([data-ignore])';
         var radios = panel.querySelectorAll(rule);
         for (i = 0, count = radios.length; i < count; i++) {
           key = radios[i].name;
@@ -254,20 +320,20 @@ define(function(require) {
               '[value="' + result[key] + '"]';
             var option_span = document.querySelector(rule);
             if (option_span) {
-              spanFields[i].dataset.l10nId = option_span.dataset.l10nId;
-              spanFields[i].textContent = option_span.textContent;
+              spanFields[i].setAttribute('data-l10n-id',
+                option_span.getAttribute('data-l10n-id'));
             } else {
+              spanFields[i].removeAttribute('data-l10n-id');
               spanFields[i].textContent = result[key];
             }
           } else { // result[key] is undefined
-            var _ = navigator.mozL10n.get;
             switch (key) {
               //XXX bug 816899 will also provide 'deviceinfo.software' from
               // Gecko which is {os name + os version}
               case 'deviceinfo.software':
-                var text = _('brandShortName') + ' ' +
-                  result['deviceinfo.os'];
-                spanFields[i].textContent = text;
+                document.l10n.setAttributes(spanFields[i],
+                  'deviceInfo_software',
+                  { os: result['deviceinfo.os'] });
                 break;
 
               //XXX workaround request from bug 808892 comment 22
@@ -277,7 +343,7 @@ define(function(require) {
                 break;
 
               case 'deviceinfo.mac':
-                spanFields[i].textContent = _('macUnavailable');
+                spanFields[i].setAttribute('data-l10n-id', 'macUnavailable');
                 break;
             }
           }
@@ -368,40 +434,52 @@ define(function(require) {
 
       // hide or unhide items
       rule = '[data-show-name="' + key + '"]:not([data-ignore])';
-      var item = document.querySelector(rule);
-      if (item) {
-        item.hidden = !value;
+      var items = document.querySelectorAll(rule);
+      for (i = 0; i < items.length; i++) {
+        items[i].hidden = !value;
       }
 
       // update <input> values when the corresponding setting is changed
-      var input = panel.querySelector('input[name="' + key + '"]');
-      if (!input) {
+      var inputs = [].slice.call(panel.querySelectorAll(
+        `input[name="${key}"],
+        gaia-switch[name="${key}"],
+        gaia-checkbox[name="${key}"],
+        gaia-radio[name="${key}"]`));
+      if (!inputs.length) {
         return;
       }
 
-      switch (input.type) {
-        case 'checkbox':
-        case 'switch':
-          if (input.checked == value) {
-            return;
-          }
-          input.checked = value;
-          break;
-        case 'range':
-          if (input.value == value) {
-            return;
-          }
-          input.value = value;
-          break;
-        case 'select':
-          for (i = 0, count = input.options.length; i < count; i++) {
-            if (input.options[i].value == value) {
-              input.options[i].selected = true;
-              break;
+      inputs.forEach((input) => {
+        switch (input.type) {
+          case 'gaia-switch':
+          case 'gaia-checkbox':
+          case 'checkbox':
+          case 'switch':
+            value = !!value;
+            if (input.checked === value) {
+              return;
             }
-          }
-          break;
-      }
+            input.checked = value;
+            break;
+          case 'range':
+            if (input.value === value) {
+              return;
+            }
+            input.value = value;
+            break;
+          case 'select':
+            for (i = 0, count = input.options.length; i < count; i++) {
+              if (input.options[i].value === value) {
+                input.options[i].selected = true;
+                break;
+              }
+            }
+            break;
+          case 'gaia-radio':
+            input.checked = (input.value === value);
+            break;
+        }
+      });
     },
 
     /**
@@ -422,7 +500,7 @@ define(function(require) {
      */
     onInputChange: function pu_onInputChange(event) {
       var input = event.target;
-      var type = input.type;
+      var type = input.type || input.nodeName.toLowerCase();
       var key = input.name;
 
       //XXX should we check data-ignore here?
@@ -439,6 +517,8 @@ define(function(require) {
 
       var value;
       switch (type) {
+        case 'gaia-switch':
+        case 'gaia-checkbox':
         case 'checkbox':
         case 'switch':
           value = input.checked; // boolean
@@ -452,7 +532,7 @@ define(function(require) {
           value = parseFloat(parseFloat(input.value).toFixed(1)); // float
           break;
         case 'select-one':
-        case 'radio':
+        case 'gaia-radio':
         case 'text':
         case 'password':
           value = input.value; // default as text

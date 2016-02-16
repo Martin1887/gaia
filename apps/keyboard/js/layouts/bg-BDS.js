@@ -1,10 +1,13 @@
 Keyboards['bg-BDS'] = {
   label: 'Bulgarian (BDS)',
+  shortLabel: 'Bg',
   menuLabel: 'Български (БДС)',
   types: ['text', 'url', 'email'],
   imEngine: 'latin',
   autoCorrectLanguage: 'bg',
+  basicLayoutKey: 'AБB',
   width: 11,
+  lang: 'bg',
   alt: {
     'и': 'ѝ'
   },

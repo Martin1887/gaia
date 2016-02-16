@@ -1,11 +1,13 @@
 Keyboards.ta = {
   label: 'Tamil',
+  shortLabel: 'Ta',
   imEngine: 'india',
   menuLabel: 'தமிழ்',
   secondLayout: true,
+  specificCssRule: true,
   basicLayoutKey: 'அஆஇ',
   types: ['text', 'url', 'email'],
-  keyClassName: 'tamil',
+  lang: 'ta',
   upperCase: {
     'ஒ':'ொ',
     'ஔ':'ௌ',
@@ -35,7 +37,10 @@ Keyboards.ta = {
     'வ':'ழ',
     'ல':'ள',
     'ஸ':'ஷ',
-    'ய':'@'
+    'ய':'₹'
+  },
+  alt: {
+    '₹': '$ € £ ¥ ৳'
   },
   keys: [
     [

@@ -43,7 +43,8 @@
 // GAIA-
 Components.utils.import('resource://gre/modules/Services.jsm');
 const GAIA_DOMAIN = Services.prefs.getCharPref("extensions.gaia.domain");
-const GAIA_APP_RELATIVEPATH = Services.prefs.getCharPref("extensions.gaia.app_relative_path");
+const GAIA_DIR = Services.prefs.getCharPref("extensions.gaia.dir");
+const GAIA_ALLAPPDIRS = Services.prefs.getCharPref("extensions.gaia.allappdirs");
 const GAIA_LOCALES_PATH = Services.prefs.getCharPref("extensions.gaia.locales_debug_path");
 const GAIA_DEVICE_PIXEL_SUFFIX = Services.prefs.getCharPref("extensions.gaia.device_pixel_suffix");
 // -GAIA
@@ -64,8 +65,14 @@ var CC = Components.Constructor;
 
 const PR_UINT32_MAX = Math.pow(2, 32) - 1;
 
+const env = Cc['@mozilla.org/process/environment;1'].
+            getService(Ci.nsIEnvironment);
+
+let debugEnv = env.get('DEBUG');
+
 /** True if debugging output is enabled, false otherwise. */
-var DEBUG = false; // non-const *only* so tweakable in server tests
+// non-const *only* so tweakable in server tests
+var DEBUG = debugEnv === '*' || debugEnv.includes('httpd');
 
 /** True if debugging output should be timestamped. */
 var DEBUG_TIMESTAMP = false; // non-const so tweakable in server tests
@@ -1454,6 +1461,9 @@ RequestReader.prototype =
 
             if (!file || !file.exists() || !file.isFile()) {
               var applicationName = host.split(".")[0];
+              if (applicationName === 'theme') {
+                applicationName = 'default-theme';
+              }
 
               // find the file path depending on the application name
               var filePath = this._findRealPath(applicationName);
@@ -1463,12 +1473,17 @@ RequestReader.prototype =
               }
 
               if (!file || !file.exists()) {
-                request._path = filePath + oldPath;
                 let foundL10nFile = this._findLocalizationPath();
                 if (!foundL10nFile) {
                   // find the file path in build_stage instead.
                   var stageFilePath = this._findStageRealPath(applicationName);
-                  request._path = stageFilePath + oldPath;
+                  try {
+                    file = _handler._getFileForPath(stageFilePath + oldPath);
+                    if (file && file.exists()) {
+                      request._path = stageFilePath + oldPath;
+                    }
+                  } catch(e) {
+                  }
                 }
               } else {
                 request._path = filePath + oldPath;
@@ -1523,7 +1538,6 @@ RequestReader.prototype =
 
   /**
    * Try to find out real path of apps,
-   * according to GAIA_APP_RELATIVEPATH provided by Makefile.
    */
   _findRealPath: function(appName) {
     if (this._realPath) {
@@ -1532,15 +1546,16 @@ RequestReader.prototype =
 
     this._realPath = {};
 
-    var appPathList = GAIA_APP_RELATIVEPATH.trim().split(" ");
+    var appPathList = GAIA_ALLAPPDIRS.trim().split(" ");
     for (var i = 0; i < appPathList.length; i++) {
-      var currentAppName = appPathList[i].split("/")[1];
+      var relativePath = appPathList[i].substr(GAIA_DIR.length + 1),
+          currentAppName = relativePath.split("/")[1];
 
       if (!currentAppName) {
         continue;
       }
 
-      this._realPath[currentAppName] = appPathList[i];
+      this._realPath[currentAppName] = relativePath;
     }
     return "/" + this._realPath[appName];
   },

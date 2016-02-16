@@ -4,21 +4,6 @@ define(function(require, exports) {
   // ---------------------------------------------------------
   // Constants
 
-  exports.DAYS = [
-    'monday', 'tuesday', 'wednesday', 'thursday', 'friday',
-    'saturday', 'sunday'
-  ];
-
-  exports.RDAYS = exports.DAYS.map(function(_, n) {
-    return n;
-  });
-
-  exports.WEEKDAYS = [0, 1, 2, 3, 4].map(function(x) {
-    return exports.DAYS[x];
-  });
-
-  exports.WEEKENDS = [5, 6].map(function(x) {
-    return exports.DAYS[x];
-  });
-
+  // Random day that happens to be Sunday
+  exports.KNOWN_SUNDAY = new Date(2015, 8, 20);
 });

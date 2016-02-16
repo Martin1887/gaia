@@ -21,7 +21,6 @@ module.exports.SoundsController = SoundsController;
  * @param {App} app [description]
  */
 function SoundsController(app) {
-  debug('initializing');
   var list = app.settings.sounds.get('list');
   this.sounds = new Sounds(list);
   this.app = app;
@@ -31,7 +30,9 @@ function SoundsController(app) {
 
 SoundsController.prototype.bindEvents = function() {
   this.app.on('change:recording', this.onRecordingChange.bind(this));
+  this.app.on('camera:willrecord', this.sounds.player('recordingStart'));
   this.app.on('camera:shutter', this.sounds.player('shutter'));
+  this.app.on('countdown:immanent', this.sounds.player('countdown'));
 };
 
 /**
@@ -40,8 +41,9 @@ SoundsController.prototype.bindEvents = function() {
  * @private
  */
 SoundsController.prototype.onRecordingChange = function(recording) {
-  if (recording) { this.sounds.play('recordingStart'); }
-  else { this.sounds.play('recordingEnd'); }
+  if (!recording) {
+    this.sounds.play('recordingEnd');
+  }
 };
 
 });

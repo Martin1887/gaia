@@ -1,8 +1,12 @@
+'use strict';
+/* global GestureDetector, ImageUtils */
+
 window.onload = function() {
   navigator.mozSetMessageHandler('activity', function handler(activityRequest) {
     var activityName = activityRequest.source.name;
-    if (activityName !== 'share' && activityName !== 'setwallpaper')
+    if (activityName !== 'share' && activityName !== 'setwallpaper') {
       return;
+    }
     startShare(activityRequest);
   });
 
@@ -22,6 +26,39 @@ window.onload = function() {
   var scale;
   var previewImage = document.getElementById('previewImage');
 
+  // For the computations below, we need to know the full size of the screen
+  // in device pixels and the size of the window in CSS pixels. (The window
+  // and screen sizes can be different if there is a software home button.)
+  // We also need to ensure that the dimensions match the default orientation
+  // of the screen, even if the user is holding the device in a different
+  // orientation, and we want this to work for both phones (portrait) and
+  // tablets (landscape). This app is supposed to be locked to the default
+  // device orientation, but when it is launched as an activity from a
+  // different orientation sometimes it starts up in the wrong screen and
+  // window size. So we need to be careful to work around that window
+  // management bug, too.
+  var screenWidth, screenHeight;
+  var windowWidth, windowHeight;
+  if (screen.mozOrientation && screen.mozOrientation.startsWith('landscape')) {
+    // Since our manifest locks us to default orientation, mozOrientation
+    // should return that default orientation. If landscape then width is
+    // the larger dimension
+    screenWidth = Math.max(screen.width, screen.height);
+    windowWidth = Math.max(window.innerWidth, window.innerHeight);
+    screenHeight = Math.min(screen.width, screen.height);
+    windowHeight = Math.min(window.innerWidth, window.innerHeight);
+  } else {
+    // Otherwise, portrait is the default and width is the smaller dimension
+    screenWidth = Math.min(screen.width, screen.height);
+    windowWidth = Math.min(window.innerWidth, window.innerHeight);
+    screenHeight = Math.max(screen.width, screen.height);
+    windowHeight = Math.max(window.innerWidth, window.innerHeight);
+  }
+
+  // For the screen size we care about device pixels, not CSS pixels
+  screenWidth = Math.ceil(screenWidth * window.devicePixelRatio);
+  screenHeight = Math.ceil(screenHeight * window.devicePixelRatio);
+
   function startShare(request) {
     cancelButton.addEventListener('click', cancelShare);
 
@@ -31,30 +68,61 @@ window.onload = function() {
     blob = activity.source.data.blobs[0];
     url = URL.createObjectURL(blob);
 
-    previewImage.onload = function() {
-      var scalex = window.innerWidth / previewImage.width;
-      var scaley = window.innerHeight / previewImage.height;
+    // Find out the size and type of the image without decoding it.
+    // If it is a really big jpeg, we'll need to downsample it while
+    // decoding it so we don't run out of memory.
+    ImageUtils.getSizeAndType(blob).then(gotImageData, imageDataError);
 
-      previewImage.hidden = false;
-      scale = Math.max(scalex, scaley);
+    function imageDataError(err) {
+      console.error('Could not set wallpaper:', err);
+      activity.postError('Could not set wallpaper: ' + err);
+      endShare();
+    }
 
-      // The width is unsigned long. When assigning to width, we need to round
-      // off the value to prevent the round down problem of height.
-      previewImage.width = Math.round(previewImage.width * scale);
+    function gotImageData(imgdata) {
+      if (imgdata.type === ImageUtils.JPEG) {
+        var scale = Math.max(screenWidth / imgdata.width,
+                             screenHeight / imgdata.height);
+        var fragment = ImageUtils.Downsample.sizeNoMoreThan(scale);
+        loadImage(url, fragment);
+      }
+      else {
+        loadImage(url);
+      }
+    }
 
-      limitX = window.innerWidth - previewImage.width;
-      limitY = window.innerHeight - previewImage.height;
+    function loadImage(url, fragment) {
+      previewImage.src = url + (fragment ? fragment : '');
 
-      posX = Math.round(limitX / 2);
-      posY = Math.round(limitY / 2);
-      previewImage.style.transform =
-        'translate(' + posX + 'px, ' + posY + 'px)';
+      previewImage.onload = function() {
+        previewImage.hidden = false;
 
-      setButton.addEventListener('click', scaleImage);
-      previewImage.addEventListener('pan', moveBackground);
-    };
+        // Compute a scale that will make the image at least as big as
+        // the screen in both dimensions.
+        var scalex = windowWidth / previewImage.width;
+        var scaley = windowHeight / previewImage.height;
+        scale = Math.max(scalex, scaley);
 
-    previewImage.src = url;
+        // Apply that scale to the image. Note that scaling width will
+        // also alter the height to match.
+        previewImage.width = Math.round(previewImage.width * scale);
+
+        // One dimension is now probably bigger than the screen, so figure
+        // out how to center the image on the screen and compute how much
+        // the user will be able to pan the image left and right or up
+        // and down.
+        limitX = windowWidth - previewImage.width;
+        limitY = windowHeight - previewImage.height;
+
+        posX = Math.round(limitX / 2);
+        posY = Math.round(limitY / 2);
+        previewImage.style.transform =
+          'translate(' + posX + 'px, ' + posY + 'px)';
+
+        setButton.addEventListener('click', scaleImage);
+        previewImage.addEventListener('pan', moveBackground);
+      };
+    }
   }
 
   function moveBackground(evt) {
@@ -78,15 +146,21 @@ window.onload = function() {
   }
 
   function scaleImage() {
+      // Disable set wallpaper button to prevent hammering
+      // and causing multiple calls to scaleImage.
+      setButton.disabled = true;
+
+      // Create a canvas to have an image that is exactly
+      // the size of the screen in device pixels.
       var canvas = document.createElement('canvas');
       // To have an image which matches the device pixel, we need to multiply
       // window.devicePixelRatio.
-      canvas.width = window.innerWidth * window.devicePixelRatio;
-      canvas.height = window.innerHeight * window.devicePixelRatio;
+      canvas.width = screenWidth;
+      canvas.height = screenHeight;
       var ctx = canvas.getContext('2d');
 
-      var w = Math.round(window.innerWidth / scale);
-      var h = Math.round(window.innerHeight / scale);
+      var w = Math.round(windowWidth / scale);
+      var h = Math.round(windowHeight / scale);
       var x = Math.round(-1 * posX / scale);
       var y = Math.round(-1 * posY / scale);
 

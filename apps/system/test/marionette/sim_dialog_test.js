@@ -8,13 +8,10 @@ marionette('Sim Dialog:', function() {
   var submitBtn = '#simpin-dialog button[type=submit]';
 
   var client = marionette.client({
-    prefs: {
-      'focusmanager.testmode': true,
-      'dom.w3c_touch_events.enabled': 1
-    },
-    settings: {
-      'ftu.manifestURL': null,
-      'lockscreen.enabled': false
+    profile: {
+      prefs: {
+        'focusmanager.testmode': true
+      }
     }
   });
 
@@ -41,8 +38,8 @@ marionette('Sim Dialog:', function() {
   test.skip('Input is shown with error', function() {
 
     client.executeScript(loadScripts, [[
-      'js/mock_simslot.js',
-      'js/mock_simslot_manager.js'
+      '../../../../shared/unit/mocks/mock_simslot.js',
+      '../../../../shared/unit/mocks/mock_simslot_manager.js'
     ]]);
 
     client.executeScript(function(path) {
@@ -56,10 +53,7 @@ marionette('Sim Dialog:', function() {
 
       win.SimPinDialog.init();
       win.SimPinDialog.show(slot);
-      win.SimPinDialog.handleError({
-        retryCount: 1,
-        lockType: 'pin'
-      });
+      win.SimPinDialog.handleError('pin', 1);
     });
 
     client.findElement(pinInput).tap();

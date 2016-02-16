@@ -35,6 +35,26 @@ define(function(require) {
     return Math.round(volume * SYSTEM_VOLUME_MAX);
   }
 
+  function requestAlarmSystemVolume() {
+    // Asynchronously load the alarm volume from mozSettings.
+    return new Promise(function(resolve, reject) {
+      var lock = navigator.mozSettings.createLock();
+      var req = lock.get(VOLUME_SETTING);
+      req.onsuccess = function() {
+        var volume = systemVolumeToFloat(req.result[VOLUME_SETTING]);
+        if (isValidVolume(volume)) {
+          globalVolumeManager._volume = volume;
+          resolve(volume);
+        }
+      };
+
+      req.onerror = function() {
+        var DEFAULT_VOLUME = 1.0;
+        resolve(DEFAULT_VOLUME);
+      };
+    });
+  }
+
   function VolumeManager() {
     this.VOLUME_KEY = 'defaultAlarmVolume';
     this.DEFAULT_VOLUME = 1.0;
@@ -44,16 +64,6 @@ define(function(require) {
       navigator.mozSettings.addObserver(
         VOLUME_SETTING,
         this.onSystemAlarmVolumeChange.bind(this));
-
-      // Asynchronously load the alarm volume from mozSettings.
-      var lock = navigator.mozSettings.createLock();
-      var req = lock.get(VOLUME_SETTING);
-      req.onsuccess = function() {
-        var volume = systemVolumeToFloat(req.result[VOLUME_SETTING]);
-        if (isValidVolume(volume)) {
-          this._volume = volume; // Do not use the setter here.
-        }
-      }.bind(this);
     }
   }
 
@@ -102,14 +112,9 @@ define(function(require) {
    * is lazy-loading, so that you can instantiate it immediately;
    * Audio objects are not actually created or loaded until you need
    * to play a sound.
-   *
-   * @param {function} [opts.interruptHandler]
-   *   Optional callback/EventTarget to handle the 'mozinterruptbegin' event.
    */
-  function AudioPlayer(opts) {
-    opts = opts || {};
+  function AudioPlayer() {
     this._audio = null;
-    this._interruptHandler = opts.interruptHandler || null;
   }
 
   AudioPlayer.prototype = {
@@ -156,16 +161,6 @@ define(function(require) {
         this._audio = new Audio();
         this._audio.mozAudioChannelType = 'alarm';
         this._audio.loop = true;
-        this._audio.addEventListener('mozinterruptbegin', this);
-      }
-    },
-
-    /**
-     * @private
-     */
-    handleEvent: function(e) {
-      if (e.type === 'mozinterruptbegin' && this._interruptHandler) {
-        this._interruptHandler(e);
       }
     }
   };
@@ -174,11 +169,14 @@ define(function(require) {
     getAlarmVolume: function() {
       return globalVolumeManager.volume;
     },
+    requestAlarmVolume: function() {
+      return requestAlarmSystemVolume();
+    },
     setAlarmVolume: function(volume, cb) {
       globalVolumeManager.setVolume(volume, cb);
     },
-    createAudioPlayer: function(opts) {
-      return new AudioPlayer(opts);
+    createAudioPlayer: function() {
+      return new AudioPlayer();
     },
     // Exposed for tests:
     systemVolumeToFloat: systemVolumeToFloat,

@@ -1,9 +1,8 @@
 define(function(require, exports, module) {
   'use strict';
 
-  var listener = require('vendor/orientation');
-  var body = document.body;
-  var classes = body.classList;
+  var listener = require('device-orientation');
+  var classes = document.body.classList;
   var current = 0;
 
   listener.on('orientation', onOrientationChange);
@@ -30,8 +29,37 @@ define(function(require, exports, module) {
   }
 
   function lock() {
-    screen.mozLockOrientation('portrait-primary');
+    screen.mozLockOrientation('default');
     listener.start();
+  }
+
+  function rationalize(sensorAngle, angle) {
+    if (typeof(angle) === 'undefined') {
+      angle = current;
+    }
+
+    // The result of this operation is an angle from 0..270 degrees,
+    // in steps of 90 degrees. Angles are rounded to the nearest
+    // magnitude, so 45 will be rounded to 90, and -45 will be rounded
+    // to -90 (not 0).
+    var r = angle + sensorAngle;
+    if (r >= 0) {
+      r += 45;
+    } else {
+      r -= 45;
+    }
+    r /= 90;
+    if (r >= 0) {
+      r = Math.floor(r);
+    } else {
+      r = Math.ceil(r);
+    }
+    r %= 4;
+    r *= 90;
+    if (r < 0) {
+      r += 360;
+    }
+    return r;
   }
 
   /**
@@ -45,6 +73,7 @@ define(function(require, exports, module) {
     stop: listener.stop,
     unlock: unlock,
     lock: lock,
+    rationalize: rationalize,
     get: function() {
       return current;
     }

@@ -14,23 +14,31 @@ Settings.prototype = {
 
   setupAdvancedSettings: function() {
     this.client
-      .findElement('button.settings')
+      .findElement('li.settings')
       .click();
   },
 
   sync: function() {
     this
-      .findElement('[role="toolbar"] .sync')
+      .findElement('[role="tablist"] .sync')
       .click();
+  },
+
+  calendars: function() {
+    return this
+      .findElements('.calendars .name')
+      .map(function(element) {
+        return element.text();
+      });
   },
 
   toggleCalendar: function(name) {
     name = name || 'Offline calendar';
     this
-      .findElements('.calendars > li')
-      .filter(function(el) {
-        return el.findElement('.name').text() === name;
+      .findElements('gaia-checkbox label')
+      .filter(function(element) {
+        return element.text() === name;
       })[0]
-      .findElement('.pack-checkbox').click();
+      .click();
   }
 };

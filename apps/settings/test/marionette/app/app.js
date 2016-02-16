@@ -1,27 +1,30 @@
 'use strict';
-var Base = require('./base'),
-    RootPanel = require('./regions/root'),
-    BluetoothPanel = require('./regions/bluetooth'),
-    DoNotTrackPanel = require('./regions/do_not_track'),
-    HotspotPanel = require('./regions/hotspot'),
-    HotspotSettingsPanel = require('./regions/hotspot_settings'),
-    SupportPanel = require('./regions/support'),
-    NotificationsPanel = require('./regions/notifications'),
-    ImprovePanel = require('./regions/improve'),
-    BatteryPanel = require('./regions/battery'),
-    FeedbackPanel = require('./regions/feedback'),
-    SoundPanel = require('./regions/sound'),
-    NotificationsPanel = require('./regions/notifications'),
-    LanguagePanel = require('./regions/language'),
-    NotificationsPanel = require('./regions/notifications'),
-    ScreenLockPanel = require('./regions/screen_lock'),
-    AppPermissionPanel = require('./regions/app_permission'),
-    DisplayPanel = require('./regions/display'),
-    AppStoragePanel = require('./regions/app_storage'),
-    MediaStoragePanel = require('./regions/media_storage');
 
-// origin of the settings app
-var ORIGIN = 'app://settings.gaiamobile.org';
+var AppStoragePanel = require('./regions/app_storage');
+var AppPermissionPanel = require('./regions/app_permission');
+var Base = require('./base');
+var BatteryPanel = require('./regions/battery');
+var BluetoothPanel = require('./regions/bluetooth');
+var BrowsingPrivacyPanel = require('./regions/browsing_privacy');
+var DateTimePanel = require('./regions/date_time');
+var DeveloperPanel = require('./regions/developer');
+var DeviceInfoPanel = require('./regions/device_info');
+var DisplayPanel = require('./regions/display');
+var DoNotTrackPanel = require('./regions/do_not_track');
+var FeedbackPanel = require('./regions/feedback');
+var HotspotPanel = require('./regions/hotspot');
+var HotspotSettingsPanel = require('./regions/hotspot_settings');
+var ImprovePanel = require('./regions/improve');
+var KeyboardPanel = require('./regions/keyboard');
+var LanguagePanel = require('./regions/language');
+var MediaStoragePanel = require('./regions/media_storage');
+var MessagePanel = require('./regions/message');
+var NotificationsPanel = require('./regions/notifications');
+var RootPanel = require('./regions/root');
+var ScreenLockPanel = require('./regions/screen_lock');
+var SoundPanel = require('./regions/sound');
+var SupportPanel = require('./regions/support');
+var UsbStoragePanel = require('./regions/usb_storage');
 
 /**
  * Abstraction around settings app
@@ -31,31 +34,41 @@ var ORIGIN = 'app://settings.gaiamobile.org';
 function Settings(client) {
   this.client = client;
   // Call the Base constructor to initiate base class.
-  Base.call(this, this.client, ORIGIN, Settings.Selectors);
+  Base.call(this, this.client, Settings.ORIGIN, Settings.Selectors);
 }
+
+// origin of the settings app
+Settings.ORIGIN = 'app://settings.gaiamobile.org';
 
 module.exports = Settings;
 
 Settings.Selectors = {
   'menuItemsSection': '#root',
+  'appPermissionMenuItem': '#menuItem-appPermissions',
+  'appStorageMenuItem': '.menuItem-applicationStorage',
+  'batteryMenuItem': '.menuItem-battery',
   'bluetoothMenuItem': '#menuItem-bluetooth',
+  'browsingPrivacyMenuItem': '#menuItem-browsingPrivacy',
+  'dateTimeMenuItem': '#menuItem-dateAndTime',
+  'developerMenuItem': '#menuItem-developer',
+  'deviceInfoMenuItem': '#menuItem-deviceInfo',
+  'displayMenuItem': '#menuItem-display',
   'doNotTrackMenuItem': '#menuItem-doNotTrack',
+  'feedbackMenuItem': 'a[href="#improveBrowserOS-chooseFeedback"]',
   'hotspotMenuItem': '#menuItem-internetSharing',
   'hotspotPanel': '#hotspot',
   'hotspotSettingsTrigger': '#hotspot-settings-section button',
-  'supportMenuItem': '#menuItem-help',
-  'batteryMenuItem': '#menuItem-battery',
-  'notificationsMenuItem': '#menuItem-notifications',
-  'improvePanel': '#menuItem-improveBrowserOS',
+  'improveMenuItem': '#menuItem-improveBrowserOS',
   'improveSection': '#improveBrowserOS',
-  'feedbackPanel': 'button[data-href="#improveBrowserOS-chooseFeedback"]',
-  'soundMenuItem': '#menuItem-sound',
-  'languageMenuItem': '#menuItem-languageAndRegion',
+  'keyboardMenuItem': '#menuItem-keyboard',
+  'languageMenuItem': '.menuItem-languageAndRegion',
+  'mediaStorageMenuItem': '.menuItem-mediaStorage',
+  'messageMenuItem': '#menuItem-messagingSettings',
+  'notificationsMenuItem': '#menuItem-notifications',
   'screenLockMenuItem': '#menuItem-screenLock',
-  'appPermissionPanel': '#menuItem-appPermissions',
-  'displayMenuItem': '#menuItem-display',
-  'appStorageMenuItem': '#menuItem-applicationStorage',
-  'mediaStorageMenuItem': '#menuItem-mediaStorage'
+  'soundMenuItem': '#menuItem-sound',
+  'supportMenuItem': '#menuItem-help',
+  'usbStorageMenuItem': '.menuItem-enableStorage'
 };
 
 Settings.prototype = {
@@ -80,6 +93,13 @@ Settings.prototype = {
     this._doNotTrackPanel = this._doNotTrackPanel ||
       new DoNotTrackPanel(this.client);
     return this._doNotTrackPanel;
+  },
+
+  get browsingPrivacyPanel() {
+    this.openPanel('browsingPrivacyMenuItem');
+    this._browsingPrivacyPanel = this._browsingPrivacyPanel ||
+      new BrowsingPrivacyPanel(this.client);
+    return this._browsingPrivacyPanel;
   },
 
   get hotspotPanel() {
@@ -108,6 +128,13 @@ Settings.prototype = {
     this._batteryPanel = this._batteryPanel ||
       new BatteryPanel(this.client);
     return this._batteryPanel;
+  },
+
+  get dateTimePanel() {
+    this.openPanel('dateTimeMenuItem');
+    this._dateTimePanel = this._dateTimePanel ||
+      new DateTimePanel(this.client);
+    return this._dateTimePanel;
   },
 
   get notificationsPanel() {
@@ -146,21 +173,21 @@ Settings.prototype = {
   },
 
   get improvePanel() {
-    this.openPanel.call(this, 'improvePanel');
+    this.openPanel.call(this, 'improveMenuItem');
     this._improvePanel = this._improvePanel ||
       new ImprovePanel(this.client);
     return this._improvePanel;
   },
 
   get feedbackPanel() {
-    this.openPanel.call(this, 'feedbackPanel', 'improveSection');
+    this.openPanel.call(this, 'feedbackMenuItem', 'improveSection');
     this._feedbackPanel =
       this._feedbackPanel || new FeedbackPanel(this.client);
     return this._feedbackPanel;
   },
 
   get appPermissionPanel() {
-    this.openPanel.call(this, 'appPermissionPanel');
+    this.openPanel.call(this, 'appPermissionMenuItem');
     this._appPermissionPanel =
       this._appPermissionPanel || new AppPermissionPanel(this.client);
     return this._appPermissionPanel;
@@ -180,6 +207,46 @@ Settings.prototype = {
     return this._mediaStoragePanel;
   },
 
+  get keyboardPanel() {
+    this.openPanel('keyboardMenuItem');
+    this._keyboardPanel = this._keyboardPanel || new KeyboardPanel(this.client);
+    return this._keyboardPanel;
+  },
+
+  get messagePanel() {
+    this.openPanel('messageMenuItem');
+    this._messagePanel = this._messagePanel || new MessagePanel(this.client);
+    return this._messagePanel;
+  },
+
+  get aboutPanel() {
+    this.openPanel('deviceInfoMenuItem');
+    this._aboutPanel = this._aboutPanel ||
+      new DeviceInfoPanel(this.client);
+    return this._aboutPanel;
+  },
+
+  get developerPanel() {
+    this.openPanel('developerMenuItem');
+    this._developerPanel = this._developerPanel ||
+      new DeveloperPanel(this.client);
+    return this._developerPanel;
+  },
+
+  get usbStoragePanel() {
+    this.openPanel('usbStorageMenuItem');
+    this._usbStoragePanel = this._usbStoragePanel ||
+      new UsbStoragePanel(this.client);
+    return this._usbStoragePanel;
+  },
+
+  set currentLanguage(value) {
+    // open the language panel
+    var languagePanel = this.languagePanel;
+    languagePanel.currentLanguage = value;
+    languagePanel.back();
+  },
+
   /**
    * @private
    */
@@ -187,11 +254,20 @@ Settings.prototype = {
     var localParentSelector = parentSelector || 'menuItemsSection';
     var menuItem = this.waitForElement(selector);
     var parentSection = this.waitForElement(localParentSelector);
+
+    // make sure it is enabled first
+    this.client.waitFor(function() {
+      return this.findElement('messageMenuItem').enabled();
+    }.bind(this));
+
+    menuItem.scriptWith(function(el) {
+      el.scrollIntoView(false);
+    });
     menuItem.tap();
     this.client.waitFor(function() {
       var loc = parentSection.location();
       var size = parentSection.size();
-      return (loc.x + size.width) === 0;
+      return Math.abs(loc.x) === size.width;
     });
   }
 };

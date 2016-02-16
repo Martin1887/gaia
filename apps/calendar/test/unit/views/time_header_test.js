@@ -1,19 +1,21 @@
+define(function(require) {
 'use strict';
 
 requireCommon('test/synthetic_gestures.js');
+var intl = require('intl');
 
-suiteGroup('Views.TimeHeader', function() {
+var TimeHeader = require('views/time_header');
+var View = require('view');
+var core = require('core');
 
+suite('Views.TimeHeader', function() {
   var subject;
-  var app;
   var controller;
   var date = new Date(2012, 0, 1);
-  var localeFormat;
   var monthTitle;
 
   suiteSetup(function() {
-    var fmt = navigator.mozL10n.DateTimeFormat();
-    localeFormat = fmt.localeFormat;
+    intl.init();
   });
 
   teardown(function() {
@@ -26,39 +28,28 @@ suiteGroup('Views.TimeHeader', function() {
     div.id = 'test';
     div.innerHTML = [
       '<div id="wrapper"></div>',
-      '<header id="time-header">',
-        '<button class="settings"></button>',
+      '<gaia-header id="time-header" action="menu">',
         '<h1></h1>',
-      '</div>'
+      '</gaia-header>'
     ].join('');
 
     document.body.appendChild(div);
 
-    app = testSupport.calendar.app();
-    controller = app.timeController;
+    controller = core.timeController;
 
-    subject = new Calendar.Views.TimeHeader({
-      app: app
-    });
+    subject = new TimeHeader();
 
     controller.move(date);
-    monthTitle = localeFormat(
-      date,
-      '%B %Y'
-    );
+    monthTitle = window.IntlHelper.get('multi-month-view-header-format').
+      format(date);
   });
 
   test('initialization', function() {
-    assert.instanceOf(subject, Calendar.View);
-    assert.equal(subject.app, app);
+    assert.instanceOf(subject, View);
     assert.ok(subject.element);
     assert.equal(
       subject.element, document.querySelector('#time-header')
     );
-  });
-
-  test('#settings', function() {
-    assert.ok(subject.settings);
   });
 
   test('#title', function() {
@@ -75,7 +66,8 @@ suiteGroup('Views.TimeHeader', function() {
 
   test('#getScale for day', function() {
     controller.move(new Date(2012, 0, 30));
-    var compare = localeFormat(new Date(2012, 0, 30), '%b %e, %A');
+    var compare = window.IntlHelper.get('day-view-header-format').
+      format(new Date(2012, 0, 30));
     var out = subject.getScale('day');
     assert.equal(out, compare);
     // 20 chars seems to be the maximum with current layout (see bug 951423)
@@ -86,7 +78,8 @@ suiteGroup('Views.TimeHeader', function() {
   test('#getScale for week', function() {
     controller.move(new Date(2012, 0, 15));
     var out = subject.getScale('week');
-    var compare = localeFormat(new Date(2012, 0, 30), '%B %Y');
+    var compare = window.IntlHelper.get('multi-month-view-header-format').
+      format(new Date(2012, 0, 30));
     assert.equal(out, compare);
   });
 
@@ -94,24 +87,21 @@ suiteGroup('Views.TimeHeader', function() {
   test('#getScale for week - multiple months', function() {
     controller.move(new Date(2012, 0, 30));
     var out = subject.getScale('week');
-    var compare = localeFormat(
-      new Date(2012, 0, 30),
-      '%b %Y'
-    );
-    compare += ' ' + localeFormat(
-      new Date(2012, 1, 4),
-      '%b %Y'
-    );
+    var formatter = window.IntlHelper.get('multi-month-view-header-format');
+    var compare = formatter.format(new Date(2012, 0, 30));
+    compare += ' ' + formatter.format(new Date(2012, 1, 4));
     assert.equal(out, compare);
   });
 
   test('#getScale for week - month ending on Wednesday', function() {
     controller.move(new Date(2013, 6, 30));
     var out = subject.getScale('week');
-    // even tho the week ends on the next month the days displayed on calendar
-    // all belong to same month (since we break the week into Sun-Wed and
-    // Thr-Sat)
-    assert.equal(out, localeFormat(new Date(2013, 6, 1), '%B %Y'));
+    var formatter = window.IntlHelper.get('multi-month-view-header-format');
+    assert.equal(
+      out,
+      formatter.format(new Date(2013, 6, 28)) + ' ' +
+      formatter.format(new Date(2013, 7, 3))
+    );
   });
 
   test('#_updateTitle', function() {
@@ -174,7 +164,7 @@ suiteGroup('Views.TimeHeader', function() {
 
       assert.ok(calledWith);
     });
-
   });
+});
 
 });

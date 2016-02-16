@@ -3,6 +3,7 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 'use strict';
+/* globals marionetteScriptFinished, waitFor */
 
 var GaiaApps = {
 
@@ -14,12 +15,11 @@ var GaiaApps = {
     let req = navigator.mozApps.mgmt.getAll();
     req.onsuccess = function() {
       marionetteScriptFinished(req.result);
-    }
+    };
   },
 
-  getRunningApps: function() {
-    let manager = window.wrappedJSObject.AppWindowManager || window.wrappedJSObject.WindowManager;
-    let runningApps = ('getApps' in manager) ? manager.getApps() : manager.getRunningApps();
+  getRunningApps: function(includeSystemApps) {
+    let runningApps = GaiaApps.getApps(includeSystemApps);
     // Return a simplified version of the runningApps object which can be
     // JSON-serialized.
     let apps = {};
@@ -30,19 +30,21 @@ var GaiaApps = {
                 anApp[key] = runningApps[app][key];
             }
         }
-        apps[app.origin] = anApp;
+        apps[runningApps[app].origin] = anApp;
     }
     return apps;
   },
 
-  getApps: function() {
-    let manager = window.wrappedJSObject.AppWindowManager || window.wrappedJSObject.WindowManager;
-    let apps = ('getApps' in manager) ? manager.getApps() : manager.getRunningApps();
+  getApps: function(includeSystemApps) {
+    let service = window.wrappedJSObject.Service;
+    let apps = includeSystemApps ?
+                service.query('getApps') :
+                service.query('snapshot');
     return apps;
   },
 
   getRunningAppOrigin: function(name) {
-    let apps = GaiaApps.getApps();
+    let apps = GaiaApps.getApps(true);
 
     for (let id in apps) {
       if (apps[id].name == name) {
@@ -53,19 +55,12 @@ var GaiaApps = {
     return undefined;
   },
 
-  getAppByName: function(name) {
-    let apps = GaiaApps.getApps();
-
-    for (let id in apps) {
-      if (apps[id].name == name) {
-        return apps[id];
-      }
-    }
-  },
-
   getPermission: function(appName, permissionName) {
     GaiaApps.locateWithName(appName, function(app) {
-      console.log("Getting permission '" + permissionName + "' for " + appName);
+      console.log('Getting permission \'' +
+        permissionName +
+        '\' for ' +
+        appName);
       var mozPerms = navigator.mozPermissionSettings;
       var result = mozPerms.get(
         permissionName, app.manifestURL, app.origin, false
@@ -76,8 +71,8 @@ var GaiaApps = {
 
   setPermission: function(appName, permissionName, value) {
     GaiaApps.locateWithName(appName, function(app) {
-      console.log("Setting permission '" + permissionName + "' for " +
-        appName + "to '" + value + "'");
+      console.log('Setting permission \'' + permissionName + '\' for ' +
+        appName + 'to \'' + value + '\'');
       var mozPerms = navigator.mozPermissionSettings;
       mozPerms.set(
         permissionName, value, app.manifestURL, app.origin, false
@@ -86,7 +81,20 @@ var GaiaApps = {
     });
   },
 
-  sendLocateResponse: function(aCallback, app, appName, entryPoint) {
+  setPermissionByUrl: function(manifestUrl, permissionName, value, entryPoint) {
+    GaiaApps.locateWithManifestURL(manifestUrl, entryPoint, function(app) {
+      console.log('Setting permission \'' + permissionName + '\' for ' +
+        manifestUrl + 'to \'' + value + '\'');
+      var mozPerms = navigator.mozPermissionSettings;
+      mozPerms.set(
+        permissionName, value, app.manifestURL, app.origin, false
+      );
+      marionetteScriptFinished();
+    });
+  },
+
+  sendLocateResponse:
+  function(aCallback, app, appName, launchPath, entryPoint) {
     var callback = aCallback || marionetteScriptFinished;
     if (callback === marionetteScriptFinished) {
       var result = false;
@@ -100,34 +108,68 @@ var GaiaApps = {
       }
       callback(result);
     } else {
-      callback(app, appName, entryPoint);
+      callback(app, appName, launchPath, entryPoint);
     }
   },
 
   locateWithName: function(name, aCallback) {
     var callback = aCallback || marionetteScriptFinished;
-    let apps = window.wrappedJSObject.applications || window.wrappedJSObject.Applications;
+    let apps = window.wrappedJSObject.applications ||
+                window.wrappedJSObject.Applications;
     let installedApps = apps.installedApps;
     let normalizedSearchName = GaiaApps.normalizeName(name);
 
     for (let manifestURL in installedApps) {
       let app = installedApps[manifestURL];
-      let origin = null;
       let entryPoints = app.manifest.entry_points;
       if (entryPoints) {
         for (let ep in entryPoints) {
           let currentEntryPoint = entryPoints[ep];
           let appName = currentEntryPoint.name;
+          let launchPath = currentEntryPoint.launch_path;
+          let locales = currentEntryPoint.locales;
 
           if (normalizedSearchName === GaiaApps.normalizeName(appName)) {
-            return GaiaApps.sendLocateResponse(callback, app, appName, ep);
+            return GaiaApps.sendLocateResponse(callback,
+              app,
+              appName,
+              launchPath,
+              ep);
+          } else if (locales) {
+            for (let id in locales) {
+              let localisedAppName = locales[id].name;
+              if (localisedAppName && normalizedSearchName ===
+                GaiaApps.normalizeName(localisedAppName)) {
+                return GaiaApps.sendLocateResponse(callback,
+                  app,
+                  appName,
+                  launchPath,
+                  ep);
+              }
+            }
           }
         }
       } else {
         let appName = app.manifest.name;
+        let launchPath = app.manifest.launch_path;
+        let locales = app.manifest.locales;
 
         if (normalizedSearchName === GaiaApps.normalizeName(appName)) {
-          return GaiaApps.sendLocateResponse(callback, app, appName);
+          return GaiaApps.sendLocateResponse(callback,
+            app,
+            appName,
+            launchPath);
+        } else if (locales) {
+          for (let id in locales) {
+            let localisedAppName = locales[id].name;
+            if (localisedAppName && normalizedSearchName ===
+              GaiaApps.normalizeName(localisedAppName)) {
+              return GaiaApps.sendLocateResponse(callback,
+                app,
+                appName,
+                launchPath);
+            }
+          }
         }
       }
     }
@@ -136,35 +178,40 @@ var GaiaApps = {
 
   locateWithManifestURL: function(manifestURL, entryPoint, aCallback) {
     var callback = aCallback || marionetteScriptFinished;
-    var apps = window.wrappedJSObject.applications || window.wrappedJSObject.Applications;
+    var apps = window.wrappedJSObject.applications ||
+                window.wrappedJSObject.Applications;
     var app = apps.getByManifestURL(manifestURL);
-    var appName;
+    var launchPath;
 
-    if (entryPoint) {
-      if (app.manifest.entry_points[entryPoint]) {
-        appName = app.manifest.entry_points[entryPoint].name;
-      } else {
-        app = null;
-      }
+    if (app != null) {
+      GaiaApps._formatApp(app, manifestURL, entryPoint, callback, launchPath);
     } else {
-      appName = app.manifest.name;
+      callback(false);
     }
-
-    GaiaApps.sendLocateResponse(callback, app, appName, entryPoint);
+  },
+  _formatApp: function(app, manifestURL, entryPoint, callback, launchPath) {
+      if (entryPoint) {
+        if (app.manifest.entry_points[entryPoint]) {
+          launchPath = app.manifest.entry_points[entryPoint].launch_path;
+        } else {
+          app = null;
+        }
+      } else {
+        launchPath = app.manifest.launch_path;
+      }
+      GaiaApps.sendLocateResponse(callback, app, 
+        manifestURL, launchPath, entryPoint); 
   },
 
   // Returns the number of running apps.
-  numRunningApps: function() {
-    let count = 0;
-    let apps = GaiaApps.getApps();
-    for (let id in apps) {
-      count++;
-    }
-    return count;
+  // if includeSystemApps is true then system always-running
+  // apps (eg Homescreen) will be counted
+  numRunningApps: function(includeSystemApps) {
+    return Object.keys(GaiaApps.getApps(includeSystemApps)).length;
   },
 
   isRunning: function(origin) {
-    var apps = GaiaApps.getApps();
+    var apps = GaiaApps.getApps(true);
     for (var id in apps) {
       if (apps[id].origin === origin) {
         return true;
@@ -184,7 +231,7 @@ var GaiaApps = {
         window.removeEventListener('appterminated', gt_onAppTerminated);
         waitFor(
           function() {
-            console.log("app with origin '" + aOrigin + "' has terminated");
+            console.log('app with origin \'' + aOrigin + '\' has terminated');
             callback(true);
           },
           function() {
@@ -192,13 +239,13 @@ var GaiaApps = {
           }
         );
       });
-      console.log("terminating app with origin '" + aOrigin + "'");
-      let manager = window.wrappedJSObject.AppWindowManager || window.wrappedJSObject.WindowManager;
-      manager.kill(aOrigin);
+      console.log('terminating app with origin \'' + aOrigin + '\'');
+      window.wrappedJSObject.Service.request('AppWindowManager:kill', aOrigin);
     }
   },
 
-  // Kills all running apps, except the homescreen.
+  // Kills all running apps that may be killed by the user, defined as
+  // being accessible by the Cards View/Stack Manager
   killAll: function() {
     let originsToClose = [];
     let that = this;
@@ -206,9 +253,7 @@ var GaiaApps = {
     let apps = GaiaApps.getApps();
     for (let id in apps) {
       let origin = apps[id].origin;
-      if (origin.indexOf('homescreen') == -1) {
-        originsToClose.push(origin);
-      }
+      originsToClose.push(origin);
     }
 
     if (!originsToClose.length) {
@@ -229,38 +274,47 @@ var GaiaApps = {
     );
   },
 
-  launch: function(app, appName, entryPoint) {
+  launch: function(app, appName, launchPath, entryPoint) {
     if (app) {
+      let manifestURL = app.manifestURL;
       let origin = app.origin;
 
       let sendResponse = function() {
-        let appWindow = GaiaApps.getAppByName(appName);
-        let origin = appWindow.origin;
-        let result = {
-          frame: (appWindow.browser) ? appWindow.browser.element : appWindow.frame.firstChild,
-          src: (appWindow.browser) ? appWindow.browser.element.src : appWindow.iframe.src,
-          name: appWindow.name,
-          origin: origin};
+        let result = GaiaApps.getDisplayedApp();
         marionetteScriptFinished(result);
       };
 
-      if (GaiaApps.getActiveApp().origin == origin) {
-        console.log("app with origin '" + origin + "' is already running");
+      let displayedApp = GaiaApps.getDisplayedApp();
+      if ((displayedApp.manifestURL == manifestURL &&
+          displayedApp.entryPoint == entryPoint) ||
+          (!displayedApp.manifestURL && displayedApp.origin == origin)) {
+        console.log(`app with origin: ${displayedApp.origin} and
+          manifestURL: ${displayedApp.manifestURL} and
+          entryPoint: ${displayedApp.entryPoint} is already running`);
         sendResponse();
       } else {
-        window.addEventListener('appopen', function appOpen() {
-          window.removeEventListener('appopen', appOpen);
+        window.addEventListener('windowopened', function appOpen() {
+          window.removeEventListener('windowopened', appOpen);
           waitFor(
             function() {
-              console.log("app with origin '" + origin + "' has launched");
+              console.log(`app with origin: ${displayedApp.origin} and
+                manifestURL: ${displayedApp.manifestURL} and
+                entryPoint: ${displayedApp.entryPoint} has launched`);
               sendResponse();
             },
             function() {
-              return GaiaApps.getActiveApp().name == appName;
+              // wait for the displayed app to have expected manifestURL/origin
+              let displayedApp = GaiaApps.getDisplayedApp();
+              if (displayedApp.manifestURL) {
+                return displayedApp.manifestURL == manifestURL &&
+                       displayedApp.entryPoint == entryPoint;
+              } else {
+                return displayedApp.origin == origin;
+              }
             }
           );
         });
-        console.log("launching app with name '" + appName + "'");
+        console.log('launching app with name \'' + appName + '\'');
         app.launch(entryPoint || null);
       }
     } else {
@@ -305,36 +359,83 @@ var GaiaApps = {
     GaiaApps.locateWithManifestURL(manifestURL, entryPoint, this.close);
   },
 
-  getActiveApp: function() {
-    let manager = window.wrappedJSObject.AppWindowManager || window.wrappedJSObject.WindowManager;
-    let app = ('getActiveApp' in manager) ? manager.getActiveApp() : manager.getCurrentDisplayedApp();
-    return app;
-  },
-
   /**
    * Returns the currently displayed app.
+   * This is more like getDisplayedFrame really,
+   * as we return what frame the user is interacting with
    */
-  displayedApp: function() {
-    let manager = window.wrappedJSObject.AppWindowManager || window.wrappedJSObject.WindowManager;
-    let app = ('getActiveApp' in manager) ? manager.getActiveApp() : manager.getCurrentDisplayedApp();
-    let origin = app.origin;
-    console.log("app with origin '" + origin + "' is displayed");
+  getDisplayedApp: function() {
+    let app = window.wrappedJSObject.Service.query('getTopMostWindow');
+    if (!app || app.isLockscreen) {
+      // fallback to app window.
+      app = window.wrappedJSObject.Service
+         .query('AppWindowManager.getActiveWindow').getTopMostWindow();
+    }
+
+    let currentEntryPoint = null;
+    // When browser is on a website, app.manifest is null
+    if (app.manifest) {
+      let entryPoints = app.manifest.entry_points;
+      if (entryPoints) {
+        for (let ep in entryPoints) {
+          if (entryPoints[ep].launch_path == app.manifest.launch_path) {
+            currentEntryPoint = ep;
+            break;
+          }
+        }
+      }
+    }
+
     let result = {
       frame: (app.browser) ? app.browser.element : app.frame.firstChild,
       src: (app.browser) ? app.browser.element.src : app.iframe.src,
       name: app.name,
-      origin: origin
+      origin: app.origin,
+      manifestURL: app.manifestURL,
+      entryPoint: currentEntryPoint
     };
-    marionetteScriptFinished(result);
+    return result;
+  },
+  /**
+  * Install the app with the specified ManifestURL
+  */
+  install: function(manifestURL) {
+    let req = navigator.mozApps.install(manifestURL);
+    req.onsuccess = function() {
+      marionetteScriptFinished(true);
+    };
+    req.onerror = function() {
+      marionetteScriptFinished(req.error);
+    };
   },
 
+  installPackage: function(manifestURL) {
+    let req = navigator.mozApps.installPackage(manifestURL);
+    req.onsuccess = function() {
+      marionetteScriptFinished(true);
+    };
+    req.onerror = function() {
+      marionetteScriptFinished(req.error);
+    };
+  },
   /**
-   * Uninstalls the app with the specified name.
-   */
-  uninstallWithName: function(name) {
-    GaiaApps.locateWithName(name, function uninstall(app) {
-      navigator.mozApps.mgmt.uninstall(app);
-      marionetteScriptFinished(false);
+  * Uninstall the app with the specified ManifestURL
+  */
+  uninstall: function(manifestURL) {
+    GaiaApps.locateWithManifestURL(manifestURL, null, function uninstall(app) {
+      if (typeof(app) !== 'object') {
+        // App is already not there, so nothing to do here
+        marionetteScriptFinished(true);
+        return;
+      }
+
+    let req = navigator.mozApps.mgmt.uninstall(app);
+    req.onsuccess = function() {
+      marionetteScriptFinished(true);
+    };
+    req.onerror = function() {
+      marionetteScriptFinished(req.error);
+    };
     });
-  }
+   }
 };

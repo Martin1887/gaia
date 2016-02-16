@@ -6,6 +6,17 @@ var Q = utils.Q;
 
 sh.initPath(utils.getEnvPath());
 
+/**
+ * detect if b2g process needs to be restarted
+ * @param  {string}  appName app name
+ * @return {bool}            true if needed
+ */
+function needsB2gRestart(appName) {
+  // b2g should be restarted if these app name is assigned by APP=appname
+  var appList = ['system'];
+  return (appList.indexOf(appName) !== -1);
+}
+
 function pushToDevice(profileFolder, remotePath, adb) {
   // MingGW on Windows takes '/remote/src' as 'c:\remote\src' which is
   // not right, so we use two slash before the remote path to prevent it.
@@ -53,22 +64,43 @@ function installSvoperapps(profileFolder, adb) {
 function installOneApp(targetFolder, buildAppName,
                        remotePath, gaiaDomain,
                        adb) {
+  // Instead of push to remote path directly, we push to temp folder and then
+  // cat to overwrite the file. This way the original file will not be deleted
+  // and reading from the already opened fd will get updated content. So even we
+  // can't clear the zip cache, will still have updated app launched next time.
   var queue = Q.defer();
   queue.resolve();
   return queue.promise.then(function() {
     // "adb push /gaia/profile/webapps/SOME_APP.gaiamobile.org/manifest.webapp
-    //  /system/b2g/webapps/SOME_APP.gaiamobile.org/manifest.webapp"
+    //  /data/local/tmp/pushgaia/SOME_APP.gaiamobile.org/manifest.webapp"
     return sh.run(['-c',
       adb + ' push "' + utils.joinPath(targetFolder, 'manifest.webapp') +
-      '" /' + remotePath + '/webapps/' + buildAppName + '.' +
-      gaiaDomain + '/manifest.webapp']);
+      '" //data/local/tmp/pushgaia/' + buildAppName + '.' + gaiaDomain +
+      '/manifest.webapp']);
   }).then(function() {
-    // adb push /gaia/profile/webapps/SOME_APP.gaiamobile.org/application.zip
-    //  /system/b2g/webapps/SOME_APP.gaiamobile.org/application.zip"
+    // "adb push /gaia/profile/webapps/SOME_APP.gaiamobile.org/application.zip
+    //  /data/local/tmp/pushgaia/SOME_APP.gaiamobile.org/application.zip"
     return sh.run(['-c',
       adb + ' push "' + utils.joinPath(targetFolder, 'application.zip') +
-      '" /' + remotePath + '/webapps/' + buildAppName + '.' +
-      gaiaDomain + '/application.zip']);
+      '" //data/local/tmp/pushgaia/' + buildAppName + '.' + gaiaDomain +
+      '/application.zip']);
+  }).then(function() {
+    // "adb shell cat /data/local/tmp/pushgaia/SOME_APP.gaiamobile.org/manifes
+    //  t.webapp > /system/b2g/webapps/SOME_APP.gaiamobile.org/manifest.webapp"
+    return sh.run(['-c',
+      adb + ' shell "cat /data/local/tmp/pushgaia/' + buildAppName +
+      '.' + gaiaDomain + '/manifest.webapp > ' + remotePath + '/webapps/' +
+      buildAppName + '.' + gaiaDomain + '/manifest.webapp"']);
+  }).then(function() {
+    // "adb shell cat /data/local/tmp/pushgaia/SOME_APP.gaiamobile.org/applica
+    //  tion.zip > /system/b2g/webapps/SOME_APP.gaiamobile.org/application.zip"
+    return sh.run(['-c',
+      adb + ' shell "cat /data/local/tmp/pushgaia/' + buildAppName +
+      '.' + gaiaDomain + '/application.zip > ' + remotePath + '/webapps/' +
+      buildAppName + '.' + gaiaDomain + '/application.zip"']);
+  }).then(function() {
+    // "adb shell rm -rf /data/local/tmp/pushgaia"
+    return sh.run(['-c', adb + ' shell rm -rf //data/local/tmp/pushgaia']);
   });
 }
 
@@ -86,8 +118,9 @@ function getRemoteInstallPath(adb) {
   // Read the file as JSON
   // If there were no webapps ever installed on the device (likely purged in
   // the previous step), default to /system/b2g
+  var content;
   try {
-    var content = utils.getJSON(tempFile);
+    content = utils.getJSON(tempFile);
   } catch (e) {
     return '/system/b2g';
   }
@@ -102,7 +135,7 @@ function getRemoteInstallPath(adb) {
     }
   }
   return '/data/local';
-};
+}
 
 function execute(options) {
   const buildAppName = options.BUILD_APP_NAME;
@@ -115,6 +148,13 @@ function execute(options) {
   var targetFolder;
 
   var adb = options.ADB;
+  var restartB2g = needsB2gRestart(buildAppName);
+
+  if (restartB2g) {
+    utils.log('push-to-device', 'b2g process will be restarted for ' +
+      'installing ' + buildAppName + ' app, see bug 1000049 for ' +
+      'more information.');
+  }
 
   mainQ.resolve();
   return mainQ.promise.then(function() {
@@ -129,7 +169,7 @@ function execute(options) {
     utils.log('push', 'Waiting for device ...');
     return sh.run(['-c', adb + ' wait-for-device']);
   }).then(function() {
-    if (buildAppName === '*' || buildAppName === 'system') {
+    if (buildAppName === '*' || restartB2g) {
       return sh.run(['-c', adb + ' shell stop b2g']);
     }
   }).then(function() {
@@ -160,13 +200,24 @@ function execute(options) {
       return installSvoperapps(profileFolder, adb);
     }
   }).then(function() {
-    if (buildAppName === '*' || buildAppName === 'system') {
+    if (buildAppName === '*') {
+      return sh.run(['-c', adb + ' push ' +
+        '"' + options.DEFAULT_GAIA_ICONS_FONT + '"' +
+        ' //system/fonts/hidden/gaia-icons.ttf']);
+    }
+  }).then(function() {
+    if (buildAppName === '*') {
+      return sh.run(['-c', adb + ' push ' +
+        '"' + options.DEFAULT_KEYBOAD_SYMBOLS_FONT + '"' +
+        ' //system/fonts/hidden/Keyboard-Symbols.ttf']);
+    }
+  }).then(function() {
+    if (buildAppName === '*' || restartB2g) {
       utils.log('push', 'Restarting B2G...');
       sh.run(['-c', adb + ' shell start b2g']);
     } else {
       var Q3 = Q.defer();
       var manifest;
-      var appPid;
       Q3.resolve();
       return Q3.promise.then(function() {
       // Some app folder name is different with the process name,

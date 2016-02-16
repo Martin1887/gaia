@@ -1,11 +1,13 @@
 define(function(require) {
 'use strict';
+/* global IntlHelper */
 
 var Tabs = require('tabs');
 var View = require('view');
-var mozL10n = require('l10n');
-var PerformanceTestingHelper = require('shared/js/performance_testing_helper');
-var rAF = mozRequestAnimationFrame || requestAnimationFrame;
+var connectionHandler = require('connection/handler');
+
+
+
 /**
  * Global Application event handling and paging
  */
@@ -14,15 +16,20 @@ var App = {
    * Load the Tabs and Panels, attach events and navigate to the default view.
    */
   init: function() {
+    connectionHandler.init();
+    IntlHelper.define('digit-nopadding', 'number', {
+      style: 'decimal',
+      useGrouping: false
+    });
     this.tabs = new Tabs(document.getElementById('clock-tabs'));
 
     window.addEventListener('hashchange', this);
-    window.addEventListener('localized', this);
     window.addEventListener('visibilitychange', this);
-
-    // we wait for the app to be l10n ready before initializing, so call
-    // the onlocalized once at startup
-    this.onlocalized();
+    // Tell audio channel manager that we want to adjust the alarm channel
+    // if the user press the volumeup/volumedown buttons in Clock.
+    if (navigator.mozAudioChannelManager) {
+      navigator.mozAudioChannelManager.volumeControlChannel = 'alarm';
+    }
 
     this.visible = !document.hidden;
     this.panels = Array.prototype.map.call(
@@ -37,10 +44,15 @@ var App = {
         return panel;
       }.bind(this)
     );
+
+    window.performance.mark('navigationLoaded');
+
     this.navigate({ hash: '#alarm-panel' }, function() {
       // Dispatch an event to mark when we've finished loading.
-      PerformanceTestingHelper.dispatch('startup-path-done');
-    });
+      // At this point, the navigation is usable, and the primary
+      // alarm list tab has begun loading.
+      window.performance.mark('navigationInteractive');
+    }.bind(this));
     return this;
   },
 
@@ -66,6 +78,16 @@ var App = {
       panel.instance = View.instance(panel.el, PanelModule);
       callback && callback(panel);
     });
+  },
+
+  alarmListLoaded: function() {
+    // Performance testing markers. See <https://bugzil.la/996038>.
+    // At this point, the alarm list has been loaded, and all facets
+    // of Clock are now interactive. The other panels are lazily
+    // loaded when the user switches tabs.
+    window.performance.mark('visuallyLoaded');
+    window.performance.mark('contentInteractive');
+    window.performance.mark('fullyLoaded');
   },
 
   /**
@@ -96,7 +118,7 @@ var App = {
           instance.visible = true;
           if (currentIndex !== -1 && currentIndex !== panelIndex) {
             var direction = currentIndex < panelIndex;
-            rAF(function startAnimation(oldPanel) {
+            requestAnimationFrame(function startAnimation(oldPanel) {
               instance.transition =
                 direction ? 'slide-in-right' : 'slide-in-left';
 
@@ -124,15 +146,6 @@ var App = {
       return;
     }
     this.navigate({ hash: location.hash });
-  },
-
-  /**
-   * Reset the global localization params on the html element.  Called when
-   * the language changes, and once on application startup.
-   */
-  onlocalized: function(event) {
-    document.documentElement.lang = mozL10n.language.code;
-    document.documentElement.dir = mozL10n.language.direction;
   },
 
   /**

@@ -1,18 +1,27 @@
 'use strict';
 
-/* global loadBodyHTML, BookmarkEditor, BookmarksDatabase */
+/* global loadBodyHTML, BookmarkEditor, BookmarksDatabase, Icon */
 /* global requireApp, require, suite, suiteTeardown, suiteSetup, test, assert,
-          sinon */
+          sinon, MocksHelper */
 
 require('/shared/test/unit/load_body_html_helper.js');
+require('/shared/test/unit/mocks/mock_l10n.js');
+require('/shared/test/unit/mocks/mock_web_manifest_helper.js');
 
+require('/shared/test/unit/mocks/mock_icons_helper.js');
+require('/shared/js/homescreens/icon.js');
 requireApp('bookmark/js/bookmark_editor.js');
 require('/shared/js/bookmarks_database.js');
 require('/shared/js/url_helper.js');
 
+var mocksForBookmarkEditor = new MocksHelper([
+  'IconsHelper', 'WebManifestHelper'
+]).init();
+
 suite('bookmark_editor.js >', function() {
 
-  var getStub;
+  var getStub, iconRenderStub, realL10n;
+  mocksForBookmarkEditor.attachTestHelpers();
 
   var name = 'Mozilla';
   var url = 'http://www.mozilla.org/es-ES/firefox/new/';
@@ -25,6 +34,8 @@ suite('bookmark_editor.js >', function() {
   var databaseInError = false;
 
   suiteSetup(function() {
+    realL10n = navigator.mozL10n;
+    navigator.mozL10n = window.MockL10n;
     loadBodyHTML('/save.html');
     getStub = sinon.stub(BookmarksDatabase, 'get', function(purl) {
       return {
@@ -33,12 +44,15 @@ suite('bookmark_editor.js >', function() {
         }
       };
     });
+    iconRenderStub = sinon.stub(Icon.prototype, 'render', function() {});
   });
 
   suiteTeardown(function() {
+    navigator.mozL10n = realL10n;
     document.body.innerHTML = '';
     databaseInError = false;
     getStub.restore();
+    iconRenderStub.restore();
   });
 
   function noop() {
@@ -51,13 +65,11 @@ suite('bookmark_editor.js >', function() {
 
   suite('Add UI initialized correctly >', function() {
     var expectedName = 'Telefonica';
-    var expectedURL = 'www.telefonica.es';
 
     suiteSetup(function() {
       BookmarkEditor.init({
         data: {
-          name: expectedName,
-          url: expectedURL
+          name: expectedName
         },
         oncancelled: noop
       });
@@ -68,16 +80,8 @@ suite('bookmark_editor.js >', function() {
                    expectedName);
     });
 
-    test('The URL has to be defined from options.data.url >', function() {
-      assert.equal(document.getElementById('bookmark-url').value, expectedURL);
-    });
-
     test('Checking styles', function() {
       assert.equal(document.body.dataset.mode, 'add');
-    });
-
-    test('Checking "add" button initially', function() {
-      assert.isFalse(BookmarkEditor.saveButton.disabled);
     });
   });
 
@@ -93,16 +97,8 @@ suite('bookmark_editor.js >', function() {
       assert.equal(document.getElementById('bookmark-title').value, name);
     });
 
-    test('The URL has to be defined from datastore >', function() {
-      assert.equal(document.getElementById('bookmark-url').value, url);
-    });
-
     test('Checking styles', function() {
       assert.equal(document.body.dataset.mode, 'put');
-    });
-
-    test('Checking "done" button initially', function() {
-      assert.isTrue(BookmarkEditor.saveButton.disabled);
     });
 
     test('Checking "done" button after writing', function() {
@@ -132,10 +128,6 @@ suite('bookmark_editor.js >', function() {
                    expectedName);
     });
 
-    test('The URL has to be defined from options.data.url >', function() {
-      assert.equal(document.getElementById('bookmark-url').value, expectedURL);
-    });
-
     test('Checking styles', function() {
       assert.equal(document.body.dataset.mode, 'add');
     });
@@ -160,6 +152,13 @@ suite('bookmark_editor.js >', function() {
     test('Bookmarks with blank title should not be saved >', function() {
       assert.isTrue(BookmarkEditor.saveButton.disabled,
                 'Blank title, add button should be disabled');
+
+      var saveSpy = sinon.spy(BookmarkEditor, 'save');
+
+      BookmarkEditor._submit(new CustomEvent('submit'));
+      assert.equal(saveSpy.callCount, 0);
+
+      BookmarkEditor.save.restore();
     });
 
     test('Check save button typing website name ', function() {
@@ -178,56 +177,46 @@ suite('bookmark_editor.js >', function() {
 
   });
 
-  suite('Invalid URL >', function() {
-
+  suite('Install App >', function() {
     suiteSetup(function() {
       BookmarkEditor.init({
         data: {
-          name: 'Mozilla',
-          url: 'justAString'
+          name: 'My App',
+          url: 'http://example.com'
         },
         oncancelled: noop
       });
     });
 
-    test('Bookmarks with invalid URL should not be saved >', function() {
-      assert.isTrue(BookmarkEditor.saveButton.disabled,
-                'Invalid URL, add button should be disabled');
-    });
-
-    test('Check save button typing address ', function() {
-      BookmarkEditor.bookmarkUrl.value = 'http://www.tid.es';
-      dispatchInputEvent();
-      assert.isFalse(BookmarkEditor.saveButton.disabled);
-
-      BookmarkEditor.bookmarkUrl.value = '';
-      dispatchInputEvent();
-      assert.isTrue(BookmarkEditor.saveButton.disabled);
-
-      BookmarkEditor.bookmarkUrl.value = 'http://www.telefonica.es';
-      dispatchInputEvent();
-      assert.isFalse(BookmarkEditor.saveButton.disabled);
-    });
-
-  });
-
-  suite('Non-HTTP(S) URL >', function() {
-
-    suiteSetup(function() {
-      BookmarkEditor.init({
-        data: {
-          name: 'Mozilla',
-          url: 'rtsp://whatever.com'
-        },
-        oncancelled: noop
+    test('_fetchManifest()', function(done) {
+      var stubRenderAppIcon = sinon.stub(BookmarkEditor, '_renderAppIcon',
+        function(manifest, size) {}
+      );
+      BookmarkEditor._fetchManifest().then(
+      function () {
+          assert.isFalse(
+            BookmarkEditor.appInstallationSection.classList.contains(
+              'hidden'));
+          assert.equal(BookmarkEditor.appNameText.textContent, 'App');
+          done();
+          stubRenderAppIcon.restore();
+      },
+      function (err) {
+        done(err);
+        console.error(err);
       });
     });
 
-    test('Bookmarks with non-HTTP(S) URLs should be saved >', function() {
-      assert.isFalse(BookmarkEditor.saveButton.disabled,
-                     'Non-HTTP(S) URLs is ok, add button should be enabled');
-    });
+    test('_renderAppIcon()', function() {
+      this.sinon.stub(window.IconsHelper, 'getBestIconFromWebManifest',
+      function() {
+        return new URL('http://example.com/icon.png');
+      });
 
+      BookmarkEditor._renderAppIcon({}, 60);
+      assert.equal(BookmarkEditor.appIcon.getAttribute('src'),
+        'http://example.com/icon.png');
+    });
   });
 
 });

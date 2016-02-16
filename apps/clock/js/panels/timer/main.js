@@ -1,17 +1,18 @@
 define(function(require) {
 'use strict';
+/* global IntlHelper */
 
 var Panel = require('panel');
 var Picker = require('picker/picker');
 var View = require('view');
 
-var mozL10n = require('l10n');
 var Utils = require('utils');
 var Timer = require('timer');
 var Sounds = require('sounds');
 var FormButton = require('form_button');
 var html = require('text!panels/timer/panel.html');
 var AudioManager = require('audio_manager');
+var asyncStorage = require('shared/js/async_storage');
 
 var priv = new WeakMap();
 
@@ -24,6 +25,11 @@ function timeFromPicker(value) {
        });
   return ms;
 }
+
+IntlHelper.define('timer-hms', 'mozduration', {
+  minUnit: 'second',
+  maxUnit: 'hour'
+});
 
 /**
  * Timer.Panel
@@ -45,12 +51,12 @@ Timer.Panel = function(element) {
     pickers: {
       hours: {
         range: [0, 23],
-        valueText: 'nSpinnerHours'
+        l10nId: 'nSpinnerHours'
       },
       minutes: {
         range: [0, 59],
         isPadded: true,
-        valueText: 'nSpinnerMinutes'
+        l10nId: 'nSpinnerMinutes'
       }
     }
   });
@@ -83,8 +89,6 @@ Timer.Panel = function(element) {
     element.addEventListener('click', this.onclick.bind(this), false);
   }, this);
 
-  mozL10n.translate(this.element);
-
   var sound = this.nodes.sound;
 
   sound.addEventListener('blur', this.pauseAlarm.bind(this), false);
@@ -100,9 +104,42 @@ Timer.Panel = function(element) {
   element.addEventListener('panel-visibilitychange',
                            this.onvisibilitychange.bind(this));
 
+  // The start button is disable by default (picker at 00:00 by default)
+  this.nodes.create.setAttribute('disabled', 'true');
+
+  var create = this.nodes.create;
+  var picker = this.picker;
+
+  var enableButton = () => {
+    if(timeFromPicker(picker.value) === 0) {
+      create.setAttribute('disabled', 'true');
+    } else {
+      create.removeAttribute('disabled');
+    }
+    this.saveCurrentSettingsAsDefaults();
+  };
+
+  // The start button is enable if the value of the timer is not 00:00
+  picker.nodes.minutes.addEventListener('transitionend', enableButton);
+  picker.nodes.hours.addEventListener('transitionend', enableButton);
+
+  this.restoreDefaults().then(() => {
+    enableButton(); // Update the enabled state to match the new defaults.
+  });
+
+  this.nodes.vibrate.addEventListener(
+    'change', (e) => this.saveCurrentSettingsAsDefaults());
+  this.nodes.sound.addEventListener(
+    'change', (e) => this.saveCurrentSettingsAsDefaults());
+
   Timer.singleton(function(err, timer) {
     this.timer = timer;
-    timer.onend = this.dialog.bind(this);
+    var onTimerEvent = this.onTimerEvent.bind(this);
+    window.addEventListener('timer-start', onTimerEvent);
+    window.addEventListener('timer-pause', onTimerEvent);
+    window.addEventListener('timer-tick', onTimerEvent);
+    window.addEventListener('timer-end', onTimerEvent);
+    IntlHelper.observe('timer-hms', this.update.bind(this));
     if (this.visible) {
       // If the timer panel already became visible before we fetched
       // the timer, we must update the display to show the proper
@@ -114,91 +151,106 @@ Timer.Panel = function(element) {
 
 Timer.Panel.prototype = Object.create(Panel.prototype);
 
+Timer.Panel.prototype.restoreDefaults = function() {
+  return new Promise((resolve) => {
+    asyncStorage.getItem('timer-defaults', (values) => {
+      values = values || {};
+      if (values.sound != null) {
+        this.soundButton.value = values.sound;
+      }
+      if (values.time != null) {
+        this.picker.value = values.time;
+      }
+      if (values.vibrate != null) {
+        this.nodes.vibrate.checked = values.vibrate;
+      }
+      resolve();
+    });
+  });
+};
+
+Timer.Panel.prototype.saveCurrentSettingsAsDefaults = function() {
+  asyncStorage.setItem('timer-defaults', {
+    sound: this.soundButton.value,
+    time: this.picker.value,
+    vibrate: this.nodes.vibrate.checked
+  });
+};
+
 Timer.Panel.prototype.onvisibilitychange = function(evt) {
   var isVisible = evt.detail.isVisible;
-  var nodes = this.nodes;
   var timer = this.timer;
 
   if (isVisible) {
     // No active timer, or timer has expired...
     //  - Show the new timer dialog
     if (timer === null || timer.state === Timer.INITIAL) {
-      this.dialog();
+      this.showDialog();
     } else {
-
-      if (timer.state !== Timer.INITIAL) {
-        // Active timer exists...
-
-        if (timer.state === Timer.STARTED) {
-          // Reviving to started state,
-          // show the pause button, hide the start button
-          this.toggle(nodes.pause, nodes.start);
-        } else if (timer.state === Timer.PAUSED) {
-          // Reviving to paused state,
-          // show the start button, hide the pause button
-          this.toggle(nodes.start, nodes.pause);
-        }
-
-        this.dialog({ isVisible: false });
-        this.tick();
-      }
+      // Active timer exists, might be started by an external app, so we need
+      // to make sure dialog is hidden and buttons/time are on correct state
+      this.toggleButtons();
+      this.hideDialog();
+      this.update();
     }
   } else {
     this.pauseAlarm();
   }
 };
 
-/**
- * dialog Show or hide the Timer creation dialog.
- *
- * @param {Object} opts Optional parameters to show/hide dialog.
- *                      - isVisible, true|false (show|hide).
- *                        Defaults to true.
- *
- * @return {Object} Timer.Panel.
- */
-Timer.Panel.prototype.dialog = function(opts = { isVisible: true }) {
-  if (opts.isVisible) {
-    Utils.cancelAnimationAfter(this.tickTimeout);
+Timer.Panel.prototype._toggleDialog = function(isVisible = true) {
+  View.instance(this.nodes.dialog).visible = isVisible;
+  return this;
+};
+
+Timer.Panel.prototype.showDialog = function() {
+  return this._toggleDialog(true);
+};
+
+Timer.Panel.prototype.hideDialog = function() {
+  return this._toggleDialog(false);
+};
+
+Timer.Panel.prototype.onTimerEvent = function(event) {
+  switch (event.type) {
+    case 'timer-start':
+      // new timer dialog should always be hidden during timer-start (even
+      // if started from external app)
+      this.hideDialog();
+      /* falls through */
+    case 'timer-pause':
+      this.toggleButtons();
+      /* falls through */
+    case 'timer-tick':
+      this.update();
+      break;
+    case 'timer-end':
+      this.showDialog();
+      break;
   }
-  View.instance(this.nodes.dialog).visible = opts.isVisible;
-  return this;
-};
-
-Timer.Panel.prototype.tick = function() {
-  if (!this.timer || this.timer.remaining <= 0) {
-    return;
-  }
-  this.update(this.timer.remaining);
-  var delay = (this.timer.startTime + this.timer.duration - Date.now()) % 1000;
-  this.tickTimeout = Utils.requestAnimationAfter(this.tick.bind(this), delay);
 };
 
 /**
- * update Update the Timer UI's time display
- * @param  {Number} remaining Seconds remaining in timer countdown.
- *                            Defaults to 0.
- *
- * @return {Object} Timer.Panel.
+ * Given milliseconds, render the time as a rounded-to-seconds
+ * countdown.
  */
-Timer.Panel.prototype.update = function(remaining = 0) {
-  this.nodes.time.textContent = Utils.format.hms(
-    (remaining - (remaining % 1000)) / 1000, 'hh:mm:ss');
-  return this;
+Timer.Panel.prototype.update = function() {
+  return IntlHelper.get('timer-hms').then(formatter => {
+    var remaining = this.timer.remaining;
+    var newText = formatter.format(remaining);
+    // Use localized caching here to prevent unnecessary DOM repaints.
+    if (this._cachedTimerText !== newText) {
+      this.nodes.time.textContent = this._cachedTimerText = newText;
+    }
+  });
 };
 
-/**
- * toggle Toggle any two UI elements with each other.
- *
- * @param  {Node} show The node to show.
- * @param  {Node} hide The node to hide.
- *
- * @return {Object} Timer.Panel.
- */
-Timer.Panel.prototype.toggle = function(show, hide) {
-  show.classList.remove('hidden');
-  hide.classList.add('hidden');
-  return this;
+Timer.Panel.prototype.toggleButtons = function() {
+  var nodes = this.nodes;
+  var started = this.timer.state === Timer.STARTED;
+
+  nodes.pause.classList.toggle('hidden', !started);
+  nodes.start.classList.toggle('hidden', started);
 };
 
 /**
@@ -224,74 +276,42 @@ Timer.Panel.prototype.pauseAlarm = function() {
  */
 Timer.Panel.prototype.onclick = function(event) {
   var meta = priv.get(event.target);
-  var value = event.target.dataset.value;
   var panel = meta.panel;
   var nodes = panel.nodes;
+  var timer = panel.timer;
   var time;
 
-  if (panel.timer && panel.timer[meta.action]) {
-    if (typeof value !== 'undefined') {
-      // meta.action === 'plus' => panel.timer.plus(+value);
+  if (meta.action === 'create') {
+    time = timeFromPicker(panel.picker.value);
 
-      panel.timer[meta.action](+value);
-      panel.update(panel.timer.remaining);
-    } else {
-      // meta.action => panel.timer[meta.action]()
-      //
-      // ie.
-      //
-      // if start => panel.timer.start()
-      // if pause => panel.timer.pause()
-      // if cancel => panel.timer.cancel()
-      //
-      panel.timer[meta.action]();
+    if (!time) {
+      return;
     }
 
-    if (meta.action === 'cancel' || meta.action === 'new') {
-      // Restore the panel to configured duration
-      panel.update(panel.timer.configuredDuration);
+    timer.duration = time;
+    timer.sound = nodes.sound.value;
+    timer.vibrate = nodes.vibrate.checked;
+    timer.start();
 
-      // Show new timer dialog
-      panel.dialog();
-      Utils.cancelAnimationAfter(this.tickTimeout);
-    }
-
-    if (meta.action === 'start') {
-      panel.toggle(nodes.pause, nodes.start);
-      panel.tick();
-    }
-
-    if (meta.action === 'pause') {
-      panel.toggle(nodes.start, nodes.pause);
-      Utils.cancelAnimationAfter(this.tickTimeout);
-    }
+    // Hide the new timer dialog
+    panel.hideDialog();
+  } else if (meta.action === 'plus') {
+    timer.plus(+event.target.dataset.value);
+    // need to update immediately cause timer might be paused during click
+    panel.update();
   } else {
-
-    if (meta.action === 'create') {
-      time = timeFromPicker(panel.picker.value);
-
-      if (!time) {
-        return;
-      } else {
-        panel.timer.duration = time;
-      }
-
-      panel.timer.sound = nodes.sound.value;
-      panel.timer.vibrate = nodes.vibrate.checked;
-      panel.timer.start();
-      panel.tick();
-
-      // Update the UI
-      panel.toggle(nodes.pause, nodes.start);
-
-      // Hide the new timer dialog
-      panel.dialog({ isVisible: false });
-
-    }
+    // meta.action => timer[meta.action]()
+    //
+    // ie.
+    //
+    // if start => timer.start()
+    // if pause => timer.pause()
+    // if cancel => timer.cancel()
+    //
+    timer[meta.action]();
   }
-  panel.timer.commit(function(err, timer) {
-    // NOOP: run after register/save
-  });
+
+  timer.commit();
 };
 
 return Timer.Panel;

@@ -1,4 +1,4 @@
-/* global utils, _, ConfirmDialog, Contacts*/
+/* global utils, ConfirmDialog, Contacts, ContactsService, Loader */
 'use strict';
 
 //
@@ -36,10 +36,13 @@ window.ContactsExporter = function ContactsExporter(theStrategy) {
       return;
     }
 
-    var request = navigator.mozContacts.find({});
-    request.onsuccess = function onSuccess() {
+    ContactsService.getAll(function(e, contactsFromAPI) {
+      if (e) {
+        cb();
+        return;
+      }
       contacts = [];
-      request.result.forEach(function onContact(ct) {
+      contactsFromAPI.forEach(function onContact(ct) {
         if (theContacts.indexOf(ct.id) !== -1) {
           contacts.push(ct);
         }
@@ -47,12 +50,7 @@ window.ContactsExporter = function ContactsExporter(theStrategy) {
       if (cb) {
         cb(contacts);
       }
-    };
-    request.onerror = function onError() {
-      if (cb) {
-        cb();
-      }
-    };
+    });
   };
 
   //
@@ -85,51 +83,58 @@ window.ContactsExporter = function ContactsExporter(theStrategy) {
     strategy.doExport(_doHandleResult);
   };
 
-  //
-  // Callback invoked when the exporting process finished.
-
-  // @param: {Object} error Not null in case an error happened
-  // @param: {Integer} exported Number of contacts successfuly exported
-  // @param: {String} message Any extra message from the exporting mechanism
-  //
+  /**
+   * Callback invoked when the exporting process finished.
+   *
+   * @param {Object} error Not null in case an error happened
+   * @param {Number} exported Number of contacts successfuly exported
+   * @param {Boolean} isRecoverable In case of error, whether it is recoverable
+   */
   var _doHandleResult = function _doHandleResult(error, exported,
                                                  isRecoverable) {
     if (hasProgress && !error) {
       utils.overlay.hide();
     }
-    // Error handling
+
     if (error) {
-      var cancel = {
-        title: _('cancel'),
-        callback: function() {
-          utils.overlay.hide();
-          ConfirmDialog.hide();
-          _showStatus(exported, contacts.length);
-        }
-      };
-      var retry = {
-        title: _('retry'),
-        isRecommend: true,
-        callback: function() {
-          utils.overlay.hide();
-          ConfirmDialog.hide();
-          // And now the action is reproduced one more time
-          window.setTimeout(_doExport, 0);
-        }
-      };
+      // If it was cancelled by the user we don't show the error screen.
+      if (error.reason && error.reason.name === 'cancelled') {
+        utils.overlay.hide();
+      } else {
+        var cancel = {
+          title: 'cancel',
+          callback: function() {
+            utils.overlay.hide();
+            ConfirmDialog.hide();
+            _showStatus(exported, contacts.length);
+          }
+        };
 
-      if (isRecoverable === false) {
-        retry = null;
+        var retry = {
+          title: 'retry',
+          isRecommend: true,
+          callback: function() {
+            utils.overlay.hide();
+            ConfirmDialog.hide();
+            // And now the action is reproduced one more time
+            window.setTimeout(_doExport, 0);
+          }
+        };
+
+        if (isRecoverable === false) {
+          retry = null;
+        }
+
+        var errorString = 'exportError-' + strategy.name + '-';
+        ConfirmDialog.show('exportErrorTitle',
+                              errorString + error.reason, cancel, retry);
+
+        Contacts.hideOverlay();
+
+        console.error('An error occurred during the export: ',
+                      error.reason.name || error.reason);
+        return;
       }
-
-      var errorString = 'exportError-' + strategy.name + '-';
-      Contacts.confirmDialog(_('exportErrorTitle'),
-                             _(errorString + error.reason),
-                             cancel, retry);
-      Contacts.hideOverlay();
-      console.error('An error occurred during the export: ',
-                    error.reason.name || error.reason);
-      return;
     }
 
     _showStatus(exported, contacts.length);
@@ -137,12 +142,15 @@ window.ContactsExporter = function ContactsExporter(theStrategy) {
 
   var _showStatus = function(exported, total) {
     // TODO: Better mechanism to show result
-    var msg = _('contactsExported2', {
-      'exported': exported,
-      'total': total
-    });
+    var msgId = {
+      id: 'contactsExported2',
+      args: {
+        'exported': exported,
+        'total': total
+      }
+    };
 
-    utils.status.show(msg);
+    utils.status.show(msgId);
   };
 
   //
@@ -161,19 +169,24 @@ window.ContactsExporter = function ContactsExporter(theStrategy) {
   var _displayProgress = function _displayProgress() {
     var progressClass = determinativeProgress ? 'progressBar' : 'spinner';
 
-    Contacts.utility('Overlay', function _loaded() {
+    Loader.utility('Overlay', function _loaded() {
       progress = utils.overlay.show(
         strategy.getExportTitle(),
         progressClass,
         null
       );
+      utils.overlay.showMenu();
+      utils.overlay.oncancel = function() {
+        strategy.cancelExport();
+        utils.overlay.hide();
+      };
 
       // Allow the strategy to setup the progress bar
       if (determinativeProgress) {
         progress.setTotal(contacts.length);
         strategy.setProgressStep(progress.update);
       }
-    }, Contacts.SHARED_UTILITIES);
+    });
   };
 
   return {

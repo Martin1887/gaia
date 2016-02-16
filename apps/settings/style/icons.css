@@ -4,183 +4,86 @@
  */
 
 .menu-item {
-  padding-left: 5.5rem;
-  background-repeat: no-repeat;
-  background-position: 1.4rem center;
+  position: static;
 }
 
-a.menu-item::after  {
-  content: "";
-  width: 3rem;
-  height: 3rem;
+.menu-item[data-icon] {
+  padding-inline-start: 5.5rem;
+}
+
+a.menu-item:after {
+  font-family: "gaia-icons";
   position: absolute;
-  top: calc(50% - 1.5rem);
-  right: -0.5rem;
-  background: url(/shared/style_unstable/buttons/images/next.png) no-repeat center / 3rem auto;
+  top: 0;
+  offset-inline-end: 0;
+  font-size: 25px;
+  line-height: 6rem;
+  color: #a5acae;
+}
+html[dir="ltr"] a.menu-item:after { content: "right-light"; }
+html[dir="rtl"] a.menu-item:after { content: "left-light"; }
+
+a.menu-item:active:after {
+  color: #91aab0;
 }
 
-.menu-item-desc {
-  left: 4rem;
+gaia-switch .menu-item[data-icon] {
+  -moz-padding-start: 4rem;
+}
+
+gaia-switch .menu-item[data-icon] ~ details {
+  -moz-padding-start: 4rem;
 }
 
 .menu-item::before {
-  content: '';
   position: absolute;
-  top: calc((6.2rem - 3.2rem) / 2);
-  left: calc((2.5rem - 2.8rem) / 2);
+  offset-inline-start: 0;
+  top: 50%;
   width: 3rem;
-  height: 3rem;
-  background-image: url(images/icons_sprite.gif);
-  background-size: 15rem;
+  text-align: center;
+  line-height: 0;
+  color: #657073;
 }
 
-li:active:not([aria-disabled="true"]) .menu-item::before,
-.menu-item:focus::before {
-  background-image: url(images/icons_sprite_active.gif);
+label > .menu-item::before {
+  offset-inline-start: 1.5rem;
 }
 
-#menuItem-airplaneMode::before {
-  background-position: 0 0;
+label > .menu-item + small {
+  margin: 0;
+  margin-inline-start: 4rem;
+  padding: 0;
 }
 
-#menuItem-gps::before {
-  background-position: -3rem 0;
+.menu-item-desc {
+  offset-inline-start: 4rem;
 }
 
-#menuItem-wifi::before {
-  background-position: -6rem 0;
+#suggestions-desc {
+  offset-inline-start: 0;
 }
 
-#menuItem-callSettings::before {
-  background-position: 0 -15rem;
+#menuItem-suggestions {
+  padding-inline-start: 1.5rem;
 }
 
-#menuItem-messagingSettings::before {
-  background-position: -9rem -15rem;
+#menuItem-suggestions::before {
+  background: none;
 }
 
-#menuItem-cellularAndData::before {
-  background-position: -9rem 0;
-}
-
-#menuItem-bluetooth::before {
-  background-position: -12rem 0;
-}
-
-#menuItem-nfc::before {
-  background-position: -12rem -15rem;
-}
-
-#menuItem-internetSharing::before {
-  background-position: 0 -3rem;
-}
-
-#menuItem-sound::before {
-  background-position: -3rem -3rem;
-}
-
-#menuItem-display::before {
-  background-position: -6rem -3rem;
-}
-
-#menuItem-notifications::before {
-  background-position: -9rem -3rem;
-}
-
-#menuItem-dateAndTime::before {
-  background-position: -12rem -3rem;
-}
-
-#menuItem-languageAndRegion::before {
-  background-position: 0 -6rem;
-}
-
-#menuItem-keyboard::before {
-  background-position: -3rem -6rem;
-}
-
-#menuItem-fxa::before {
-  background-position: -6rem -6rem;
-}
-
-#menuItem-mail::before {
-  background-position: -9rem -6rem;
-}
-
-#menuItem-screenLock::before {
-  background-position: -12rem -6rem;
-}
-
-#menuItem-simManager::before {
-  background-position: 0 -9rem;
-}
-
-#menuItem-simSecurity::before {
-  background-position: 0 -9rem;
-}
-
-#menuItem-appPermissions::before {
-  background-position: -3rem -9rem;
-}
-
-#menuItem-doNotTrack::before {
-  background-position: -6rem -9rem;
-}
-
-#menuItem-deviceInfo::before {
-  background-position: -9rem -9rem;
-}
-
-#menuItem-battery::before {
-  background-position: -12rem -9rem;
-}
-
-#menuItem-enableStorage::before {
-  background-position: -6rem -15rem;
-}
-
-#menuItem-applicationStorage::before {
-  background-position: 0 -12rem;
-}
-
-#menuItem-mediaStorage::before {
-  background-position: -3rem -12rem;
-}
-
-#menuItem-accessibility::before {
-  background-position: -6rem -12rem;
-}
-
-#menuItem-developer::before {
-  background-position: -3rem -18rem;
-}
-
-#menuItem-improveBrowserOS::before {
-  background-position: -3rem -15rem;
-}
-
-#menuItem-help::before {
-  background-position: -9rem -12rem;
-}
-
-.menuItem-icc::before {
-  background-position: -12rem -12rem;
-}
-
-#menuItem-downloads::before {
-  background-position: -15rem -18rem;
-}
 
 /******************************************************************************
  * Wi-Fi icons
  */
+
 aside.pack-end {
   position: absolute;
   z-index: 2;
-  right: 1.5rem;
-  margin: 0 0 0 0.5rem;
-  text-align: right;
- }
+  offset-inline-end: 1.5rem;
+  margin: 0;
+  margin-inline-start: 0.5rem;
+  text-align: end;
+}
 aside.wifi-icon {
   background-repeat: no-repeat;
   background-position: 0 center;
@@ -223,15 +126,16 @@ aside.connecting {
  * Call Settings icons
  */
 
- #menuItem-callWaiting .alert-label > span {
+#menuItem-callWaiting span.cw-alert-icon::after {
+  content: '';
   position: absolute;
-  right: 1.5rem;
-  width: 3rem;
+  z-index: 10;
+  top: 1.2rem;
+  offset-inline-end: 0;
+  width: 6rem;
   height: 3rem;
-  background-image: url(images/call_waiting_disabled.png);
-  background-size: 3rem;
-  background-repeat: no-repeat;
- }
+  background: #F4F4F4 url("images/call_waiting_disabled.png") no-repeat center/3rem;
+}
 
 
 /******************************************************************************
@@ -241,7 +145,7 @@ aside.connecting {
 .bluetooth-device {
   background-repeat: no-repeat;
   background-position: right 3rem top 50%; /* same position as for Wi-Fi signal levels */
-  padding-right: 2rem;
+  padding-inline-end: 2rem;
 }
 
 .bluetooth-device:before {
@@ -250,7 +154,7 @@ aside.connecting {
   height: 3rem;
   background: url(images/bluetooth_sprite.png) no-repeat 3rem 3rem / 39rem;
   position: absolute;
-  right: 0;
+  offset-inline-end: 0;
   top: 50%;
   margin-top: -1.5rem;
 }
@@ -366,89 +270,10 @@ aside.connecting {
  * Privacy icons
  */
 
-.privacy-menuitem {
-  padding-left: 7.4rem;
-  background-repeat: no-repeat;
-  background-position: 1.4rem center;
-}
-
-.privacy-menuitem:before {
-  content: "";
-  width: 3.3rem;
-  height: 3.3rem;
-  background: url(/shared/resources/branding/privacy_sprite.png) no-repeat 3rem 3rem / 9.6rem;
-  position: absolute;
-  left: 1.5rem;
-  top: 50%;
-  margin-top: -1.5rem;
-}
-
 .privacy-browserOS:before {
   background-position: 0 0;
 }
 
-.privacy-everythingME:before {
-  background-position: -3.2rem 0;
-}
-
 .privacy-marketPlace:before {
   background-position: -6.4rem 0;
-}
-
-/******************************************************************************
- * Right-To-Left layout
- */
-html[dir="rtl"] .menu-item {
-  padding-left: 0;
-  padding-right: 5.5rem;
-}
-
-html[dir="rtl"] a.menu-item::after  {
-  right: auto;
-  left: -0.5rem;
-  transform: rotate(180deg);
-}
-
-html[dir="rtl"] .menu-item-desc {
-  left: auto;
-  right: 4rem;
-}
-
-html[dir="rtl"] .menu-item::before {
-  left: auto;
-  right: calc((2.5rem - 2.8rem) / 2);
-}
-
-html[dir="rtl"] aside.pack-end {
-  left: 1.5rem;
-  right: auto;
-  margin-left: 0;
-  margin-right: .5rem;
-  text-align: left;
-}
-
-html[dir="rtl"] #menuItem-callWaiting .alert-label > span {
-  left: 1.5rem;
-  right: auto;
-}
-
-html[dir="rtl"] .bluetooth-device {
-  background-position: right 3rem top 50%; /* same position as for Wi-Fi signal levels */
-  padding-left: 2rem;
-  padding-right: 0;
-}
-
-html[dir="rtl"] .bluetooth-device:before {
-  left: 0;
-  right: auto;
-}
-
-html[dir="rtl"] .privacy-menuitem {
-  padding-left: 0;
-  padding-right: 7.4rem;
-}
-
-html[dir="rtl"] .privacy-menuitem:before {
-  left: auto;
-  right: 1.5rem;
 }

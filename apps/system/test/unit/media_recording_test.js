@@ -1,14 +1,22 @@
-/* global MockL10n, MediaRecording */
+/* global MockL10n, MediaRecording, MockLazyLoader, MocksHelper */
 'use strict';
 
-mocha.globals(['MediaRecording']);
-
 require('/shared/test/unit/load_body_html_helper.js');
-requireApp('system/test/unit/mock_l10n.js');
+require('/shared/test/unit/mocks/mock_l20n.js');
+require('/shared/test/unit/mocks/mock_lazy_loader.js');
+requireApp('system/js/service.js');
+requireApp('system/js/base_ui.js');
+requireApp('system/js/base_icon.js');
+requireApp('system/js/recording_icon.js');
+
+var mocksForMediaRecording = new MocksHelper([
+  'LazyLoader'
+]).init();
 
 suite('system/media recording', function() {
   var realL10n;
   var mediaRecording;
+  mocksForMediaRecording.attachTestHelpers();
   function sendChromeEvent(active, isApp, origin, isAudio, isVideo) {
     var detail = {'active': active,
                   'isApp': isApp,
@@ -23,8 +31,8 @@ suite('system/media recording', function() {
 
   suiteSetup(function(done) {
     loadBodyHTML('/index.html');
-    realL10n = navigator.mozL10n;
-    navigator.mozL10n = MockL10n;
+    realL10n = document.l10n;
+    document.l10n = MockL10n;
     requireApp('system/js/media_recording.js', function() {
       mediaRecording = new MediaRecording();
       done();
@@ -32,16 +40,22 @@ suite('system/media recording', function() {
   });
 
   suiteTeardown(function() {
-    navigator.mozL10n = realL10n;
+    document.l10n = realL10n;
     document.body.innerHTML = '';
   });
 
   setup(function() {
+    MockLazyLoader.mLoadRightAway = true;
+    this.sinon.spy(MockLazyLoader, 'load');
     mediaRecording.start();
   });
 
   teardown(function() {
     mediaRecording.stop();
+  });
+
+  test('Should lazy load icon', function() {
+    assert.isTrue(MockLazyLoader.load.calledWith(['js/recording_icon.js']));
   });
 
   suite('active stat', function() {
@@ -92,8 +106,7 @@ suite('system/media recording', function() {
     });
 
     test('show icon', function() {
-      assert.equal(mediaRecording.messages[0].icon,
-        'url(style/media_recording/images/Microphone.png)');
+      assert.equal(mediaRecording.messages[0].icon, 'mic');
     });
   });
 
@@ -107,8 +120,7 @@ suite('system/media recording', function() {
     });
 
     test('show icon', function() {
-      assert.equal(mediaRecording.messages[0].icon,
-        'url(style/media_recording/images/Camera.png)');
+      assert.equal(mediaRecording.messages[0].icon, 'video');
     });
   });
 
@@ -122,8 +134,7 @@ suite('system/media recording', function() {
     });
 
     test('show icon', function() {
-      assert.equal(mediaRecording.messages[0].icon,
-        'url(style/media_recording/images/VideoRecorder.png)');
+      assert.equal(mediaRecording.messages[0].icon, 'video-mic');
     });
   });
 

@@ -1,6 +1,12 @@
-// Generate webapps_stage.json.
+'use strict';
+
+/**
+ * Generate webapps_shared.json in stage folder and uuid.json for external apps
+ */
 
 var utils = require('./utils');
+
+const UUID_FILENAME = 'uuid.json';
 
 var ManifestBuilder = function() {
   this.INSTALL_TIME = Date.now();
@@ -20,31 +26,30 @@ ManifestBuilder.prototype.setConfig = function(config) {
 };
 
 ManifestBuilder.prototype.genStageWebappJSON = function() {
-  var manifestFile = this.stageDir.clone();
-  manifestFile.append('webapps_stage.json');
+  var manifestFile = utils.getFile(this.stageDir.path, 'webapps_stage.json');
   utils.writeContent(manifestFile,
     JSON.stringify(this.stageManifests, null, 2) + '\n');
 };
 
+ManifestBuilder.prototype.genUuidJSON = function() {
+  var uuidFile = utils.getFile(this.stageDir.path, UUID_FILENAME);
+  utils.writeContent(uuidFile,
+    JSON.stringify(utils.getUUIDMapping(this.config), null, 2) + '\n');
+};
+
 ManifestBuilder.prototype.fillExternalAppManifest = function(webapp) {
-  var type = webapp.appStatus;
   var isPackaged = false;
   if (webapp.pckManifest) {
     isPackaged = true;
     if (webapp.metaData.origin) {
       this.errors.push('External webapp `' + webapp.sourceDirectoryName +
-                       '` can not have origin in metadata because is packaged');
+        '` can not have origin in metadata because is packaged');
       return;
     }
   }
 
-  // Generate the webapp folder name in the profile. Only if it's privileged
-  // and it has an origin in its manifest file it'll be able to specify a custom
-  // folder name. Otherwise, generate an UUID to use as folder name.
-  var webappTargetDirName = utils.generateUUID().toString();
-  if (type === 2 && isPackaged && webapp.pckManifest.origin) {
-    webappTargetDirName = utils.getNewURI(webapp.pckManifest.origin).host;
-  }
+  var profileDirectoryFile = utils.getFile(webapp.profileDirectoryFilePath);
+  var webappTargetDirName = profileDirectoryFile.leafName;
 
   var origin = isPackaged ? 'app://' + webappTargetDirName :
                webapp.metaData.origin;
@@ -122,12 +127,18 @@ ManifestBuilder.prototype.checkOrigin = function(origin) {
 };
 
 ManifestBuilder.prototype.fillAppManifest = function(webapp) {
-  var url = webapp.url;
+  var origin = webapp.url;
+
+  var installOrigin = origin;
+  if (webapp.metadata && webapp.metadata.installOrigin) {
+    installOrigin = webapp.metadata.installOrigin;
+  }
+
   this.stageManifests[webapp.sourceDirectoryName] = {
     originalManifest: webapp.manifest,
-    origin: url,
-    manifestURL: url + '/manifest.webapp',
-    installOrigin: url,
+    origin: origin,
+    manifestURL: origin + '/manifest.webapp',
+    installOrigin: installOrigin,
     receipt: null,
     installTime: this.INSTALL_TIME,
     updateTime: this.UPDATE_TIME,
@@ -162,6 +173,7 @@ ManifestBuilder.prototype.execute = function(config) {
   this.gaia.webapps.forEach(this.genManifest, this);
   this.manifestErrorSummary();
   this.genStageWebappJSON();
+  this.genUuidJSON();
 };
 
 exports.execute = function(config) {

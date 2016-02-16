@@ -17,18 +17,41 @@
       this.containerElement = configs.rearWindow.element;
     }
     configs.chrome = {
-      rocketbar: true,
-      navigation: false
+      bar: true
     };
-      
+
     AppWindow.call(this, configs);
+
+    // Replicate the theme color from the parent window.
+    // See http://bugzil.la/1132418
+    if (!this.rearWindow) {
+      return;
+    }
+
+    // Check if the popup is requested to be always lowered
+    if (configs.stayBackground) {
+      this.element.classList.add('alwaysLowered');
+      this.openAnimation = this.closeAnimation = 'immediate';
+    }
+
+    this.themeColor = this.rearWindow.themeColor;
+
+    if (this.rearWindow.appChrome) {
+      this.element.classList.toggle('light',
+        this.rearWindow.appChrome.useLightTheming());
+
+      // We have to apply the style on the title bar element because the
+      // popup appChrome element doesn't overlap. See http://bugzil.la/1132418
+      this.statusbar.titleBar.style.backgroundColor =
+        this.rearWindow.appChrome.element.style.backgroundColor;
+    }
   };
 
   /**
    * @borrows AppWindow.prototype as PopupWindow.prototype
    * @memberof PopupWindow
    */
-  PopupWindow.prototype.__proto__ = AppWindow.prototype;
+  PopupWindow.prototype = Object.create(AppWindow.prototype);
 
   PopupWindow.REGISTERED_EVENTS =
     ['mozbrowserclose', 'mozbrowsererror', 'mozbrowservisibilitychange',
@@ -37,11 +60,16 @@
      'mozbrowsericonchange'];
 
   PopupWindow.SUB_COMPONENTS = {
-    'transitionController': window.AppTransitionController,
-    'modalDialog': window.AppModalDialog,
-    'authDialog': window.AppAuthenticationDialog,
-    'contextmenu': window.BrowserContextMenu,
-    'childWindowFactory': window.ChildWindowFactory
+    'transitionController': 'AppTransitionController',
+    'modalDialog': 'AppModalDialog',
+    'valueSelector': 'ValueSelector',
+    'authDialog': 'AppAuthenticationDialog',
+    'childWindowFactory': 'ChildWindowFactory',
+    'statusbar': 'AppStatusbar'
+  };
+
+  PopupWindow.SUB_MODULES = {
+    'contextmenu': 'BrowserContextMenu'
   };
 
   /**
@@ -58,7 +86,12 @@
    * @type String
    * @memberof PopupWindow
    */
-  PopupWindow.prototype.openAnimation = 'slideup';
+  PopupWindow.prototype.openAnimation = 'slide-from-bottom';
+
+  PopupWindow.prototype._handle_mozbrowsertitlechange = function(evt) {
+    this.name = evt.detail;
+    this.publish('namechanged');
+  };
 
   /**
    * Default closing animation.
@@ -66,7 +99,7 @@
    * @type String
    * @memberof PopupWindow
    */
-  PopupWindow.prototype.closeAnimation = 'slidedown';
+  PopupWindow.prototype.closeAnimation = 'slide-to-bottom';
 
   PopupWindow.prototype.CLASS_LIST = 'appWindow popupWindow';
 

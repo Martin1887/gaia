@@ -2,12 +2,9 @@
 /* global MocksHelper, SuspendingAppPriorityManager, MockStackManager,
   AppWindow */
 
-mocha.globals(['AppWindow', 'SuspendingAppPriorityManager',
-  'StackManager']);
-
 requireApp('system/test/unit/mock_app_window.js');
 requireApp('system/test/unit/mock_stack_manager.js');
-requireApp('system/js/system.js');
+requireApp('system/js/service.js');
 
 var mocksForSuspendingAppPriorityManager = new MocksHelper([
   'AppWindow', 'StackManager'

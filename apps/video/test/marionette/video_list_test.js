@@ -1,18 +1,20 @@
+/* global __dirname */
+'use strict';
+
 var Video = require('./lib/video'),
     assert = require('assert');
 
 marionette('video list', function() {
 
-  // Disabled: bug 974732
-  return;
-
   var app, client, selectors;
 
   client = marionette.client({
-    prefs: {
-      'device.storage.enabled': true,
-      'device.storage.testing': true,
-      'device.storage.prompt.testing': true
+    profile: {
+      prefs: {
+        'device.storage.enabled': true,
+        'device.storage.testing': true,
+        'device.storage.prompt.testing': true
+      }
     }
   });
 
@@ -66,7 +68,7 @@ marionette('video list', function() {
       'type in data should be videos.'
     );
   });
-
+/*
   test('share video', function() {
     app.enterSelectionMode();
     app.selectThumbnail();
@@ -83,4 +85,5 @@ marionette('video list', function() {
       'type data in share activity is video/*.'
     );
   });
+*/
 });

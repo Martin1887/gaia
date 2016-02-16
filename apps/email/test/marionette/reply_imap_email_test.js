@@ -1,3 +1,5 @@
+'use strict';
+
 var Email = require('./lib/email');
 var assert = require('assert');
 var format = require('util').format;
@@ -12,10 +14,7 @@ var serverHelper = require('./lib/server_helper');
  */
 marionette('reply to an e-mail', function() {
   var client = marionette.client({
-    settings: {
-      // disable keyboard ftu because it blocks our display
-      'keyboard.ftu.enabled': false
-    }
+    desiredCapabilities: { raisesAccessibilityExceptions: false }
   });
 
   var BODY_TEXT = 'I still have a dream.';

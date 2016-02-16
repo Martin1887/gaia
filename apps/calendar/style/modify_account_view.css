@@ -13,6 +13,7 @@
 
 #modify-account-view .during-progress {
   display: none;
+  pointer-events: none;
 }
 
 #modify-account-view.in-progress .during-progress {
@@ -23,7 +24,6 @@
 }
 
 #modify-account-view.in-progress .during-progress > div {
-  display: inline-block;
   margin: 16rem 1.5rem 0;
   padding-top: 1.2rem;
   border-top: 0.1rem solid #bebebe;
@@ -42,7 +42,7 @@
 
 #modify-account-view.in-progress .during-progress > div > progress {
   line-height: normal;
-  margin-right: 0.5rem;
+  margin-inline-end: 0.5rem;
 }
 
 #modify-account-view.in-progress button,
@@ -79,7 +79,6 @@
   display: none;
 }
 
-
 #modify-account-view.auth-oauth2.create .oauth2-sign-in,
 #modify-account-view.auth-oauth2.error .sync-errors,
 #modify-account-view.auth-oauth2.error .oauth2-sign-in {
@@ -90,13 +89,18 @@
   margin: 0;
   height: 3rem;
   background: transparent url('icons/accountwarning.png') no-repeat left top;
-  padding-left: 3.5rem;
+  -moz-padding-start: 3.5rem;
   line-height: 3rem;
 }
 
 #modify-account-view.auth-oauth2 .save,
 #modify-account-view.auth-oauth2 .password {
   display: none;
+}
+
+#modify-account-view.remove-dialog #modify-account-header,
+#modify-account-view.remove-dialog .modify-account-form {
+  visibility: hidden;
 }
 
 #oauth2 {
@@ -107,6 +111,11 @@
 
 #oauth2.active {
   display: block;
+}
+
+#oauth2 gaia-header h1 {
+  /* should always display the beginning of the URL */
+  direction: ltr;
 }
 
 #oauth2 .browser-container {

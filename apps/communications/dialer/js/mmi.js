@@ -1,13 +1,18 @@
-/* globals LazyL10n, LazyLoader, MobileOperator */
+/* globals LazyLoader, MmiUI, MobileOperator, NotificationHelper,
+           Promise */
 
 /* exported MmiManager */
 
 'use strict';
 
+// As defined in 3GPP TS 22.030 version 10.0.0 Release 10 standard
+// USSD code used to query call barring supplementary service status
+const CALL_BARRING_STATUS_MMI_CODE = '*#33#';
+// USSD code used to query call waiting supplementary service status
+const CALL_WAITING_STATUS_MMI_CODE = '*#43#';
+
 var MmiManager = {
 
-  COMMS_APP_ORIGIN: document.location.protocol + '//' +
-                    document.location.host,
   _: null,
   _conn: null,
   _ready: false,
@@ -18,61 +23,69 @@ var MmiManager = {
   // the DOMRequest.onsuccess received subsequenty as a closure of the USSD
   // session.
   _pendingRequest: null,
+  _session: null,
 
-  init: function mm_init(callback) {
+  init: function mm_init() {
     if (this._ready) {
-      if (callback && callback instanceof Function) {
-        callback();
-      }
-      return;
+      return Promise.resolve();
     }
+
+    this._ = navigator.mozL10n.get;
 
     var self = this;
     var lazyFiles = ['/shared/js/icc_helper.js',
+                     '/shared/style/input_areas.css',
                      '/shared/js/mobile_operator.js'];
-    LazyLoader.load(lazyFiles, function resourcesLoaded() {
-      for (var i = 0; i < navigator.mozMobileConnections.length; i++) {
-        var conn = navigator.mozMobileConnections[i];
 
-        // We cancel any active sessions if one exists to avoid sending any new
-        // USSD message within an invalid session.
-        conn.cancelMMI();
-      }
-
-      LazyL10n.get(function localized(_) {
-        self._ = _;
+    return new Promise(function(resolve, reject) {
+      LazyLoader.load(lazyFiles, function() {
+        MmiUI.init();
         self._ready = true;
-        callback();
+        resolve();
       });
     });
   },
 
-  send: function mm_send(message, cardIndex) {
-    var conn = navigator.mozMobileConnections[cardIndex || 0];
-    if (this._conn && (this._conn != conn)) {
-      console.error('Starting a new MMI session before the previous has ' +
-                    'finished is not permitted');
-      return;
-    }
+  /**
+   * Handle dialing an MMI code by starting the UI and following up on the
+   * promise in the MMICall object returned by Telephony.dial().
+   *
+   * @param {Object} conn The MozMobileConnection on which the MMI code was
+   *        dialed on.
+   * @param {String} message The dialed MMI code.
+   * @param {Promise} promise The MMICall promise.
+   * @returns {Promise} A promise that is resolved once the MMI message
+   *          response has been handled.
+   */
+  handleDialing: function mm_handleDialing(conn, message, promise) {
+    var self = this;
 
     this._conn = conn;
+    this._pendingRequest = promise;
 
-    this.init((function onInitDone() {
-      if (this._conn) {
-        var request = this._pendingRequest = this._conn.sendMMI(message);
-        request.onsuccess = this.notifySuccess.bind(this);
-        request.onerror = this.notifyError.bind(this);
-        this.openUI();
-      }
-    }).bind(this));
+    return this.init().then(function() {
+      self.openUI();
+
+      /* TODO we are creating this callback instead of just following up on
+       * the promise because we need to pass the original mmi code sent. This
+       * should be removed when bug 889737 and bug 1049651 are landed as it
+       * should be possible to get it in the callback. */
+      return promise.then(function(result) {
+        if (result.success) {
+          self.notifySuccess(result, message);
+        } else {
+          self.notifyError(result, message);
+        }
+      });
+    });
   },
 
-  notifySuccess: function mm_notifySuccess(evt) {
+  // Passing the sent MMI code because the message displayed to the user
+  // could be different depending on the MMI code.
+  notifySuccess: function mm_notifySuccess(mmiResult, sentMMI) {
     // Helper function to compose an informative message about a successful
     // request to query the call forwarding status.
     var processCf = (function processCf(result) {
-      var msg = this._('cf-status');
-
       var voice, data, fax, sms, sync, async, packet, pad;
 
       for (var i = 0; i < result.length; i++) {
@@ -110,46 +123,51 @@ var MmiManager = {
                 pad = result[i].number;
                 break;
               default:
-                return this._('cf-error');
+                return this._('call-forwarding-error');
             }
           }
         }
       }
 
-      msg += this._('cf-voice', {voice: voice || this._('cf-inactive')}) +
-             this._('cf-data', {data: data || this._('cf-inactive')}) +
-             this._('cf-fax', {fax: fax || this._('cf-inactive')}) +
-             this._('cf-sms', {sms: sms || this._('cf-inactive')}) +
-             this._('cf-sync', {sync: sync || this._('cf-inactive')}) +
-             this._('cf-async', {async: async || this._('cf-inactive')}) +
-             this._('cf-packet', {packet: packet || this._('cf-inactive')}) +
-             this._('cf-pad', {pad: pad || this._('cf-inactive')});
+      var inactive = this._('call-forwarding-inactive');
+      var msg = [
+        this._('call-forwarding-status'),
+        this._('call-forwarding-voice', { voice: voice || inactive }),
+        this._('call-forwarding-data', { data: data || inactive }),
+        this._('call-forwarding-fax', { fax: fax || inactive }),
+        this._('call-forwarding-sms', { sms: sms || inactive }),
+        this._('call-forwarding-sync', { sync: sync || inactive }),
+        this._('call-forwarding-async', { async: async || inactive }),
+        this._('call-forwarding-packet', { packet: packet || inactive }),
+        this._('call-forwarding-pad', { pad: pad || inactive })
+      ].join('\n');
+
       return msg;
     }).bind(this);
 
-    var mmiResult = evt.target.result;
-    var message = {};
+    var ci = this.cardIndexForConnection(this._conn);
+    var message = null;
+    var title = null;
+    var error = null;
 
     // We always expect an MMIResult object even for USSD requests.
     if (!mmiResult) {
-      message = {
-        type: 'mmi-error',
-        error: this._('GenericFailure')
-      };
-
-      window.postMessage(message, this.COMMS_APP_ORIGIN);
+      MmiUI.error(this._('GenericFailure'));
       return;
     }
 
-    message.type = 'mmi-success';
-
     if (mmiResult.serviceCode) {
-      message.title = this._(mmiResult.serviceCode);
+      title = this.prependSimNumber(this._(mmiResult.serviceCode), ci);
     }
 
     var additionalInformation = mmiResult.additionalInformation;
 
     switch (mmiResult.serviceCode) {
+      case 'scCall':
+        /* Call control, no need to show a result page as the command will
+         * already have been executed (hang up a call, etc...). */
+        MmiUI.cancel();
+        return;
       case 'scUssd':
         // Bail out if there is nothing to show or if we got the .onsuccess
         // event after the .onussdevent.
@@ -157,51 +175,52 @@ var MmiManager = {
           return;
         }
 
-        message.result = mmiResult.statusMessage;
-        break;
-      case 'scImei':
-        // We always expect the IMEI, so if we got a .onsuccess event
-        // without the IMEI value, we throw an error message.
-        if (mmiResult.statusMessage) {
-          message.result = mmiResult.statusMessage;
-        } else {
-          message.type = 'mmi-error';
-          message.error = this._('GenericFailure');
-        }
+        message = mmiResult.statusMessage;
         break;
       case 'scPin':
       case 'scPin2':
       case 'scPuk':
       case 'scPuk2':
         if (mmiResult.statusMessage) {
-          message.result = this._(mmiResult.statusMessage);
+          message = this._(mmiResult.statusMessage);
         }
         break;
       case 'scCallForwarding':
         if (mmiResult.statusMessage) {
-          message.result = this._(mmiResult.statusMessage);
+          message = this._(mmiResult.statusMessage);
           // Call forwarding requests via MMI codes might return an array of
           // nsIDOMMozMobileCFInfo objects. In that case we serialize that array
           // into a single string that can be shown on the screen.
           if (additionalInformation) {
-            message.result = processCf(additionalInformation);
+            message = processCf(additionalInformation);
           }
         } else {
-          message.type = 'mmi-error';
-          message.error = this._('GenericFailure');
+          error = this._('GenericFailure');
         }
         break;
       case 'scCallBarring':
       case 'scCallWaiting':
+        message = this._(mmiResult.statusMessage);
+        // If we are just querying the status of the service, we show a 
+        // different message, so the user knows she hasn't change anything
+        if (sentMMI === CALL_BARRING_STATUS_MMI_CODE ||
+            sentMMI === CALL_WAITING_STATUS_MMI_CODE) {
+          if (mmiResult.statusMessage === 'smServiceEnabled') {
+            message = this._('ServiceIsEnabled');
+          } else if (mmiResult.statusMessage === 'smServiceDisabled') {
+            message = this._('ServiceIsDisabled');
+          } else if (mmiResult.statusMessage === 'smServiceEnabledFor') {
+            message = this._('ServiceIsEnabledFor');
+          }
+        }
         // Call barring and call waiting requests via MMI codes might return an
         // array of strings indicating the service it is enabled for or just
         // the disabled status message.
-        message.result = this._(mmiResult.statusMessage);
         if (mmiResult.statusMessage === 'smServiceEnabledFor' &&
             additionalInformation &&
             Array.isArray(additionalInformation)) {
           for (var i = 0, l = additionalInformation.length; i < l; i++) {
-            message.result += '\n' + this._(additionalInformation[i]);
+            message += '\n' + this._(additionalInformation[i]);
           }
         }
         break;
@@ -209,29 +228,28 @@ var MmiManager = {
         // This would allow carriers and others to implement custom MMI codes
         // with title and statusMessage only.
         if (mmiResult.statusMessage) {
-          message.result = this._(mmiResult.statusMessage) ?
-                           this._(mmiResult.statusMessage) :
-                           mmiResult.statusMessage;
+          message = this._(mmiResult.statusMessage) || mmiResult.statusMessage;
         }
         break;
     }
 
-    window.postMessage(message, this.COMMS_APP_ORIGIN);
+    if (!error) {
+      MmiUI.success(message, title);
+    } else {
+      MmiUI.error(error, title);
+    }
   },
 
-  notifyError: function mm_notifyError(evt) {
-    var mmiError = evt.target.error;
-
-    var message = {
-      type: 'mmi-error'
-    };
+  notifyError: function mm_notifyError(mmiError) {
+    var title = null;
+    var ci = this.cardIndexForConnection(this._conn);
 
     if (mmiError.serviceCode) {
-      message.title = this._(mmiError.serviceCode);
+      title = this.prependSimNumber(this._(mmiError.serviceCode), ci);
     }
 
-    message.error = mmiError.name ?
-      this._(mmiError.name) : this._('GenericFailure');
+    var error = mmiError.statusMessage ? this._(mmiError.statusMessage)
+                                       : this._('GenericFailure');
 
     switch (mmiError.serviceCode) {
       case 'scPin':
@@ -241,115 +259,217 @@ var MmiManager = {
         // If the error is related with an incorrect old PIN, we get the
         // number of remainings attempts.
         if (mmiError.additionalInformation &&
-            (mmiError.name === 'emMmiErrorPasswordIncorrect' ||
-             mmiError.name === 'emMmiErrorBadPin' ||
-             mmiError.name === 'emMmiErrorBadPuk')) {
-          message.error += '\n' + this._('emMmiErrorPinPukAttempts', {
+            (mmiError.statusMessage === 'emMmiErrorPasswordIncorrect' ||
+             mmiError.statusMessage === 'emMmiErrorBadPin' ||
+             mmiError.statusMessage === 'emMmiErrorBadPuk')) {
+          error += '\n' + this._('emMmiErrorPinPukAttempts', {
             n: mmiError.additionalInformation
           });
         }
         break;
     }
 
-    window.postMessage(message, this.COMMS_APP_ORIGIN);
+    MmiUI.error(error, title);
   },
 
   openUI: function mm_openUI() {
-    this.init((function onInitDone(_) {
-      window.postMessage({type: 'mmi-loading'}, this.COMMS_APP_ORIGIN);
-    }).bind(this));
+    this.init().then(function() {
+      MmiUI.loading();
+    });
   },
 
-  handleMMIReceived: function mm_handleMMIReceived(message, sessionEnded,
-                                                   cardIndex)
+  /**
+   * Create a notification/message string by prepending the SIM number if the
+   * phone has more than one SIM card.
+   *
+   * @param text {String} The message text.
+   * @param cardIndex {Integer} The SIM card slot index.
+   * @return {String} Either the original string alone or with the SIM number
+   *         prepended to it.
+   */
+  prependSimNumber: function mm_prependSimNumber(text, cardIndex) {
+    if (window.navigator.mozIccManager &&
+        window.navigator.mozIccManager.iccIds.length > 1) {
+      var simName = this._('sim-number', { n: +cardIndex + 1 });
+
+      text = this._(
+        'mmi-notification-title-with-sim',
+        { sim: simName, title: text }
+      );
+    }
+
+    return text;
+  },
+
+  /**
+   * Handles an MMI/USSD message. Pops up the MMI UI and displays the message.
+   *
+   * @param {String} message An MMI/USSD message.
+   * @param {Object} session The object representing the USSD session.
+   * @param {Integer} cardIndex The index of the SIM card on which this message
+   *        was received.
+   */
+  handleMMIReceived: function mm_handleMMIReceived(message, session, cardIndex)
   {
-    this.init((function() {
-      this._pendingRequest = null;
+    var self = this;
+
+    return this.init().then(function() {
+      self._pendingRequest = null;
+      self._session = session;
       // Do not notify the UI if no message to show.
-      if (message == null && !sessionEnded) {
+      if (!message && session) {
         return;
       }
 
       var conn = navigator.mozMobileConnections[cardIndex || 0];
-      var title = MobileOperator.userFacingInfo(conn).operator;
+      var operator = MobileOperator.userFacingInfo(conn).operator;
+      var title = self.prependSimNumber(operator || '', cardIndex);
 
-      /* If the phone has more than one SIM prepend the number of the SIM on
-       * which this message was received */
-      if (window.navigator.mozIccManager &&
-          window.navigator.mozIccManager.iccIds.length > 1) {
-        var simName = this._('sim-number', { n: +cardIndex + 1 });
+      MmiUI.received(session, message, title);
+    });
+  },
 
-        title = this._(
-          'mmi-notification-title-with-sim',
-          { sim: simName, title: title }
-        );
-      }
+  /**
+   * Sends a notification for the specified message, returns a promise that is
+   * resolved once the operation is finished.
+   *
+   * @param {String} message An MMI/USSD message.
+   * @param {Integer} cardIndex The index of the SIM card on which this message
+   *        was received.
+   * @return {Promise} A promise that is resolved once the operation is
+   *         finished.
+   */
+  sendNotification: function mm_sendNotification(message, cardIndex) {
+    var self = this;
 
-      var data = {
-        type: 'mmi-received-ui',
-        message: message,
-        title: title,
-        sessionEnded: sessionEnded
+    return new Promise(function(resolve, reject) {
+      var request = window.navigator.mozApps.getSelf();
+      request.onsuccess = function(evt) {
+        var app = evt.target.result;
+
+        self.init().then(function() {
+          LazyLoader.load('/shared/js/notification_helper.js', function() {
+            var iconURL = NotificationHelper.getIconURI(app, 'dialer');
+            var clickCB = function(evt) {
+              self.handleMMIReceived(message, /* session */ null, cardIndex);
+            };
+            var conn = navigator.mozMobileConnections[cardIndex || 0];
+            var operator = MobileOperator.userFacingInfo(conn).operator;
+            var titleL10n = self.prependSimNumber(
+              operator ? operator : '', cardIndex);
+            /* XXX: Bug 1033254 - We put the |ussd-message=1| parameter in the
+             * URL string to distinguish this notification from the others.
+             * This should be thorought the application possibly by using the
+             * tag field. */
+            NotificationHelper.send(titleL10n, {
+              body: message,
+              icon: iconURL + '?ussdMessage=1&cardIndex=' + cardIndex,
+              tag: Date.now()
+            }).then(notification => {
+              notification.addEventListener('click', clickCB);
+              resolve();
+            });
+          });
+        });
       };
-      window.postMessage(data, this.COMMS_APP_ORIGIN);
-    }).bind(this));
+      request.onerror = function(error) {
+        reject(error);
+      };
+    });
   },
 
-  isMMI: function mm_isMMI(number, cardIndex) {
-    var cdmaTypes = ['evdo0', 'evdoa', 'evdob', '1xrtt', 'is95a', 'is95b'];
-    var conn = navigator.mozMobileConnections[cardIndex || 0];
-    var voiceType = conn.voice ? conn.voice.type : null;
-    var supportedNetworkTypes = conn.supportedNetworkTypes;
-    var imeiWhitelist = function mm_imeiWhitelist(element) {
-      return (['gsm', 'lte', 'wcdma'].indexOf(element) !== -1);
-    };
+  reply: function mm_reply(message) {
+    var self = this;
 
-    if ((number === '*#06#') && supportedNetworkTypes.some(imeiWhitelist)) {
-      // Requesting the IMEI code works on phones supporting a GSM network
-      return true;
-    } else if (cdmaTypes.indexOf(voiceType) !== -1) {
-      // If we're on a CDMA network USSD/MMI numbers are not available
-      return false;
-    } else {
-      // A valid USSD/MMI code is any 'number' ending in '#'.
-      return (number.charAt(number.length - 1) === '#');
-    }
+    return this._session.send(message).then(function(request) {
+       self._pendingRequest = request;
+    });
   },
 
-  handleEvent: function mm_handleEvent(evt) {
-    if (!evt.type) {
-      return;
-    }
-
-    switch (evt.type) {
-      case 'message':
-        if (evt.origin !== this.COMMS_APP_ORIGIN) {
-          return;
-        }
-        switch (evt.data.type) {
-          case 'mmi-reply':
-            this.send(evt.data.message,
-                      this.cardIndexForConnection(this._conn));
-            break;
-          case 'mmi-cancel':
-            if (this._conn) {
-              this._conn.cancelMMI();
-              this._conn = null;
-            }
-            break;
-        }
-
-        return;
+  cancel: function mm_cancel() {
+    this._pendingRequest = null;
+    if (this._session) {
+      this._session.cancel();
+      this._session = null;
     }
   },
 
   cardIndexForConnection: function mm_cardIndexForConnection(conn) {
     for (var i = 0; i < navigator.mozMobileConnections.length; i++) {
-      if (conn == navigator.mozMobileConnections[i]) {
+      if (conn === navigator.mozMobileConnections[i]) {
         return i;
       }
     }
 
     return 0;
+  },
+
+  /**
+   * Retrieves the IMEI code for the specified SIM card slot.
+   *
+   * @param {Integer} cardIndex The index of the SIM card slot.
+   * @returns {Promise} A promise that resolves to the IMEI code for the slot
+   *          upon successful completion or rejects upon failure.
+   */
+  _getImeiForCard: function mm_getImeiForCard(cardIndex) {
+    return navigator.mozTelephony.dial('*#06#', cardIndex).then(
+      function(mmiCall) {
+        return mmiCall.result.then(function(result) {
+          /* We always expect the IMEI, so if we got a successful completion
+           * without the IMEI value, we throw an error message. */
+          if ((result === null) || (result.serviceCode !== 'scImei') ||
+              (result.statusMessage === null)) {
+            return Promise.reject(
+              new Error('Could not retrieve the IMEI code for SIM' +
+                        cardIndex));
+          }
+
+          return result.statusMessage;
+        });
+      }
+    );
+  },
+
+  /**
+   * Returns true if the specified number is the MMI code used to request the
+   * IMEI codes of the phone's SIM slots (*#06#).
+   *
+   * @param {String} number A phone number or MMI code.
+   * @returns {Boolean} true if the passed number is the MMI IMEI request code
+   *          and false in all other cases.
+   */
+  isImei: function mm_isImei(number) {
+    return (number === '*#06#');
+  },
+
+  /**
+   * Sends the necessary MMI messages to retrieve IMEI codes for all SIM slots
+   * and displays the resulting codes on the screen.
+   *
+   * @returns {Promise} A promise that is resolved when the operation has been
+   *          completed.
+   */
+  showImei: function mm_showImei() {
+    var self = this;
+
+    return new Promise(function(resolve, reject) {
+      self.init().then(function() {
+        var promises = [];
+
+        for (var i = 0; i < navigator.mozMobileConnections.length; i++) {
+          promises.push(self._getImeiForCard(i));
+        }
+
+        self.openUI();
+
+        Promise.all(promises).then(function(imeis) {
+          MmiUI.success(imeis.join('\n'), self._('scImei'));
+          resolve();
+        }, function(reason) {
+          MmiUI.error(self._('GenericFailure'));
+          reject(reason);
+        });
+      });
+    });
   }
 };

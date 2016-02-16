@@ -1,94 +1,178 @@
-requireLib('template.js');
-requireLib('templates/alarm.js');
+define(function(require) {
+'use strict';
+/* global MockMozIntl */
 
-suiteGroup('Templates.Alarm', function() {
-  'use strict';
+require('/shared/test/unit/mocks/mock_moz_intl.js');
 
+var Alarm = require('templates/alarm');
+
+suite('Templates.Alarm', function() {
   var subject;
-  var app;
-
-  setup(function() {
-    app = testSupport.calendar.app();
-  });
 
   suiteSetup(function() {
-    subject = Calendar.Templates.Alarm;
+    window.mozIntl = MockMozIntl;
+    subject = Alarm;
   });
 
-  function renderDescription(trigger, layout) {
-    return subject.description.render({
-      trigger: trigger,
-      layout: layout
+  function renderOption(value, layout, selected) {
+    return subject.option.render({
+      value: value,
+      layout: layout,
+      selected: selected
     });
   }
 
-  suite('#description', function() {
+  function renderDescription(layout, trigger) {
+    return subject.description.render({
+      layout: layout,
+      trigger: trigger
+    });
+  }
+
+  suite('description', function() {
     test('minutes', function() {
-      assert.ok(
-        /minutes/.test(renderDescription(-600))
-      );
+      var relativePartSpy = sinon.spy(window.mozIntl._gaia, 'relativePart');
+      renderDescription('allday', -600);
+      assert.isTrue(relativePartSpy.withArgs(-600 * 1000).calledOnce);
+      window.mozIntl._gaia.relativePart.restore();
+
+      assert.include(renderDescription('allday', -600), 'role="listitem"');
+      assert.include(renderDescription('standard', -600), 'role="listitem"');
+    });
+
+    test('hours', function() {
+      var relativePartSpy = sinon.spy(window.mozIntl._gaia, 'relativePart');
+      renderDescription('allday', -6000);
+      assert.isTrue(relativePartSpy.withArgs(-6000 * 1000).calledOnce);
+      window.mozIntl._gaia.relativePart.restore();
+
+      assert.include(renderDescription('allday', -6000), 'role="listitem"');
+      assert.include(renderDescription('standard', -6000), 'role="listitem"');
+    });
+
+    test('years', function() {
+      var relativePartSpy = sinon.spy(window.mozIntl._gaia, 'relativePart');
+      renderDescription('allday', -6000000);
+      assert.isTrue(relativePartSpy.withArgs(-6000000 * 1000).calledOnce);
+      window.mozIntl._gaia.relativePart.restore();
+
+      assert.include(renderDescription('allday', -6000000), 'role="listitem"');
+      assert.include(renderDescription('standard', -6000000),
+        'role="listitem"');
+    });
+
+    test('none', function() {
+      assert.include(renderDescription('allday', 'none'), 'None');
+      assert.include(renderDescription('allday', 'none'), 'role="listitem"');
+      assert.include(renderDescription('standard', 'none'), 'role="listitem"');
+    });
+  });
+
+  suite('#option', function() {
+    test('minutes', function() {
+      var relativePartSpy = sinon.spy(window.mozIntl._gaia, 'relativePart');
+      renderOption(-600);
+      assert.isTrue(relativePartSpy.withArgs(-600 * 1000).calledOnce);
+      window.mozIntl._gaia.relativePart.restore();
     });
 
     test('hours', function() {
       // One hour ago
-      assert.ok(
-        /hour/.test(renderDescription(-6000))
-      );
+      var relativePartSpy = sinon.spy(window.mozIntl._gaia, 'relativePart');
+      renderOption(-6000);
+      assert.isTrue(relativePartSpy.withArgs(-6000 * 1000).calledOnce);
+      window.mozIntl._gaia.relativePart.restore();
     });
 
     test('years', function() {
       // Large differences are specified in weeks
-      assert.ok(
-        /months/.test(renderDescription(-6000000))
-      );
+      var relativePartSpy = sinon.spy(window.mozIntl._gaia, 'relativePart');
+      renderOption(-6000000);
+      assert.isTrue(relativePartSpy.withArgs(-6000000 * 1000).calledOnce);
+      window.mozIntl._gaia.relativePart.restore();
     });
 
     test('none', function() {
-      assert.ok(
-        /None/.test(renderDescription('none'))
-      );
+      assert.include(renderOption('none'), 'None');
     });
 
     test('single unit rendered', function() {
-      assert.equal(
-        '1 hour before', renderDescription(-5400)
-      );
+      var relativePartSpy = sinon.spy(window.mozIntl._gaia, 'relativePart');
+      renderOption(-5400);
+      assert.isTrue(relativePartSpy.withArgs(-5400 * 1000).calledOnce);
+      window.mozIntl._gaia.relativePart.restore();
+    });
+
+    suite('selected', function() {
+      test('> not selected', function() {
+        assert.ok(
+          renderOption(-1800).indexOf('selected') === -1,
+          'not selected by default'
+        );
+      });
+
+      test('> selected', function() {
+        assert.include(renderOption(-1800, null, true), 'selected');
+      });
+    });
+
+    suite('all day event alarms', function() {
+      test('trigger include to system default\'s on day of event', function() {
+        var option = renderOption(32400, 'allday');
+        assert.include(option, 'On day of event');
+        assert.include(option, 'data-l10n-id="alarm-at-event-allday"');
+      });
+
+      test('trigger include to 9 hours before event', function() {
+        var relativePartSpy = sinon.spy(window.mozIntl._gaia, 'relativePart');
+        renderOption(-32400, 'allday');
+        assert.isTrue(relativePartSpy.withArgs(-32400 * 1000).calledOnce);
+        window.mozIntl._gaia.relativePart.restore();
+      });
+
+      test('trigger include to 1 day before', function() {
+        var relativePartSpy = sinon.spy(window.mozIntl._gaia, 'relativePart');
+        renderOption(-54000, 'allday');
+        assert.isTrue(relativePartSpy.withArgs(-86400000).calledOnce);
+        window.mozIntl._gaia.relativePart.restore();
+      });
+
+      test('trigger include to 1 day after', function() {
+        var relativePartSpy = sinon.spy(window.mozIntl._gaia, 'relativePart');
+        renderOption(86400, 'allday');
+        assert.isTrue(relativePartSpy.withArgs(86400 * 1000).calledOnce);
+        window.mozIntl._gaia.relativePart.restore();
+      });
+
+      test('trigger include to 2 days before', function() {
+        var relativePartSpy = sinon.spy(window.mozIntl._gaia, 'relativePart');
+        renderOption(-140400, 'allday');
+        assert.isTrue(relativePartSpy.withArgs(-172800000).calledOnce);
+        window.mozIntl._gaia.relativePart.restore();
+      });
+
+      test('trigger include to 1 week before', function() {
+        var relativePartSpy = sinon.spy(window.mozIntl._gaia, 'relativePart');
+        renderOption(-572400, 'allday');
+        assert.isTrue(relativePartSpy.withArgs(-604800000).calledOnce);
+        window.mozIntl._gaia.relativePart.restore();
+      });
+
+      test('trigger include to 2 weeks before', function() {
+        var relativePartSpy = sinon.spy(window.mozIntl._gaia, 'relativePart');
+        renderOption(-1177200, 'allday');
+        assert.isTrue(relativePartSpy.withArgs(-1209600000).calledOnce);
+        window.mozIntl._gaia.relativePart.restore();
+      });
+
+      test('trigger include to 30 minutes', function() {
+        var relativePartSpy = sinon.spy(window.mozIntl._gaia, 'relativePart');
+        renderOption(-1800, 'allday');
+        assert.isTrue(relativePartSpy.withArgs(-1800 * 1000).calledOnce);
+        window.mozIntl._gaia.relativePart.restore();
+      });
     });
   });
-
-  suite('#all day event alarms', function() {
-    test('trigger equal to system default\'s on day of event', function() {
-      assert.equal('On day of event', renderDescription(32400, 'allday'));
-    });
-
-    test('trigger equal to 9 hours before event', function() {
-      assert.equal('9 hours before', renderDescription(-32400, 'allday'));
-    });
-
-    test('trigger equal to 1 day before', function() {
-      assert.equal('1 day before', renderDescription(-54000, 'allday'));
-    });
-
-    test('trigger equal to 1 day after', function() {
-      assert.equal('1 day after', renderDescription(86400, 'allday'));
-    });
-
-    test('trigger equal to 2 days before', function() {
-      assert.equal('2 days before', renderDescription(-140400, 'allday'));
-    });
-
-    test('trigger equal to 1 week before', function() {
-      assert.equal('1 week before', renderDescription(-572400, 'allday'));
-    });
-
-    test('trigger equal to 2 weeks before', function() {
-      assert.equal('2 weeks before', renderDescription(-1177200, 'allday'));
-    });
-
-    test('trigger equal to 30 minutes', function() {
-      assert.equal('30 minutes before', renderDescription(-1800, 'allday'));
-    });
-
-  });
+});
 
 });

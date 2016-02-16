@@ -1,10 +1,9 @@
+/* global MockL10n, SpinDatePicker */
 'use strict';
-
-mocha.globals(['SpinDatePicker']);
 
 requireApp('system/js/value_selector/value_picker.js');
 requireApp('system/js/value_selector/spin_date_picker.js');
-requireApp('system/test/unit/mock_l10n.js');
+require('/shared/test/unit/mocks/mock_l20n.js');
 
 suite('value selector/spin date picker', function() {
   var subject;
@@ -12,12 +11,12 @@ suite('value selector/spin date picker', function() {
   var stubById;
 
   suiteSetup(function() {
-    realL10n = navigator.mozL10n;
-    navigator.mozL10n = MockL10n;
+    realL10n = document.l10n;
+    document.l10n = MockL10n;
   });
 
   suiteTeardown(function() {
-    navigator.mozL10n = realL10n;
+    document.l10n = realL10n;
   });
 
   teardown(function() {
@@ -26,17 +25,17 @@ suite('value selector/spin date picker', function() {
 
   setup(function() {
     // mockup element
-    function mock_obj() {};
+    function mock_obj() {}
     mock_obj.prototype.querySelector = function() {
       return document.createElement('div').
         appendChild(document.createElement('div'));
     };
 
-    stubById = this.sinon.stub(document, 'getElementById')
-                   .returns(new mock_obj());
+    stubById = this.sinon.stub(document, 'getElementsByClassName')
+                   .returns([new mock_obj()]);
 
-    var DateContainer =
-      document.getElementById('spin-date-picker');
+    var DateContainer = document.getElementsByClassName(
+      'value-selector-spin-date-picker')[0];
     subject = new SpinDatePicker(DateContainer);
   });
 

@@ -14,33 +14,23 @@ var Marionette = require('marionette-client');
 function Rocketbar(client) {
   this.client = client.scope({ searchTimeout: 200000 });
   this.actions = new Marionette.Actions(client);
+  this.system = client.loader.getAppClass('system');
 }
 
 module.exports = Rocketbar;
 
-Rocketbar.clientOptions = {
-  prefs: {
-    // This is true on Gonk, but false on desktop, so override.
-    'dom.inter-app-communication-api.enabled': true,
-    'dom.w3c_touch_events.enabled': 1
-  },
-  settings: {
-    'ftu.manifestURL': null,
-    'keyboard.ftu.enabled': false,
-    'lockscreen.enabled': false,
-    'rocketbar.enabled': true
-  }
-};
-
 Rocketbar.prototype = {
   selectors: {
-    activeBrowserFrame: '#windows .appWindow.active',
+    activeBrowserFrame: '.browser.appWindow.active',
     screen: '#screen',
     rocketbar: '#rocketbar',
     title: '#rocketbar-title',
     input: '#rocketbar-input',
     cancel: '#rocketbar-cancel',
-    backdrop: '#rocketbar-backdrop'
+    clear: '#rocketbar-clear',
+    backdrop: '#rocketbar-backdrop',
+    results: '#rocketbar-results',
+    appTitle: '.appWindow.active .chrome .title'
   },
 
   /**
@@ -55,7 +45,7 @@ Rocketbar.prototype = {
     this.client.waitFor(function() {
       this.client.executeScript(function() {
         var win = window.wrappedJSObject;
-        return win.rocketbar && win.rocketbar.enabled;
+        return win.Service.query('Rocketbar.enabled');
       }, function(err, value) {
         lastVal = value;
       });
@@ -69,21 +59,91 @@ Rocketbar.prototype = {
   },
 
   /**
+   * Focuses the rocketbar from the homescreen.
+   * This is a temporary method while the homescreen search trigger lives in
+   * the homescreen app. If we move it to the system app we can remove this.
+   */
+  homescreenFocus: function() {
+    // Only verticalhome has a search bar built in, so check to see if the
+    // app one is visible first and use that.
+    var title;
+    this.client.switchToFrame();
+    try {
+      title = this.client.scope({ searchTimeout: 100 }).
+        findElement(this.selectors.appTitle);
+    } catch (e) { }
+    if (title && title.displayed()) {
+      title.tap();
+      this.client.switchToFrame();
+      return;
+    }
+
+    this.client.switchToFrame();
+    var homeLib = this.client.loader.getAppClass('verticalhome');
+    homeLib.waitForLaunch();
+    homeLib.focusRocketBar();
+  },
+
+  performSearchInBrowser: function(text) {
+    this.enterText(text, true);
+    this.waitForBrowserFrame();
+  },
+
+  /**
+   * Trigger rocketbar from app title.
+   */
+  appTitleFocus: function() {
+    var title = this.client.helper.waitForElement(this.selectors.appTitle);
+    title.click();
+  },
+
+  waitForInputToBecomeVisible: function() {
+    this.client.helper.waitForElement(this.selectors.input);
+  },
+
+  /**
    * Send keys to the Rocketbar (needs to be focused first).
    */
-  enterText: function(text) {
+  enterText: function(text, submit) {
     var input =
       this.client.findElement(this.selectors.input);
     input.clear();
     this.client.waitFor(input.displayed.bind(input));
     input.sendKeys(text);
+
+    if (submit) {
+      input.sendKeys('\uE006');
+    }
+
+    if (!text.length) {
+      this.client.executeScript(function() {
+        window.wrappedJSObject.Service.request('Rocketbar:handleInput');
+      });
+    }
+
+    // Manually blur the input with script or the keyboard can mess up
+    // visibility in tests.
+    input.scriptWith(function(el) {
+      el.blur();
+    });
+  },
+
+  /**
+   * Switches to a search browser frame.
+   * The URL of a search provider will generally contain '{searchTerms}', so
+   * we replace that with the search text.
+   */
+  switchToSearchFrame: function(url, text) {
+    url = url.replace('{searchTerms}', '');
+    return this.switchToBrowserFrame(url);
   },
 
   /**
    * Switch to a browser window frame which matches the given URL.
    */
   switchToBrowserFrame: function(url) {
-    var browserFrame = this.client.findElement('iframe[src="' + url + '"]');
+    url = url.replace(/\s+/g, '%20');
+    var browserFrame = this.client.findElement('iframe[src*="' + url + '"]');
     this.client.switchToFrame(browserFrame);
   },
 
@@ -99,23 +159,26 @@ Rocketbar.prototype = {
   },
 
   /**
-   * Wait for an opened browser frame to complete showing, then
-   * return to the homescreen.
+   * Wait for an opened browser frame to complete showing
    */
   waitForBrowserFrame: function() {
     this.client.switchToFrame();
-    this.client.waitFor((function() {
-      var size = this.client.findElement(this.selectors.activeBrowserFrame)
-        .size();
-      return size.width === 320 && size.height === 456;
-    }).bind(this));
-    return this.client.executeScript(function() {
-      window.wrappedJSObject.dispatchEvent(new CustomEvent('home'));
-    });
+    var browser = this.selectors.activeBrowserFrame;
+    this.client.helper.waitForElement(browser);
+  },
+
+  goToURL: function(url) {
+    this.homescreenFocus();
+    this.enterText(url, true);
+    this.system.waitForUrlLoaded(url);
   },
 
   get rocketbar() {
     return this.client.findElement(this.selectors.rocketbar);
+  },
+
+  get results() {
+    return this.client.findElement(this.selectors.results);
   },
 
   get screen() {
@@ -132,6 +195,10 @@ Rocketbar.prototype = {
 
   get cancel() {
     return this.client.findElement(this.selectors.cancel);
+  },
+
+  get clear() {
+    return this.client.findElement(this.selectors.clear);
   },
 
   get backdrop() {

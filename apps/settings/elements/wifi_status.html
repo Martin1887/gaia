@@ -1,38 +1,42 @@
 <element name="wifi-status" extends="section">
   <template>
 
-    <header>
-      <button type="reset"><span data-l10n-id="back" class="icon icon-back">Back</span></button>
-      <menu type="toolbar">
-        <button type="submit"><span data-l10n-id="forget">Forget</span></button>
-      </menu>
+    <gaia-header>
+      <button type="reset"><span data-icon="close" data-l10n-id="closeButton"></span></button>
       <h1 data-ssid> Network Status </h1>
-    </header>
+      <button type="submit"><span data-l10n-id="forget"></span></button>
+    </gaia-header>
 
     <div>
       <ul>
         <li>
-          <a data-l10n-id="security">security
-            <span data-security>WPA-PSK</span>
+          <a>
+            <span data-l10n-id="security"></span>
+            <span data-security></span>
           </a>
         </li>
         <li>
-          <a data-l10n-id="signalStrength">signal strength
-            <span data-signal>good</span>
+          <a>
+            <span data-l10n-id="signalStrength"></span>
+            <span data-signal></span>
           </a>
         </li>
         <li>
-          <a data-l10n-id="ipAddress">IP Adddress
+          <a>
+            <span data-l10n-id="ipAddress"></span>
             <span data-ip></span>
           </a>
         </li>
         <li>
-          <a data-l10n-id="linkSpeed">link speed
+          <a>
+            <span data-l10n-id="linkSpeed"></span>
             <span data-speed></span>
           </a>
         </li>
       </ul>
     </div>
+
+    <panel data-path="panels/wifi_status/panel"></panel>
 
   </template>
 </element>

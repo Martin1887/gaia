@@ -1,11 +1,10 @@
 define(function(require) {
 'use strict';
+/* global IntlHelper */
 
 var Banner = require('banner/main');
-var AlarmsDB = require('alarmsdb');
-var AlarmManager = require('alarm_manager');
+var alarmDatabase = require('alarm_database');
 var Utils = require('utils');
-var _ = require('l10n').get;
 var App = require('app');
 var alarmTemplate = require('tmpl!panels/alarm/list_item.html');
 var AsyncQueue = require('async_queue');
@@ -22,16 +21,16 @@ function AlarmListPanel(element) {
 
   this.banner = new Banner('banner-countdown');
 
-  AlarmsDB.getAlarmList((err, alarmList) => {
-    if (!alarmList) { return; }
-    for (var i = 0; i < alarmList.length; i++) {
-      this.addOrUpdateAlarm(alarmList[i]);
+  alarmDatabase.getAll().then((alarms) => {
+    for (var i = 0; alarms && i < alarms.length; i++) {
+      this.addOrUpdateAlarm(alarms[i]);
     }
+    this.updateAlarmStatusBar();
+    App.alarmListLoaded();
   });
 
-  // On startup, update the status bar to show whether or not we have
-  // an alarm scheduled.
-  AlarmManager.updateAlarmStatusBar();
+  // This will be fired on language and timeformat changes
+  IntlHelper.observe('time-html', this.refreshDisplay.bind(this));
 
   window.addEventListener('alarm-changed', (evt) => {
     var alarm = evt.detail.alarm;
@@ -39,16 +38,23 @@ function AlarmListPanel(element) {
     if (evt.detail.showBanner) {
       this.banner.show(alarm.getNextAlarmFireTime());
     }
-    AlarmManager.updateAlarmStatusBar();
+    this.updateAlarmStatusBar();
   });
   window.addEventListener('alarm-removed', (evt) => {
     this.removeAlarm(evt.detail.alarm);
-    AlarmManager.updateAlarmStatusBar();
+    this.updateAlarmStatusBar();
   });
 }
 
 AlarmListPanel.prototype = {
   alarmIdMap: {},
+
+  refreshDisplay: function(evt) {
+    for (var key in this.alarmIdMap) {
+      var alarm = this.alarmIdMap[key];
+      this.addOrUpdateAlarm(alarm);
+    }
+  },
 
   onClickNewAlarm: function(evt) {
     evt.preventDefault();
@@ -95,10 +101,25 @@ AlarmListPanel.prototype = {
     link.dataset.id = alarm.id;
 
     li.querySelector('.time').innerHTML = Utils.getLocalizedTimeHtml(d);
-    li.querySelector('.label').textContent = alarm.label || _('alarm');
-    li.querySelector('.repeat').textContent =
-      (alarm.isRepeating() ? alarm.summarizeDaysOfWeek() : '');
-
+    if (alarm.label) {
+      li.querySelector('.label').removeAttribute('data-l10n-id');
+      li.querySelector('.label').textContent = alarm.label;
+    } else {
+      li.querySelector('.label').setAttribute('data-l10n-id', 'alarm');
+    }
+    if (alarm.isRepeating()) {
+      Utils.summarizeDaysOfWeek(alarm.repeat).then(l10nId => {
+        if (typeof l10nId === 'string') {
+          li.querySelector('.repeat').setAttribute('data-l10n-id', l10nId);
+        } else if (l10nId.raw) {
+          li.querySelector('.repeat').removeAttribute('data-l10n-id');
+          li.querySelector('.repeat').textContent = l10nId.raw;
+        }
+      });
+    } else {
+      li.querySelector('.repeat').removeAttribute('data-l10n-id');
+      li.querySelector('.repeat').textContent = '';
+    }
     return li;
   },
 
@@ -109,7 +130,7 @@ AlarmListPanel.prototype = {
   addOrUpdateAlarm: function(alarm) {
     this.alarmIdMap[alarm.id] = alarm;
     var li = this.renderAlarm(alarm);
-    var liId = parseInt(li.dataset.id, 10);
+    var liId = parseInt(li.dataset.id, 10) || null;
 
     // Go through the list of existing alarms, inserting this alarm
     // before the first alarm that has a lower ID than this one.
@@ -146,27 +167,37 @@ AlarmListPanel.prototype = {
    * @param {function} callback Optional callback.
    */
   toggleAlarm: function(alarm, enabled) {
-    // If the alarm was scheduled to snooze, cancel the snooze.
-    if (alarm.registeredAlarms.snooze !== undefined) {
-      if (!enabled) {
-        alarm.cancel('snooze');
-      }
-    }
-
     this.toggleAlarmQueue.push((done) => {
-      alarm.setEnabled(enabled, (err, alarm) => {
-        alarm.save();
-        this.addOrUpdateAlarm(alarm);
-        AlarmManager.updateAlarmStatusBar();
+      if (enabled) {
+        alarm.schedule('normal').then(() => {
+          this.addOrUpdateAlarm(alarm);
+          this.updateAlarmStatusBar();
 
-        if (alarm.enabled) {
-          this.banner.show(alarm.getNextAlarmFireTime());
-        }
-
-        done();
-      });
+          if (alarm.isEnabled()) {
+            this.banner.show(alarm.getNextAlarmFireTime());
+          }
+        }).then(done, done);
+      } else {
+        alarm.cancel().then(done);
+      }
     });
+  },
+
+  updateAlarmStatusBar: function() {
+    if (navigator.mozSettings) {
+      var anyAlarmEnabled = false;
+      for (var id in this.alarmIdMap) {
+        if (this.alarmIdMap[id].isEnabled()) {
+          anyAlarmEnabled = true;
+          break;
+        }
+      }
+      navigator.mozSettings.createLock().set({
+        'alarm.enabled': anyAlarmEnabled
+      });
+    }
   }
+
 };
 
 Utils.extendWithDomGetters(AlarmListPanel.prototype, {

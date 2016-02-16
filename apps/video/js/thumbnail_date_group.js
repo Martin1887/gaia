@@ -1,3 +1,4 @@
+/* global MediaUtils,Sanitizer,ThumbnailItem,IntlHelper */
 /**
  * ThumbnailDateGroup is a grouping mechanism supported in video app. It
  * groups video data by its year and month, see bug 908380. The grouping
@@ -5,12 +6,8 @@
  * two groups as different groups. ThumbnailDateGroup also sorts the added video
  * data descendant. We can just put a item into group and let it sort the list.
  *
- * Before use it, we need to initialize the static property Template with
- * template.js object. It is used when rendering group header, the HTML DOM
- * node of this object. The initialization may look like this:
- *
- *    `ThumbnailDateGroup.Template = new Template('thumbnail-group-header');`
- *
+ * The sanitizer.js library is used to escape HTML within the view method.
+ * It is used when rendering group header, the HTML DOM node of this object.
  *
  * The HTML Node of this object contains all UI of its children. If we move it,
  * all items under this group are also moved.
@@ -43,6 +40,7 @@
  *   compareGroupID
  *
  */
+'use strict';
 function ThumbnailDateGroup(item) {
   if (!item) {
     throw new Error('item should not be null or undefined.');
@@ -50,38 +48,35 @@ function ThumbnailDateGroup(item) {
 
   this.thumbnails = [];
   this.groupID = ThumbnailDateGroup.getGroupID(item);
-  this.htmlNode = null;
-  this.container = null;
+  this.date = item.date;
 
-  var _this = this;
-  var _ = navigator.mozL10n.get;
+  var wrappedHtmlText = ThumbnailDateGroup.view();
 
-  render();
+  // create dummy node for converting to DOM node.
+  var dummyDiv = document.createElement('DIV');
+  dummyDiv.innerHTML = Sanitizer.unwrapSafeHTML(wrappedHtmlText);
+  var domNode = dummyDiv.firstElementChild;
 
-  function render() {
-    if (!ThumbnailDateGroup.Template) {
-      throw new Error('template is required while rendering.');
-    }
-
-    var dateFormatter = new navigator.mozL10n.DateTimeFormat();
-    var htmlText = ThumbnailDateGroup.Template.interpolate({
-      'group-header': dateFormatter.localeFormat(new Date(item.date),
-                                                 _('date-group-header'))});
-
-    // create dummy node for converting to DOM node.
-    var dummyDiv = document.createElement('DIV');
-    dummyDiv.innerHTML = htmlText;
-    var domNode = dummyDiv.firstElementChild;
-
-    if (!domNode) {
-      throw new Error('the template is empty');
-    }
-    _this.htmlNode = domNode;
-    _this.container = domNode.querySelector('.thumbnail-group-container');
+  if (!domNode) {
+    throw new Error('the template is empty');
   }
+  this.htmlNode = domNode;
+  this.container = domNode.querySelector('.thumbnail-group-container');
+  this.header = domNode.querySelector('.thumbnail-group-header');
+
+  this.localize();
 }
 
 // static functions
+ThumbnailDateGroup.view = function() {
+  return Sanitizer.createSafeHTML `<li role="presentation">
+      <div class="thumbnail-group-header" role="heading"
+           aria-level="1"></div>
+      <ul class="thumbnail-group-container" role="listbox"
+          data-l10n-id="videos-list" aria-multiselectable="true"></ul>
+    </li>`;
+};
+
 ThumbnailDateGroup.getGroupID = function(item) {
   // id is group_yyyy-mm. this id will be used as a key
   var dateObj = new Date(item.date);
@@ -147,4 +142,15 @@ ThumbnailDateGroup.prototype.removeItem = function(thumbnail) {
   }
   this.thumbnails.splice(idx, 1);
   this.container.removeChild(thumbnail.htmlNode);
+};
+
+ThumbnailDateGroup.prototype.localize = function() {
+  // Localize the date header for this group
+  var date = new Date(this.date);
+  
+  var formatter = IntlHelper.get('date-group');
+  this.header.textContent = formatter.format(date);
+
+  // Then localize the thumbnails in the group.
+  this.thumbnails.forEach(function(thumbnail) { thumbnail.localize(); });
 };

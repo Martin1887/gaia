@@ -1,28 +1,31 @@
 'use strict';
 
 /* global DialerAgent, MocksHelper, MockNavigatorMozTelephony,
-          MockSettingsListener, MockSettingsURL, MockAudio,
-          MockAttentionScreen, lockScreen */
+          MockSettingsListener, MockSettingsURL, MockAudio, MockApplications,
+          MockService */
 
 require('/js/dialer_agent.js');
-require('/test/unit/mock_attention_screen.js');
+require('/test/unit/mock_app_window.js');
+require('/test/unit/mock_applications.js');
+require('/test/unit/mock_attention_window.js');
+requireApp('system/test/unit/mock_lazy_loader.js');
 require('/shared/test/unit/mocks/mock_settings_listener.js');
 require('/shared/test/unit/mocks/mock_settings_url.js');
 require('/shared/test/unit/mocks/mock_audio.js');
 require('/shared/test/unit/mocks/mock_navigator_moz_telephony.js');
+require('/shared/test/unit/mocks/mock_service.js');
 
 var mocksForDialerAgent = new MocksHelper([
-  'AttentionScreen',
   'Audio',
   'SettingsListener',
-  'SettingsURL'
+  'SettingsURL',
+  'LazyLoader',
+  'Service'
 ]).init();
-
-mocha.globals(['lockScreen']);
 
 suite('system/DialerAgent', function() {
   mocksForDialerAgent.attachTestHelpers();
-  var realTelephony, realVibrate, realLockscreen;
+  var realTelephony, realVibrate, realApplications;
 
   var subject;
   var setVisibleSpy;
@@ -31,38 +34,20 @@ suite('system/DialerAgent', function() {
     MockNavigatorMozTelephony.mTriggerEvent(new CustomEvent('callschanged'));
   }
 
-  function assertAttentionScreen(src, spy) {
-    sinon.assert.calledWithMatch(spy, {
-      target: {
-        src: src
-      },
-      detail: {
-        features: 'attention',
-        name: 'call_screen',
-        frameElement: {
-          src: src
-        }
-      }
-    });
-  }
-
   suiteSetup(function() {
+    realApplications = window.applications;
+    window.applications = MockApplications;
     realTelephony = navigator.mozTelephony;
     navigator.mozTelephony = MockNavigatorMozTelephony;
-
     realVibrate = navigator.vibrate;
-
-    realLockscreen = window.lockScreen;
-    window.lockScreen = {locked: false};
   });
 
   suiteTeardown(function() {
+    MockNavigatorMozTelephony.mSuiteTeardown();
     navigator.mozTelephony = realTelephony;
     navigator.vibrate = realVibrate;
-    window.lockScreen = realLockscreen;
+    window.applications = realApplications;
   });
-
-  var CSORIGIN = window.location.origin.replace('system', 'callscreen') + '/';
 
   setup(function() {
     if (!('setVisible' in HTMLIFrameElement.prototype)) {
@@ -71,11 +56,13 @@ suite('system/DialerAgent', function() {
     setVisibleSpy = this.sinon.spy(HTMLIFrameElement.prototype, 'setVisible');
 
     this.sinon.useFakeTimers();
-    subject = new DialerAgent().start();
+    subject = new DialerAgent();
+    subject.start();
   });
 
   teardown(function() {
     subject.stop();
+    MockService.mTeardown();
     MockNavigatorMozTelephony.mTeardown();
   });
 
@@ -83,7 +70,20 @@ suite('system/DialerAgent', function() {
     this.state = state;
     this.addEventListener = function() {};
     this.removeEventListener = function() {};
+    this.hangUp = function() {};
   }
+
+  test('Should load tone player if just upgraded', function() {
+    window.toneUpgrader = {
+      perform: this.sinon.spy()
+    };
+    subject.stop();
+    MockService.mockQueryWith('justUpgraded', true);
+    subject.start();
+    assert.isTrue(window.toneUpgrader.perform.calledWith('ringtone'));
+    delete window.toneUpgrader;
+    subject.stop();
+  });
 
   suite('Audio element setup', function() {
     var mockAudio;
@@ -118,52 +118,10 @@ suite('system/DialerAgent', function() {
     });
   });
 
-  suite('Call screen setup', function() {
-    var csFrame;
-
-    setup(function() {
-      csFrame = MockAttentionScreen.attentionScreen.querySelector('iframe');
-    });
-
-    test('it should be named call_screen', function() {
-      assert.equal(csFrame.getAttribute('name'), 'call_screen');
-    });
-
-    test('it should be a mozbrowser iframe', function() {
-      assert.equal(csFrame.getAttribute('mozbrowser'), 'true');
-    });
-
-    test('it should be in process', function() {
-      assert.equal(csFrame.getAttribute('remote'), 'false');
-    });
-
-    test('it should be a mozapp', function() {
-      var manifestURL = CSORIGIN + 'manifest.webapp';
-      assert.equal(csFrame.getAttribute('mozapp'), manifestURL);
-    });
-
-    test('it should have the correct frameOrigin', function() {
-      assert.equal(csFrame.dataset.frameOrigin, CSORIGIN);
-    });
-
-    test('it should be hidden at first', function() {
-      assert.equal(csFrame.dataset.hidden, 'true');
-      sinon.assert.calledOnce(setVisibleSpy);
-      sinon.assert.calledWith(setVisibleSpy, false);
-    });
-
-    test('it should be preloaded', function() {
-      var src = CSORIGIN + 'index.html';
-      assert.equal(csFrame.src, src);
-      assert.equal(csFrame.dataset.preloaded, 'true');
-    });
-  });
-
   suite('When an incoming call comes in', function() {
     var vibrateSpy;
     var mockCall;
     var mockAudio;
-    var callScreen;
 
     setup(function() {
       vibrateSpy = this.sinon.spy();
@@ -178,45 +136,6 @@ suite('system/DialerAgent', function() {
       this.sinon.spy(mockCall, 'addEventListener');
       this.sinon.spy(mockCall, 'removeEventListener');
       MockNavigatorMozTelephony.calls = [mockCall];
-
-      callScreen = MockAttentionScreen.attentionScreen.querySelector('iframe');
-    });
-
-    suite('> Call screen opening', function() {
-      suite('> When the lockscreen is unlocked', function() {
-        test('it should open the call screen and force a hashchange',
-        function() {
-          var attentionSpy = this.sinon.spy(MockAttentionScreen, 'open');
-          callschanged();
-
-          var src = CSORIGIN + 'index.html#&timestamp=0';
-          assertAttentionScreen(src, attentionSpy);
-        });
-      });
-
-      suite('> When the lockscreen is locked', function() {
-        setup(function() {
-          lockScreen.locked = true;
-        });
-
-        teardown(function() {
-          lockScreen.locked = false;
-        });
-
-        test('it should open the call screen on #locked', function() {
-          var attentionSpy = this.sinon.spy(MockAttentionScreen, 'open');
-          callschanged();
-
-          var src = CSORIGIN + 'index.html#locked&timestamp=0';
-          assertAttentionScreen(src, attentionSpy);
-        });
-      });
-
-      test('it should set the callscreen visibility to true', function() {
-        callschanged();
-        sinon.assert.calledTwice(setVisibleSpy);
-        assert.isTrue(setVisibleSpy.lastCall.args[0]);
-      });
     });
 
     suite('if the vibration is enabled', function() {
@@ -248,6 +167,13 @@ suite('system/DialerAgent', function() {
         vibrateSpy.reset();
         this.sinon.clock.tick(600);
         assert.isTrue(vibrateSpy.notCalled);
+      });
+
+      test('it should stop when the user presses the power button', function() {
+        window.dispatchEvent(new CustomEvent('sleep'));
+        vibrateSpy.reset();
+        this.sinon.clock.tick(600);
+        sinon.assert.notCalled(vibrateSpy);
       });
     });
 
@@ -301,8 +227,8 @@ suite('system/DialerAgent', function() {
         callschanged();
       });
 
-      test('it should not play the ringtone', function() {
-        assert.isTrue(mockAudio.play.notCalled);
+      test('it should play the silent ringtone', function() {
+        sinon.assert.calledOnce(mockAudio.play);
       });
     });
 
@@ -337,6 +263,7 @@ suite('system/DialerAgent', function() {
       MockNavigatorMozTelephony.calls = [mockCall];
       callschanged();
       mockCall.addEventListener.yield();
+      mockCall.state = 'connected';
 
       secondCall = new MockCall('incoming');
       this.sinon.spy(secondCall, 'addEventListener');
@@ -348,16 +275,54 @@ suite('system/DialerAgent', function() {
       mockAudio = MockAudio.instances[0];
       this.sinon.spy(mockAudio, 'play');
 
+      this.sinon.spy(MockService, 'request');
+
       callschanged();
     });
 
-    suite('even if the vibration is enabled', function() {
+    test('it should show the callscreen', function() {
+      sinon.assert.calledOnce(MockService.request);
+      sinon.assert.calledWith(
+        MockService.request, 'AttentionWindowManager:showCallscreenWindow'
+      );
+    });
+
+    suite('if the vibration is enabled', function() {
       setup(function() {
         MockSettingsListener.mTriggerCallback('vibration.enabled', true);
+        callschanged();
       });
 
-      test('it should not vibrate', function() {
-        assert.isTrue(vibrateSpy.notCalled);
+      test('it should start vibrating', function() {
+        sinon.assert.calledWith(vibrateSpy, [200]);
+      });
+
+      test('it should vibrate every 600ms', function() {
+        this.sinon.clock.tick(600);
+        sinon.assert.calledTwice(vibrateSpy);
+        this.sinon.clock.tick(600);
+        sinon.assert.calledThrice(vibrateSpy);
+      });
+
+      test('it should stop when the call state changes', function() {
+        secondCall.addEventListener.yield();
+        vibrateSpy.reset();
+        this.sinon.clock.tick(600);
+        sinon.assert.notCalled(vibrateSpy);
+      });
+
+      test('it should stop when the user presses volume down', function() {
+        window.dispatchEvent(new CustomEvent('volumedown'));
+        vibrateSpy.reset();
+        this.sinon.clock.tick(600);
+        sinon.assert.notCalled(vibrateSpy);
+      });
+
+      test('it should stop when the user presses the power button', function() {
+        window.dispatchEvent(new CustomEvent('sleep'));
+        vibrateSpy.reset();
+        this.sinon.clock.tick(600);
+        sinon.assert.notCalled(vibrateSpy);
       });
     });
 
@@ -366,13 +331,10 @@ suite('system/DialerAgent', function() {
         MockSettingsListener.mTriggerCallback('audio.volume.notification', 7);
       });
 
-      test('it should not play', function() {
-        assert.isTrue(mockAudio.play.notCalled);
+      test('it should play the silent ringtone', function() {
+        assert.equal(mockAudio.volume, 0.0);
+        sinon.assert.called(mockAudio.play);
       });
-    });
-
-    test('it should not listen to the state changes of the call', function() {
-      assert.isTrue(secondCall.addEventListener.notCalled);
     });
   });
 
@@ -419,37 +381,6 @@ suite('system/DialerAgent', function() {
       callschanged();
       assert.isTrue(mockCall.addEventListener.notCalled);
     });
-
-    suite('> Call screen opening', function() {
-      suite('> When the lockscreen is unlocked', function() {
-        test('it should open the call screen', function() {
-          var attentionSpy = this.sinon.spy(MockAttentionScreen, 'open');
-          callschanged();
-
-          var src = CSORIGIN + 'index.html#&timestamp=0';
-          assertAttentionScreen(src, attentionSpy);
-        });
-      });
-
-      suite('> When the lockscreen is locked', function() {
-        setup(function() {
-          lockScreen.locked = true;
-        });
-
-        teardown(function() {
-          lockScreen.locked = false;
-        });
-
-        test('it should open the call screen on #locked and force a hashchange',
-        function() {
-          var attentionSpy = this.sinon.spy(MockAttentionScreen, 'open');
-          callschanged();
-
-          var src = CSORIGIN + 'index.html#locked&timestamp=0';
-          assertAttentionScreen(src, attentionSpy);
-        });
-      });
-    });
   });
 
   test('should throw if started twice', function(done) {
@@ -462,8 +393,10 @@ suite('system/DialerAgent', function() {
   });
 
   test('should not do anything if mozTelephony is unavailable', function() {
-    MockSettingsListener.mCallbacks = {};
+    subject.stop();
     MockAudio.mTeardown();
+
+    MockSettingsListener.mCallbacks = {};
     navigator.mozTelephony = undefined;
 
     subject = new DialerAgent();
@@ -473,5 +406,89 @@ suite('system/DialerAgent', function() {
     assert.deepEqual(MockSettingsListener.mCallbacks, {});
 
     navigator.mozTelephony = MockNavigatorMozTelephony;
+  });
+
+  suite('wake events', function() {
+    setup(function() {
+      this.sinon.spy(MockService, 'request');
+    });
+
+    test('during a call should turn on the screen', function() {
+      MockNavigatorMozTelephony.calls = [new MockCall()];
+      window.dispatchEvent(new CustomEvent('wake'));
+      sinon.assert.calledOnce(MockService.request);
+      sinon.assert.calledWith(MockService.request, 'turnScreenOn');
+    });
+
+    test('when not on a call should be ignored', function() {
+      window.dispatchEvent(new CustomEvent('wake'));
+      sinon.assert.notCalled(MockService.request);
+    });
+  });
+
+  suite('sleep events', function() {
+    test('when alerting stop playing the ringtone', function() {
+      var mockAudio = MockAudio.instances[0];
+
+      this.sinon.spy(mockAudio, 'pause');
+      MockNavigatorMozTelephony.calls = [new MockCall('incoming')];
+      MockNavigatorMozTelephony.mTriggerCallsChanged();
+      window.dispatchEvent(new CustomEvent('sleep'));
+      sinon.assert.calledOnce(mockAudio.pause);
+    });
+
+    test('when not alerting hang up all connected calls', function() {
+      var mockCalls = [ new MockCall() , new MockCall() ];
+
+      mockCalls.forEach((mockCall) => this.sinon.spy(mockCall, 'hangUp'));
+      MockNavigatorMozTelephony.calls = mockCalls;
+      window.dispatchEvent(new CustomEvent('sleep'));
+      mockCalls.forEach((mockCall) => sinon.assert.calledOnce(mockCall.hangUp));
+    });
+
+    test('when not alerting hang up the conference call', function() {
+      var mockCalls = [ new MockCall() , new MockCall() ];
+
+      MockNavigatorMozTelephony.conferenceGroup.calls = mockCalls;
+      this.sinon.spy(MockNavigatorMozTelephony.conferenceGroup, 'hangUp');
+      MockNavigatorMozTelephony.calls = mockCalls;
+      window.dispatchEvent(new CustomEvent('sleep'));
+      sinon.assert.calledOnce(MockNavigatorMozTelephony.conferenceGroup.hangUp);
+    });
+  });
+
+  suite('onCall', function() {
+    test('returns true when on a call', function() {
+      MockNavigatorMozTelephony.calls = [ new MockCall() ];
+
+      assert.isTrue(subject.onCall());
+    });
+
+    test('returns true when on a conference call', function() {
+      MockNavigatorMozTelephony.conferenceGroup.calls = [
+        new MockCall() , new MockCall()
+      ];
+
+      assert.isTrue(subject.onCall());
+    });
+
+    test('returns false when not on a call', function() {
+      assert.isFalse(subject.onCall());
+    });
+
+    test('registers as a service when the dialer service is alive', function() {
+      subject.stop();
+
+      this.sinon.spy(MockService, 'registerState');
+      this.sinon.spy(MockService, 'unregisterState');
+
+      subject = new DialerAgent();
+      subject.start();
+      sinon.assert.calledOnce(MockService.registerState);
+      sinon.assert.calledWith(MockService.registerState, 'onCall', subject);
+      subject.stop();
+      sinon.assert.calledOnce(MockService.unregisterState);
+      sinon.assert.calledWith(MockService.unregisterState, 'onCall', subject);
+    });
   });
 });

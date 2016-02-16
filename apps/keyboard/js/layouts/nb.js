@@ -1,9 +1,11 @@
 Keyboards.nb = {
   label: 'Norwegian Bokmal',
+  shortLabel: 'Nb',
   menuLabel: 'Norsk',
   imEngine: 'latin',
   autoCorrectLanguage: 'nb',
-  types: ['text', 'url', 'email'],
+  types: ['text', 'url', 'email', 'password'],
+  lang: 'nb',
   alt: {
     a: 'äáàâąã',
     e: 'éèêëę€',

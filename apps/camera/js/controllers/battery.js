@@ -27,7 +27,6 @@ function BatteryController(app) {
   this.battery = app.battery || navigator.battery || navigator.mozBattery;
   this.levels = app.settings.battery.get('levels');
   this.notification = app.views.notification;
-  this.localize = app.localize;
   this.bindEvents();
   this.updateStatus();
   debug('initialized');
@@ -42,6 +41,44 @@ BatteryController.prototype.bindEvents = function() {
   bind(this.battery, 'levelchange', this.updateStatus);
   bind(this.battery, 'chargingchange', this.updateStatus);
   this.app.on('change:batteryStatus', this.onStatusChange);
+  this.app.on('change:recording', this.updatePowerSave);
+
+  var mozSettings = navigator.mozSettings;
+  mozSettings.addObserver('powersave.enabled', this.onPowerSaveChange);
+  mozSettings.createLock().get('powersave.enabled').then(
+    this.onPowerSaveChange);
+};
+
+/**
+ * Callback from settings when the power save state changes.
+ *
+ * @private
+ */
+BatteryController.prototype.onPowerSaveChange = function(values) {
+  var value;
+  if (values.settingValue !== undefined) {
+    value = values.settingValue;
+  } else {
+    value = values['powersave.enabled'];
+  }
+  this.powerSaveEnabled = value;
+  this.updatePowerSave();
+};
+
+/**
+ * Emits powersave event if state has changed.
+ *
+ * @private
+ */
+BatteryController.prototype.updatePowerSave = function() {
+  var state = this.powerSaveEnabled && !this.app.get('recording');
+  if (this.powerSave === state) {
+    return;
+  }
+
+  this.powerSave = state;
+  debug('power save: ' + state);
+  this.app.emit('battery:powersave', state);
 };
 
 /**
@@ -53,15 +90,24 @@ BatteryController.prototype.bindEvents = function() {
 BatteryController.prototype.notifications = {
   low: {
     text: 'battery-low-text',
-    className: 'icon-battery-low'
+    attrs: {
+      'data-icon': 'battery-3',
+      'data-l10n-id': 'battery-low-indicator'
+    },
   },
   verylow: {
     text: 'battery-verylow-text',
-    className: 'icon-battery-verylow'
+    attrs: {
+      'data-icon': 'battery-1',
+      'data-l10n-id': 'battery-verylow-indicator'
+    }
   },
   critical: {
     text: 'battery-critical-text',
-    className: 'icon-battery-verylow',
+    attrs: {
+      'data-icon': 'battery-1',
+      'data-l10n-id': 'battery-critical-indicator'
+    },
     persistent: true
   }
 };
@@ -110,8 +156,9 @@ BatteryController.prototype.displayNotification = function(status) {
   if (!notification) { return; }
 
   this.lastNotification = this.notification.display({
-    text: this.localize(notification.text),
+    text: notification.text,
     className: notification.className,
+    attrs: notification.attrs,
     persistent: notification.persistent
   });
 };

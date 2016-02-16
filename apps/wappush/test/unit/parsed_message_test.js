@@ -1,12 +1,14 @@
 /* -*- Mode: js; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- /
 /* vim: set shiftwidth=2 tabstop=2 autoindent cindent expandtab: */
 
-/* global MocksHelper, ParsedMessage */
+/* global MockMessageDB, MocksHelper, ParsedMessage */
 
 'use strict';
 
-requireApp('wappush/test/unit/mock_messagedb.js');
-requireApp('wappush/js/parsed_message.js');
+require('/js/provisioning.js');
+require('/js/parsed_message.js');
+
+require('/test/unit/mock_messagedb.js');
 
 var mocksHelperParsedMessage = new MocksHelper([
   'MessageDB'
@@ -93,6 +95,18 @@ suite('ParsedMessage', function() {
         serviceId: 0
       },
 
+      invalid_delete: {
+        sender: '+31641600986',
+        contentType: 'text/vnd.wap.si',
+        content: '<si>' +
+                 '<indication action="delete"' +
+                 '            href="http://www.mozilla.org">' +
+                 'check this out' +
+                 '</indication>' +
+                 '</si>',
+        serviceId: 0
+      },
+
       sl: {
         sender: '+31641600986',
         contentType: 'text/vnd.wap.sl',
@@ -104,6 +118,25 @@ suite('ParsedMessage', function() {
         sender: '+31641600986',
         contentType: 'text/vnd.wap.sl',
         content: '<sl href="http://www.mozilla.org" action="execute-high"/>',
+        serviceId: 0
+      },
+
+      cp_noauth: {
+        sender: '22997',
+        contentType: 'text/vnd.wap.connectivity-xml',
+        content: '<wap-provisioningdoc></wap-provisioningdoc>',
+        serviceId: 0
+      },
+
+      cp_netwpin_checked_notpass: {
+        sender: '22997',
+        contentType: 'text/vnd.wap.connectivity-xml',
+        content: '<wap-provisioningdoc></wap-provisioningdoc>',
+        authInfo: {
+          sec: 'NETWPIN',
+          checked: true,
+          pass: false
+        },
         serviceId: 0
       },
 
@@ -171,6 +204,10 @@ suite('ParsedMessage', function() {
       assert.equal(message.action, 'signal-none');
     });
 
+    test('SI message with delete action but no si-id field', function() {
+      assert.isNull(ParsedMessage.from(messages.invalid_delete, timestamp));
+    });
+
     test('SL message', function() {
       var message = ParsedMessage.from(messages.sl, timestamp);
 
@@ -186,10 +223,55 @@ suite('ParsedMessage', function() {
       assert.equal(message.action, 'execute-high');
     });
 
+    test('OMA CP message without auth info', function() {
+      var message = ParsedMessage.from(messages.cp_noauth, timestamp);
+
+      assert.equal(message, null);
+    });
+
+    test('OMA CP message with NETWPIN auth info not authenticated', function() {
+      var message = ParsedMessage.from(messages.cp_netwpin_checked_notpass,
+                                       timestamp);
+
+      assert.equal(message, null);
+    });
+
     test('unsupported content', function() {
       var message = ParsedMessage.from(messages.unsupported, timestamp);
 
       assert.equal(message, null);
+    });
+  });
+
+  suite('ParsedMessage.load()', function() {
+    var jsonMessage;
+
+    suiteSetup(function() {
+      jsonMessage = ParsedMessage.from({
+        sender: '+31641600986',
+        contentType: 'text/vnd.wap.si',
+        content: '<si><indication>check this out</indication></si>',
+        serviceId: 0
+      }, 0).toJSON();
+    });
+
+    test('Successful retrieve a message', function(done) {
+      this.sinon.stub(MockMessageDB, 'retrieve').returns(
+        Promise.resolve(jsonMessage)
+      );
+
+      ParsedMessage.load(0).then(message => {
+        assert.instanceOf(message, ParsedMessage);
+      }).then(done, done);
+    });
+
+    test('Rejects if no message is found', function(done) {
+      this.sinon.stub(MockMessageDB, 'retrieve').returns(Promise.reject());
+
+      ParsedMessage.load(0).then(
+        () => assert.isTrue(false, 'Should not resolve the promise'),
+        () => {}
+      ).then(done, done);
     });
   });
 });

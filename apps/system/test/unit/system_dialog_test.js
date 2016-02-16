@@ -1,17 +1,18 @@
 'use strict';
-/* global MocksHelper, SystemDialog */
-
-mocha.globals(['BaseUI', 'AppWindowManager', 'LayoutManager',
-               'System', 'SystemDialog', 'dispatchEvent', 'stubById']);
+/* global MocksHelper, SystemDialog, MockService */
 
 requireApp('system/test/unit/mock_app_window_manager.js');
 requireApp('system/test/unit/mock_layout_manager.js');
 requireApp('system/test/unit/mock_system_dialog_manager.js');
+requireApp('system/test/unit/mock_keyboard_manager.js');
+requireApp('system/shared/test/unit/mocks/mock_service.js');
 
 var mocksForSystemDialog = new MocksHelper([
   'AppWindowManager',
   'LayoutManager',
-  'SystemDialogManager'
+  'SystemDialogManager',
+  'KeyboardManager',
+  'Service'
 ]).init();
 
 suite('system/SystemDialog', function() {
@@ -27,14 +28,17 @@ suite('system/SystemDialog', function() {
     stubById = this.sinon.stub(document, 'getElementById');
     stubById.returns(document.createElement('div'));
     stubDispatch = this.sinon.stub(window, 'dispatchEvent');
-    requireApp('system/js/system.js');
     requireApp('system/js/base_ui.js');
     requireApp('system/js/system_dialog.js', done);
+
+    MockService.mockQueryWith('LayoutManager.height', 320);
+    MockService.mockQueryWith('StatusBar.height', 30);
   });
 
   teardown(function() {
     stubById.restore();
     stubDispatch.restore();
+    window.layoutManager = null;
   });
 
   suite('Handle events', function() {
@@ -98,6 +102,19 @@ suite('system/SystemDialog', function() {
             return 'system-dialog-hide' === e.type;
           })),
         'the event has not been fired');
+    });
+
+    test('Hide when the dialog is open should close it first', function() {
+      var systemDialog = new window.SystemDialog(fakeOptions);
+      systemDialog.customID = fakeCustomID;
+      var stubOnHide = this.sinon.stub(systemDialog, 'onHide');
+      systemDialog.element = {
+        opened: true,
+        close: this.sinon.stub()
+      };
+      systemDialog.hide();
+      assert(systemDialog.element.close.called);
+      assert(!stubOnHide.called);
     });
 
     test('The attribute "onShow" should be called with reason ' +

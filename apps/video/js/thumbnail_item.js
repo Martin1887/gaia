@@ -1,10 +1,11 @@
+/* global MediaUtils,Sanitizer,VideoUtils */
 /**
  * ThumbnailItem is view object for a single video data. It renders video with
- * the ThumbnailItem.Template. Before use it, The template should be
- * initialized. ThumbnailItem keeps the referenced video data, while dispatching
- * tap event, it supplies the video data as the argument. ThumbnailItem wraps
- * the dom event to its owned addTapListener. When we need to change the
- * behavior to trigger tap, we may just change the implementation layer here.
+ * ThumbnailItem.view. ThumbnailItem keeps the referenced video data, while
+ * dispatching tap event, it supplies the video data as the argument.
+ * ThumbnailItem wraps the dom event to its owned addTapListener. When we need
+ * to change the behavior to trigger tap, we may just change the implementation
+ * layer here.
  *
  * If we need to mark a thumbnail as selected or context, we need to add/remove
  * the CSS classes of htmlNode property which is created within constructor.
@@ -38,6 +39,8 @@
  * Global Variables:
  *   titleMaxLines: the maximum lines of title field. The default value is 2.
  */
+'use strict';
+
 function ThumbnailItem(videoData) {
   if (!videoData) {
     throw new Error('videoData should not be null or undefined.');
@@ -58,10 +61,10 @@ function ThumbnailItem(videoData) {
 
   render();
 
-  function convertToDOM(htmlText) {
+  function convertToDOM(wrappedHTML) {
     // convert as DOM node
     var dummyDiv = document.createElement('div');
-    dummyDiv.innerHTML = htmlText;
+    dummyDiv.innerHTML = Sanitizer.unwrapSafeHTML(wrappedHTML);
 
     var domNode = dummyDiv.firstElementChild;
 
@@ -72,27 +75,19 @@ function ThumbnailItem(videoData) {
     _this.htmlNode = domNode;
     // This is the element that displays the image blob
     _this.posterNode = domNode.querySelector('.img');
-    // query details
     _this.detailNode = domNode.querySelector('.details');
-    // query title
     _this.titleNode = domNode.querySelector('.title');
-    // query unwatched.
     _this.unwatchedNode = domNode.querySelector('.unwatched');
+    _this.sizeNode = domNode.querySelector('.size-text');
   }
 
   // the main function to render everything to UI.
   function render() {
-    if (!ThumbnailItem.Template) {
-      throw new Error('Template is needed while rendering');
-    }
     // render title
     var duration = '';
     if (isFinite(_this.data.metadata.duration)) {
       duration = MediaUtils.formatDuration(_this.data.metadata.duration);
     }
-    // render size
-    var sizeText = isFinite(_this.data.size) ?
-                   MediaUtils.formatSize(_this.data.size) : '';
     // render type
     var videoType = '';
     if (_this.data.type) {
@@ -100,15 +95,14 @@ function ThumbnailItem(videoData) {
       videoType = (pos > -1 ? _this.data.type.slice(pos + 1) : _this.data.type);
     }
 
-    // popular html text
-    var htmlText = ThumbnailItem.Template.interpolate({
+    // populate html text
+    var wrappedHtmlText = ThumbnailItem.view({
       'title': _this.data.metadata.title,
-      'duration-text': duration,
-      'size-text': sizeText,
-      'type-text': videoType
+      'durationText': duration,
+      'typeText': videoType
     });
 
-    convertToDOM(htmlText);
+    convertToDOM(wrappedHtmlText);
 
     // This  is the image blob we display for the video.
     // If the video is part-way played, we display the bookmark image.
@@ -124,6 +118,9 @@ function ThumbnailItem(videoData) {
 
     // add click event listeners.
     _this.htmlNode.addEventListener('click', dispatchClick);
+
+    // Insert the video size with a localized version of "KB" or "MB".
+    _this.localize();
   }
 
   function dispatchClick() {
@@ -138,6 +135,23 @@ function ThumbnailItem(videoData) {
 }
 
 ThumbnailItem.titleMaxLines = 2;
+
+ThumbnailItem.view = function({title, durationText, typeText}) {
+  return Sanitizer.createSafeHTML `<li class="thumbnail" role="option">
+      <div class="inner">
+        <div class="unwatched"></div>
+        <img class="img" role="presentation"></img>
+        <div class="details">
+          <span class="title">${title}</span>
+          <span class="duration-text after line-break">${durationText}</span>
+          <span class="size-type-group">
+            <span class="size-text after"></span>
+            <span class="type-text after">${typeText}</span>
+          </span>
+        </div>
+      </div>
+    </li>`;
+};
 
 ThumbnailItem.prototype.addTapListener = function(listener) {
   if (!listener) {
@@ -177,12 +191,11 @@ ThumbnailItem.prototype.updatePoster = function(imageblob) {
     this.posterNode.classList.remove('default');
     var imageUri = URL.createObjectURL(imageblob);
     this.posterNode.dataset.uri = imageUri;
-    this.posterNode.style.backgroundImage = 'url(' + imageUri + ')';
+    this.posterNode.src = imageUri;
   } else {
     this.posterNode.classList.add('default');
     this.posterNode.dataset.uri = '';
-    this.posterNode.style.backgroundImage =
-      'url(style/images/default_thumbnail.png)';
+    this.posterNode.src = 'style/images/default_thumbnail.png';
   }
 };
 
@@ -190,7 +203,14 @@ ThumbnailItem.prototype.updateTitleText = function() {
   this.titleNode.textContent = VideoUtils.getTruncated(this.data.metadata.title,
                                         {
                                           node: this.titleNode,
-                                          maxLine: ThumbnailItem.titleMaxLines,
-                                          ellipsisIndex: 0
+                                          maxLine: ThumbnailItem.titleMaxLines
                                         });
+};
+
+ThumbnailItem.prototype.localize = function() {
+  if (this.sizeNode && isFinite(this.data.size)) {
+    MediaUtils.getLocalizedSizeTokens(this.data.size).then((args) => {
+      document.l10n.setAttributes(this.sizeNode, 'fileSize', args);
+    });
+  }
 };

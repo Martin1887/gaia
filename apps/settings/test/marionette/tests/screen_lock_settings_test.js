@@ -1,14 +1,23 @@
-/* global require, test, setup, marionette */
 'use strict';
 var Settings = require('../app/app'),
+    LockScreen = require('../../../../system/test/marionette/lib/lockscreen'),
+    LockScreenPasscodeUnlockActions = require(
+      '../../../../system/test/marionette/lib/' +
+      'lockscreen_passcode_unlock_actions'),
+    Promise = require('es6-promise').Promise, // jshint ignore:line
     assert = require('assert');
 
 marionette('manipulate screenLock settings', function() {
-  var client = marionette.client();
+  var client = marionette.client({
+    desiredCapabilities: { raisesAccessibilityExceptions: false }
+  });
   var settingsApp;
   var screenLockPanel;
+  var lockScreen;
+  var actions;
 
   setup(function() {
+    lockScreen = (new LockScreen()).start(client);
     settingsApp = new Settings(client);
     settingsApp.launch();
     // Navigate to the ScreenLock menu
@@ -53,8 +62,6 @@ marionette('manipulate screenLock settings', function() {
         'passcode is enabled');
       assert.ok(screenLockPanel.isPasscodeChecked(),
         'passcode is checked');
-      assert.equal(screenLockPanel.getPasscode(), oldCode,
-        'passcode is right');
 
       screenLockPanel.togglePasscodeLock();
       screenLockPanel.typePasscode(newCode);
@@ -79,8 +86,7 @@ marionette('manipulate screenLock settings', function() {
       'passcode is enabled');
     assert.ok(screenLockPanel.isPasscodeChecked(),
       'passcode is checked');
-    assert.equal(screenLockPanel.getPasscode(), rightCode,
-      'passcode is right');
+
 
     screenLockPanel.togglePasscodeLock();
     screenLockPanel.typePasscode(rightCode);
@@ -91,7 +97,7 @@ marionette('manipulate screenLock settings', function() {
       'passcode is not checked');
   });
 
-  test(
+  test.skip(
     'passcode is enabled and won\'t get disabled if you tap back button ' +
     'when we try to disable passcode directly',
     function() {
@@ -154,7 +160,7 @@ marionette('manipulate screenLock settings', function() {
     'passcode is enabled, and we want to edit passcode ' +
     'but failed to enter the right code',
     function() {
-      var oldCode = '1234';
+      var oldCode = '0000';
       var newCode = '4567';
       screenLockPanel.toggleScreenLock();
       screenLockPanel.togglePasscodeLock();
@@ -165,11 +171,11 @@ marionette('manipulate screenLock settings', function() {
         'passcode is enabled');
       assert.ok(screenLockPanel.isPasscodeChecked(),
         'passcode is checked');
-      assert.equal(screenLockPanel.getPasscode(), oldCode,
-        'passcode is right (with old code)');
+
 
       screenLockPanel.tapEditPasscode(newCode);
 
+      screenLockPanel.waitForElement('passcodeIncorrectLabel');
       assert.ok(screenLockPanel.isPasscodeIncorrect(),
         'passcode is not correct');
       assert.ok(screenLockPanel.isPasscodeLockEnabled(),
@@ -178,8 +184,7 @@ marionette('manipulate screenLock settings', function() {
         'passcode is still checked');
   });
 
-  // Disabled for intermittent failures. Bug 983171
-  test.skip('passcode is enabled, then get changed successfully', function() {
+  test('passcode is enabled, then get changed successfully', function() {
     var oldCode = '1234';
     var newCode = '4567';
     screenLockPanel.toggleScreenLock();
@@ -191,20 +196,14 @@ marionette('manipulate screenLock settings', function() {
       'passcode is enabled');
     assert.ok(screenLockPanel.isPasscodeChecked(),
       'passcode is checked');
-    assert.equal(screenLockPanel.getPasscode(), oldCode,
-      'passcode is right (with old code)');
 
     screenLockPanel.tapEditPasscode(oldCode);
     screenLockPanel.typePasscode(newCode, newCode);
     screenLockPanel.tapChangePasscode();
-
-    assert.equal(screenLockPanel.getPasscode(), newCode,
-      'passcode is right (with new code)');
   });
 
   // Disabled for intermittent failures. Bug 983171
-  test.skip(
-    'passcode is enabled, and we want to disable lockscreen directly ' +
+  test.skip('passcode is enabled, and we want to disable lockscreen directly ' +
     'but failed to enter the right code',
     function() {
       var rightCode = '1234';
@@ -241,5 +240,35 @@ marionette('manipulate screenLock settings', function() {
         'screenlock is not enabled');
       assert.ok(!screenLockPanel.isScreenLockChecked(),
         'screenlock is not checked');
+  });
+
+  test('passcode is enabled, and we want to lock and unlock the device',
+  function(done) {
+    var code = '1337';
+    screenLockPanel.toggleScreenLock();
+    screenLockPanel.togglePasscodeLock();
+    screenLockPanel.typePasscode(code, code);
+    screenLockPanel.tapCreatePasscode();
+    lockScreen.lock();
+
+    new Promise(function(resolve) {
+      actions = (new LockScreenPasscodeUnlockActions()).start(client);
+      return lockScreen.slideToUnlock(resolve);
+    })
+    .then(function() {
+      code.split('').forEach(function(keyChar) {
+        actions.pressKey(keyChar);
+      });
+    })
+    .then(function() {
+      return actions.waitForUnlock();
+    })
+    .then(function() {
+      settingsApp.switchTo();
+      assert.ok(screenLockPanel.isScreenLockHeaderLabelVisible(),
+        'has not returned to settings panel');
+    })
+    .then(done)
+    .catch(done);
   });
 });

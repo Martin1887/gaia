@@ -40,7 +40,7 @@
   "247": "Europe/Riga", 
   "248": "Europe/Tallinn", 
   "250": "Europe/Moscow", 
-  "255": "Europe/Kiev", 
+  "255": "Europe/Kyiv", 
   "257": "Europe/Minsk", 
   "259": "Europe/Chisinau", 
   "260": "Europe/Warsaw", 
@@ -162,7 +162,7 @@
   "732": "America/Bogota", 
   "734": "America/Caracas", 
   "738": "America/Guyana", 
-  "740": "Pacific/Galapagos", 
+  "740": "America/Quito", 
   "744": "America/Asuncion", 
   "748": "America/Montevideo"
 }

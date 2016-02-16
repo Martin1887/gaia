@@ -1,10 +1,13 @@
 Keyboards['bg-Pho-Ban'] = {
   label: 'Bulgarian (New)',
+  shortLabel: 'Bg',
   menuLabel: 'Български (БАН)',
-  types: ['text', 'url', 'email'],
+  types: ['text', 'url', 'email', 'password'],
   imEngine: 'latin',
   autoCorrectLanguage: 'bg',
+  basicLayoutKey: 'AБB',
   width: 11,
+  lang: 'bg',
   alt: {
     'и': 'ѝ'
   },

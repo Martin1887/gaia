@@ -1,5 +1,5 @@
-/* global _ */
 /* exported ContactsSIMExport */
+/* global ContactsService */
 'use strict';
 
 var ContactsSIMExport = function ContactsSIMExport(icc) {
@@ -8,6 +8,7 @@ var ContactsSIMExport = function ContactsSIMExport(icc) {
   var progressStep;
   var exported;
   var notExported;
+  var cancelled = false;
 
   var ERRORS = {
     'NoFreeRecordFound': false,
@@ -27,7 +28,7 @@ var ContactsSIMExport = function ContactsSIMExport(icc) {
   };
 
   var getExportTitle = function getExportTitle() {
-    return _('simExport-title');
+    return 'simExport-title';
   };
 
   var doExport = function doExport(finishCallback) {
@@ -98,15 +99,25 @@ var ContactsSIMExport = function ContactsSIMExport(icc) {
 
     theContact.url = theContact.url || [];
     theContact.url.push(_generateIccContactUrl(iccContact.id, _getIccId()));
-    var req = navigator.mozContacts.save(theContact);
-    req.onsuccess = cb;
-    req.onerror = function() {
-      errorCb(req.error);
-    };
+
+    ContactsService.save(
+      theContact,
+      function(e) {
+        if (e) {
+          errorCb(e);
+          return;
+        }
+        cb();
+      }
+    );
+  };
+
+  var cancelExport = function cancelExport() {
+    cancelled = true;
   };
 
   var _doExport = function _doExport(step, finishCallback) {
-    if (step == contacts.length) {
+    if (step == contacts.length || cancelled) {
       finishCallback(null, exported.length);
       return;
     }
@@ -177,6 +188,7 @@ var ContactsSIMExport = function ContactsSIMExport(icc) {
     'getExportTitle': getExportTitle,
     'doExport': doExport,
     'setProgressStep': setProgressStep,
+    'cancelExport' : cancelExport,
     get name() { return 'SIM';} // handling error messages on contacts_exporter
   };
 

@@ -13,18 +13,16 @@ marionette('Music player tests', function() {
   apps[FakeControls.DEFAULT_ORIGIN] = __dirname + '/fakecontrols';
 
   var client = marionette.client({
-    prefs: {
-      'device.storage.enabled': true,
-      'device.storage.testing': true,
-      'device.storage.prompt.testing': true
-    },
+    profile: {
+      prefs: {
+        'device.storage.enabled': true,
+        'device.storage.testing': true,
+        'device.storage.prompt.testing': true
+      },
 
-    settings: {
-      'lockscreen.enabled': false,
-      'ftu.manifestURL': null
+      apps: apps
     },
-
-    apps: apps
+    desiredCapabilities: { raisesAccessibilityExceptions: false }
   });
 
   var music;
@@ -34,7 +32,10 @@ marionette('Music player tests', function() {
 
     client.fileManager.removeAllFiles();
     client.fileManager.add([
-      { type: 'music', filePath: 'media-samples/Music/b2g.ogg' }
+      // Album = 'A Minute With Brendan'
+      // Artist = 'Minute With'
+      // Title = 'Boot To Gecko (B2G)'
+      { type: 'music', filePath: 'test_media/samples/Music/b2g.ogg' }
     ]);
   });
 
@@ -90,13 +91,13 @@ marionette('Music player tests', function() {
       controls = new FakeControls(client);
     });
 
-    test('Check that progress bar updates when re-shown', function() {
+    // Disabled See bug 1032037.
+    test.skip('Check that progress bar updates when re-shown', function() {
       music.launch();
       music.waitForFirstTile();
       music.switchToSongsView();
       music.playFirstSong();
 
-      var t0 = music.songProgress;
       var dt = 5.0;
 
       // We want to wait a few seconds while the music app is in the background.
@@ -105,11 +106,220 @@ marionette('Music player tests', function() {
       controls.playPause();
       controls.close();
 
+      // Try to get the songProgress when the music is still in the background
+      music.switchToMe({background: true});
+      var t0 = music.songProgress;
+
       // Make sure the progress bar got updated when the music app is brought to
       // the foreground.
-      music.switchToMe();
+      music.launch();
       var t1 = music.songProgress;
-      assert(t1 - t0 > dt * 0.9, 'Progress bar not updated!');
+      assert(t1 - t0 > 0, 'Progress bar not updated!');
     });
   });
+
+  suite('Player icon tests', function() {
+    test('Check the player icon hides before play some song', function() {
+      music.launch();
+      music.waitForFirstTile();
+      music.checkPlayerIconShown(false);
+    });
+
+    test('Check the player icon displays after play some song', function() {
+      music.launch();
+      music.waitForFirstTile();
+      music.switchToSongsView();
+      music.playFirstSong();
+      music.waitForPlayerView();
+
+      var frame = music.playerViewFrame;
+      assert.ok(frame);
+      client.switchToFrame(frame);
+
+      // Wait for cover overlay to hide to prevent intermittent fail
+      client.waitFor(function() {
+        var cover = client.findElement(Music.Selector.playerCover);
+        assert.ok(cover);
+        client.switchToShadowRoot(cover);
+        var container = client.findElement('#container');
+        assert.ok(container);
+        var isHidden = (container.getAttribute('class').split(' ').
+                        indexOf('show-overlay') === -1);
+        client.switchToShadowRoot();
+        return isHidden;
+      }.bind(this));
+
+      music.switchToMe();
+
+      music.tapHeaderActionButton();
+      music.waitForSongsView();
+      music.checkPlayerIconShown(true);
+    });
+  });
+
+  suite('Status bar', function() {
+
+    var statusbar;
+    setup(function() {
+      statusbar = new Statusbar(client);
+      music.launch();
+      music.waitForFirstTile();
+      music.switchToSongsView();
+
+      // check the status bar for the hidden play icon
+      client.switchToFrame();
+      statusbar.waitForPlayingIndicatorShown(false);
+
+      music.switchToMe();
+      music.playFirstSong();
+      music.waitForPlayerView();
+    });
+
+    test('Check the play icon is in the status bar. moztrap:9742', function() {
+      // check the status bar
+      client.switchToFrame();
+      statusbar.waitForPlayingIndicatorShown(true);
+
+      // switch to the homescreen
+      var system = client.loader.getAppClass('system');
+      system.goHome();
+      client.waitFor(function() {
+        return client.findElement(system.Selector.activeHomescreenFrame)
+          .displayed();
+      });
+
+      // check the status bar again
+      statusbar.waitForPlayingIndicatorShown(true);
+    });
+
+    test('Check the play icon is hidden after close Music app', function() {
+      // ensure statusbar icon is visible
+      client.switchToFrame();
+      statusbar.waitForPlayingIndicatorShown(true);
+
+      // close the music app
+      music.switchToMe();
+      music.close();
+
+      // make sure statusbar icon goes away
+      client.switchToFrame();
+      statusbar.waitForPlayingIndicatorShown(false);
+    });
+  });
+
+  suite('Rating test', function() {
+    test('Check Rating is saved. moztrap:2683', function() {
+      music.launch();
+      music.waitForFirstTile();
+      music.switchToSongsView();
+      music.playFirstSong();
+
+      // check there is no rating.
+      music.showSongInfo();
+
+      var rating = music.getStarRating();
+      assert.equal(rating, 0);
+
+      var rating_value = 4;
+      music.tapRating(rating_value);
+
+      // wait that the rating bar disappear.
+      music.waitForRatingOverlayHidden();
+
+      // tap to make the rating bar reappear.
+      music.showSongInfo();
+
+      rating = music.getStarRating();
+      assert.equal(rating, rating_value, 'Check rating is shown.');
+
+      // switch back and forth
+      music.tapHeaderActionButton();
+      music.playFirstSong();
+
+      rating = music.getStarRating();
+      assert.equal(rating, rating_value,
+                   'Incorrect rating after switching song.');
+
+      // close the app because we want to test things are saved.
+      music.close();
+
+      // start it over.
+      music.launch();
+      music.waitForFirstTile();
+      music.switchToSongsView();
+      music.playFirstSong();
+
+      rating = music.getStarRating();
+      assert.equal(rating, rating_value,
+                   'Incorrect rating after restarting.');
+    });
+  });
+
+  suite('Player navigation. moztrap:2376', function() {
+    test('Check that the back button works', function() {
+      var title;
+
+      music.launch();
+      music.waitForFirstTile();
+      music.switchToSongsView();
+      title = music.header.findElement('#header-title').text();
+      music.playFirstSong();
+      music.waitForPlayerView();
+      assert.notEqual(title,
+                      music.header.findElement('#header-title').text());
+      music.tapHeaderActionButton();
+      music.waitForSongsView();
+      client.switchToFrame(music.songsViewFrame);
+      music.firstSong;
+      music.switchToMe();
+      assert.equal(title,
+                   music.header.findElement('#header-title').text());
+
+      music.switchToAlbumsView();
+      music.selectAlbum('A Minute With Brendan');
+      title = music.header.findElement('#header-title').text();
+      music.playFirstSongByAlbum();
+      music.waitForPlayerView();
+      assert.notEqual(title,
+                      music.header.findElement('#header-title').text());
+      music.tapHeaderActionButton();
+      music.waitForAlbumDetailView();
+      client.switchToFrame(music.albumDetailViewFrame);
+      music.firstSong;
+      music.switchToMe();
+      assert.equal(title,
+                   music.header.findElement('#header-title').text());
+
+      music.switchToArtistsView();
+      music.selectArtist('Minute With');
+      title = music.header.findElement('#header-title').text();
+      music.playFirstSongByArtist();
+      music.waitForPlayerView();
+      assert.notEqual(title,
+                      music.header.findElement('#header-title').text());
+      music.tapHeaderActionButton();
+      music.waitForArtistDetailView();
+      client.switchToFrame(music.artistDetailViewFrame);
+      music.firstSong;
+      music.switchToMe();
+      assert.equal(title,
+                   music.header.findElement('#header-title').text());
+
+      music.switchToPlaylistsView();
+      music.selectPlaylist('Recently added');
+      title = music.header.findElement('#header-title').text();
+      music.playFirstSongByPlaylist();
+      music.waitForPlayerView();
+      assert.notEqual(title,
+                      music.header.findElement('#header-title').text());
+      music.tapHeaderActionButton();
+      music.waitForPlaylistDetailView();
+      client.switchToFrame(music.playlistDetailViewFrame);
+      music.firstSong;
+      music.switchToMe();
+      assert.equal(title,
+                   music.header.findElement('#header-title').text());
+    });
+  });
+
 });

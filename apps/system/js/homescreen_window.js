@@ -10,14 +10,23 @@
    *
    * @class HomescreenWindow
    * @param {String} manifestURL The manifestURL of the homescreen app.
+   * @extends AppWindow
    */
   var HomescreenWindow = function HomescreenWindow(manifestURL) {
     this.instanceID = 'homescreen';
     this.setBrowserConfig(manifestURL);
     this.render();
     this.publish('created');
+    this.createdTime = this.launchTime = Date.now();
     return this;
   };
+
+  /**
+   * A homescreen black-list of homescreens to not display the rocketbar on.
+   */
+  const ROCKETBAR_BLACKLIST = [
+    'app://verticalhome.gaiamobile.org/manifest.webapp'
+  ];
 
   /**
    * Fired when the homescreen window is created.
@@ -36,7 +45,11 @@
    * @event HomescreenWindow#homescreenopen
    */
   /**
-   * Fired when the homescreen window is cloing.
+   * Fired when the homescreen window is closed.
+   * @event HomescreenWindow#homescreenclosed
+   */
+  /**
+   * Fired when the homescreen window is closing.
    * @event HomescreenWindow#homescreenclosing
    */
   /**
@@ -62,7 +75,9 @@
    * @event HomescreenWindow#homescreenbackground
    */
 
-  HomescreenWindow.prototype.__proto__ = AppWindow.prototype;
+  HomescreenWindow.prototype = Object.create(AppWindow.prototype);
+
+  HomescreenWindow.prototype.constructor = HomescreenWindow;
 
   HomescreenWindow.prototype._DEBUG = false;
 
@@ -80,7 +95,10 @@
       this.url = app.origin + '/index.html#root';
 
       this.browser_config =
-        new BrowserConfigHelper(this.origin, this.manifestURL);
+        new BrowserConfigHelper({
+          url: this.origin,
+          manifestURL: this.manifestURL
+        });
 
       // Necessary for b2gperf now.
       this.name = this.browser_config.name;
@@ -91,17 +109,24 @@
       this.browser_config.isHomescreen = true;
       this.config = this.browser_config;
       this.isHomescreen = true;
+
+      if (ROCKETBAR_BLACKLIST.indexOf(app.manifestURL) === -1) {
+        this.config.chrome = {
+          maximized: true,
+          scrollable: true
+        };
+      }
     };
 
-  HomescreenWindow.REGISTERED_EVENTS =
-    ['_opening', '_localized', 'mozbrowserclose', 'mozbrowsererror',
-      'mozbrowservisibilitychange', 'mozbrowserloadend'];
+  HomescreenWindow.REGISTERED_EVENTS = AppWindow.REGISTERED_EVENTS;
 
   HomescreenWindow.SUB_COMPONENTS = {
-    'transitionController': window.AppTransitionController,
-    'modalDialog': window.AppModalDialog,
-    'authDialog': window.AppAuthenticationDialog,
-    'childWindowFactory': window.ChildWindowFactory
+    'transitionController': 'AppTransitionController',
+    'modalDialog': 'AppModalDialog',
+    'valueSelector': 'ValueSelector',
+    'authDialog': 'AppAuthenticationDialog',
+    'childWindowFactory': 'ChildWindowFactory',
+    'statusbar': 'AppStatusbar'
   };
 
   HomescreenWindow.prototype.openAnimation = 'zoom-out';
@@ -119,6 +144,7 @@
   HomescreenWindow.prototype._handle_mozbrowsererror =
     function hw__handle_mozbrowsererror(evt) {
       if (evt.detail.type == 'fatal') {
+        this.loaded = false;
         this.publish('crashed');
         this.restart();
       }
@@ -151,15 +177,12 @@
     }
   };
 
-  HomescreenWindow.prototype.kill = function hw_kill() {
-    this.destroy();
-    this.publish('terminated');
-  };
-
   HomescreenWindow.prototype.view = function hw_view() {
-    return '<div class="appWindow homescreen" id="homescreen">' +
-              '<div class="fade-overlay"></div>' +
-           '</div>';
+    var content = `<div class="appWindow homescreen" id="homescreen">
+              <div class="fade-overlay"></div>
+              <div class="browser-container"></div>
+           </div>`;
+    return content;
   };
 
   HomescreenWindow.prototype.eventPrefix = 'homescreen';
@@ -174,17 +197,33 @@
   // Ensure the homescreen is loaded and return its frame.  Restarts
   // the homescreen app if it was killed in the background.
   HomescreenWindow.prototype.ensure = function hw_ensure(reset) {
-    this.debug('ensuring homescreen...', this.frontWindow);
-    if (this.frontWindow) {
-      this.frontWindow.kill();
-    }
+    this.debug('ensuring homescreen...', this.frontWindow, reset);
     if (!this.element) {
       this.render();
     } else if (reset) {
-      this.browser.element.src = this.browser_config.url + new Date();
+      if (this.frontWindow) {
+        // Just kill front window but not switch to the first page.
+        this.frontWindow.kill();
+      } else {
+        var urlWithoutHash = this.browser_config.url.split('#')[0];
+        this.browser.element.src = urlWithoutHash + '#' + Date.now();
+      }
     }
 
     return this.element;
+  };
+
+  /**
+  *
+  * The homescreen instance always resizes if it's needed.
+  * (ie. the current layout is different from the current window dimensions)
+  * This helps with the back-to-homescreen transition.
+  *
+  */
+  HomescreenWindow.prototype.resize = function aw_resize() {
+    this.debug('request RESIZE...');
+    this.debug(' will resize... ');
+    return this._resize();
   };
 
   /**

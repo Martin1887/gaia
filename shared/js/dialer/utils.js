@@ -1,35 +1,84 @@
 'use strict';
 
+/* exported Utils */
+
 var Utils = {
   prettyDate: function ut_prettyDate(time) {
-    var _ = navigator.mozL10n.get;
-    var dtf = new navigator.mozL10n.DateTimeFormat();
-    return dtf.localeFormat(new Date(time), _('shortTimeFormat'));
+    var f = Intl.DateTimeFormat(navigator.languages, {
+      hour12: navigator.mozHour12,
+      hour: 'numeric',
+      minute: 'numeric'
+    });
+    return f.format(new Date(time));
   },
 
-  headerDate: function ut_headerDate(time) {
-    var _ = navigator.mozL10n.get;
-    var dtf = new navigator.mozL10n.DateTimeFormat();
-    var today = _('today');
-    var yesterday = _('yesterday');
+  /**
+   * Renders localized time duration to a given dom node
+   * @param {HTMLElement} node that will hold the time duration content
+   * @param {Number} time duration in ms
+   * @param {String} l10nPrefix prefix used to select the right l10n id.
+   *        Default value 'callDuration'.
+   */
+  prettyDuration: function(node, duration, l10nPrefix) {
+    var elapsed = new Date(duration);
+    var h = elapsed.getUTCHours();
+    var m = elapsed.getUTCMinutes();
+    var s = elapsed.getUTCSeconds();
+
+    var l10nId = l10nPrefix || 'callDuration';
+    var durationL10n = {
+      h: h + '',
+      m: m + '',
+      s: s + ''
+    };
+
+    if (l10nId === 'callDuration') {
+      // Pad the args with a leading 0 if we're displaying them in purely
+      // digital format.
+      durationL10n = {
+        h: (h > 9 ? '' : '0') + h,
+        m: (m > 9 ? '' : '0') + m,
+        s: (s > 9 ? '' : '0') + s
+      };
+    }
+
+    if (l10nPrefix === 'callDurationTextFormat' && h === 0 && m === 0) {
+      // Special case: only display in seconds format (i.e. "5 s") with text
+      // formatting, as digital formatting doesn't support this.
+      l10nId += 'Seconds';
+    } else {
+      l10nId += h > 0 ? 'Hours' : 'Minutes';
+    }
+ 
+    navigator.mozL10n.setAttributes(node, l10nId, durationL10n);
+  },
+
+  setHeaderDate: function ut_setHeaderDate(elem, time) {
     var diff = (Date.now() - time) / 1000;
     var day_diff = Math.floor(diff / 86400);
-    if (isNaN(day_diff))
-      return '(incorrect date)';
-    if (day_diff < 0 || diff < 0) {
-      return dtf.localeFormat(new Date(time), _('shortDateTimeFormat'));
+    var formattedTime;
+    if (isNaN(day_diff)) {
+      elem.setAttribute('data-l10n-id', 'incorrectDate');
+      return;
+    } else if (day_diff === 0) {
+      elem.setAttribute('data-l10n-id', 'today');
+      return;
+    } else if (day_diff === 1) {
+      elem.setAttribute('data-l10n-id', 'yesterday');
+      return;
+    } else if (day_diff < 6) {
+      formattedTime = (new Date(time)).toLocaleString(navigator.languages, {
+        weekday: 'long',
+      });
+    } else {
+      formattedTime = (new Date(time)).toLocaleString(navigator.languages, {
+        year: '2-digit',
+        month: '2-digit',
+        day: '2-digit'
+      });
     }
-    return day_diff == 0 && today ||
-      day_diff == 1 && yesterday ||
-      day_diff < 6 && dtf.localeFormat(new Date(time), '%A') ||
-      dtf.localeFormat(new Date(time), '%x');
-  },
-
-  getDayDate: function re_getDayDate(timestamp) {
-    var date = new Date(timestamp);
-    var startDate = new Date(date.getFullYear(),
-                             date.getMonth(), date.getDate());
-    return startDate.getTime();
+    elem.removeAttribute('data-l10n-id');
+    elem.textContent = formattedTime;
   },
 
   getPhoneNumberPrimaryInfo: function ut_getPhoneNumberPrimaryInfo(matchingTel,
@@ -53,6 +102,18 @@ var Utils = {
     });
   },
 
+  _phoneTypesL10n: {
+    'mobile':    'phone_type_mobile',
+    'home':      'phone_type_home',
+    'work':      'phone_type_work',
+    'personal':  'phone_type_personal',
+    'faxHome':   'phone_type_fax_home',
+    'faxOffice': 'phone_type_fax_office',
+    'faxOther':  'phone_type_fax_other',
+    'other':     'phone_type_other'
+  },
+
+
   /**
    * In case of a call linked to a contact, the additional information of the
    * phone number subject of the call consists in the type and carrier
@@ -67,108 +128,47 @@ var Utils = {
    * The type of the phone number will be localized if we have a matching key.
    */
   getPhoneNumberAdditionalInfo:
-    function ut_getPhoneNumberAdditionalInfo(matchingTel) {
-    var number = matchingTel.number || matchingTel.value;
-    if (!number) {
-      return;
-    }
-    var carrier = matchingTel.carrier;
+  function ut_getPhoneNumberAdditionalInfo(matchingTel) {
     // In case that there is no stored type for this number, we default to
     // "Mobile".
-    var type = matchingTel.type;
+    var type = matchingTel.type || 'mobile';
+    var carrier = matchingTel.carrier;
+
     if (Array.isArray(type)) {
       type = type[0];
     }
 
-    var _ = navigator.mozL10n.get;
+    var id;
+    var args = {};
 
-    var result = type ? _(type) : _('mobile');
-    result = result ? result : type; // no translation found for this type
 
-    if (carrier) {
-      result += ', ' + carrier;
+    if (this._phoneTypesL10n.hasOwnProperty(type)) {
+      id = this._phoneTypesL10n[type];
     } else {
-      result += ', ' + number;
+      id = 'phone_type_custom';
+      args.type = type;
     }
 
-    return result;
+    if (carrier) {
+      id += '_and_carrier';
+      args.carrier = carrier;
+    }
+
+    return {
+      id:   id,
+      args: Object.keys(args).length ? args : null
+    };
   },
 
-  addEllipsis: function ut_addEllipsis(view, fakeView, ellipsisSide) {
-    var side = ellipsisSide || 'begin';
-    LazyL10n.get(function localized(_) {
-      var localizedSide;
-      if (navigator.mozL10n.language.direction === 'rtl') {
-        localizedSide = (side === 'begin' ? 'right' : 'left');
-      } else {
-        localizedSide = (side === 'begin' ? 'left' : 'right');
-      }
-      var computedStyle = window.getComputedStyle(view, null);
-      var currentFontSize = parseInt(
-        computedStyle.getPropertyValue('font-size')
-      );
-      var viewWidth = view.getBoundingClientRect().width;
-      fakeView.style.fontSize = currentFontSize + 'px';
-      fakeView.style.fontWeight = computedStyle.getPropertyValue('font-weight');
-      fakeView.innerHTML = view.value ? view.value : view.innerHTML;
-
-      var value = fakeView.innerHTML;
-
-      // Guess the possible position of the ellipsis in order to minimize
-      // the following while loop iterations:
-      var counter = value.length -
-        (viewWidth *
-         (fakeView.textContent.length /
-           fakeView.getBoundingClientRect().width));
-
-      var newPhoneNumber;
-      while (fakeView.getBoundingClientRect().width > viewWidth) {
-
-        if (localizedSide == 'left') {
-          newPhoneNumber = '\u2026' + value.substr(-value.length + counter);
-        } else if (localizedSide == 'right') {
-          newPhoneNumber = value.substr(0, value.length - counter) + '\u2026';
-        }
-
-        fakeView.innerHTML = newPhoneNumber;
-        counter++;
-      }
-
-      if (newPhoneNumber) {
-        if (view.value) {
-          view.value = newPhoneNumber;
-        } else {
-          view.innerHTML = newPhoneNumber;
-        }
-      }
-    });
-  },
-
-  getNextFontSize:
-    function ut_getNextFontSize(view, fakeView, maxFontSize,
-      minFontSize, fontStep) {
-        var computedStyle = window.getComputedStyle(view, null);
-        var fontSize = parseInt(computedStyle.getPropertyValue('font-size'));
-        var viewWidth = view.getBoundingClientRect().width;
-        var viewHeight = view.getBoundingClientRect().height;
-        fakeView.style.fontSize = fontSize + 'px';
-        fakeView.innerHTML = (view.value ? view.value : view.innerHTML);
-
-        var rect = fakeView.getBoundingClientRect();
-
-        while ((rect.width < viewWidth) && (fontSize < maxFontSize)) {
-          fontSize = Math.min(fontSize + fontStep, maxFontSize);
-          fakeView.style.fontSize = fontSize + 'px';
-          rect = fakeView.getBoundingClientRect();
-        }
-
-        while ((rect.width > viewWidth) && (fontSize > minFontSize)) {
-          fontSize = Math.max(fontSize - fontStep, minFontSize);
-          fakeView.style.fontSize = fontSize + 'px';
-          rect = fakeView.getBoundingClientRect();
-        }
-
-        return fontSize;
+  /**
+   * Checks if the passed string is one of the predefined phone types that we
+   * localize when displayed.
+   *
+   * @param {String} type A string representing the phone type
+   * @return {Boolean} true if the string is one of the predefined phone types,
+   *         false otherwise.
+   */
+  isPhoneType: function ut_isPhoneType(type) {
+    return this._phoneTypesL10n.hasOwnProperty(type);
   }
 };
-

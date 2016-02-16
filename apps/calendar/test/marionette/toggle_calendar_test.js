@@ -5,28 +5,29 @@ var Calendar = require('./lib/calendar'),
 
 marionette('toggle calendar', function() {
   var app;
-  var client = marionette.client();
+  var client = marionette.client({
+    profile: {
+      prefs: {
+        // we need to disable the keyboard to avoid intermittent failures on
+        // Travis (transitions might take longer to run and block UI)
+        'dom.mozInputMethod.enabled': false,
+        // Do not require the B2G-desktop app window to have focus (as per the
+        // system window manager) in order for it to do focus-related things.
+        'focusmanager.testmode': true,
+      }
+    },
+    desiredCapabilities: { raisesAccessibilityExceptions: false }
+  });
 
   setup(function() {
     app = new Calendar(client);
-    app.launch({ hideSwipeHint: true });
+    app.launch();
   });
 
   function toggleLocalCalendar() {
     app.openSettingsView();
     app.settings.toggleCalendar();
     app.closeSettingsView();
-  }
-
-  // the UI only gets updated after a few ms (data is persisted asynchronously
-  // and after a delay), so we need to wait "displayed" value to change - will
-  // timeout on test failure
-  function waitForElement(el) {
-    client.helper.waitForElement(el);
-  }
-
-  function waitForElementToDisappear(el) {
-    client.helper.waitForElementToDisappear(el);
   }
 
   suite('> regular event', function() {
@@ -40,41 +41,24 @@ marionette('toggle calendar', function() {
 
     suite('disable calendar', function() {
       test('month view', function() {
-        var event = app.monthDay.events[0];
-        waitForElementToDisappear(event);
-        // we cannot hide hour since there might be other events from different
-        // calendars that happens at same time (which would also be hidden)
-        // this behavior is better than previous one and will be changed after
-        // we implement the visual refresh (it's a good compromise)
-        var hour = client.helper.closest(event, '.hour');
-        assert(
-          hour.displayed(),
-          'hour should be displayed on month view'
-        );
+        client.waitFor(function() {
+          return app.monthDay.events.length === 0;
+        });
+        assert.equal(app.month.busyDots.length, 0, 'no busy dots');
       });
 
       test('week view', function() {
         app.openWeekView();
-        waitForElementToDisappear(app.week.events[0]);
+        client.waitFor(function() {
+          return app.week.events.length === 0;
+        });
       });
 
-      // Disabled bug 1007519
-      test.skip('day view', function() {
+      test('day view', function() {
         app.openDayView();
-        var event = app.day.events[0];
-        waitForElementToDisappear(event);
-
-        // on day view hour can't be hidden otherwise it affects events on other
-        // calendars and it also looks weird
-        var hour = client.helper.closest(event, '.hour');
-        assert(
-          hour.displayed(),
-          'hour should be displayed on day view'
-        );
-
-        // clicking on hour should trigger add event screen
-        hour.click();
-        app.editEvent.waitForDisplay();
+        client.waitFor(function() {
+          return app.day.events.length === 0;
+        });
       });
     });
 
@@ -82,17 +66,23 @@ marionette('toggle calendar', function() {
       setup(toggleLocalCalendar);
 
       test('month view', function() {
-        waitForElement(app.monthDay.events[0]);
+        client.waitFor(function() {
+          return app.monthDay.events.length;
+        });
       });
 
       test('week view', function() {
         app.openWeekView();
-        waitForElement(app.week.events[0]);
+        client.waitFor(function() {
+          return app.week.events.length;
+        });
       });
 
       test('day view', function() {
         app.openDayView();
-        waitForElement(app.day.events[0]);
+        client.waitFor(function() {
+          return app.day.events.length;
+        });
       });
     });
   });
@@ -109,10 +99,11 @@ marionette('toggle calendar', function() {
 
     test('should not hide all day on day view', function() {
       app.openDayView();
-      var event = app.day.events[0];
-      waitForElementToDisappear(event);
+      client.waitFor(function() {
+        return app.day.events.length === 0;
+      });
       assert.ok(
-        client.helper.closest(event, '.hour-allday').displayed(),
+        app.day.allDaysHolder.displayed(),
         'all day should be displayed'
       );
     });

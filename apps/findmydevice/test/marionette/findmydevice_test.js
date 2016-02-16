@@ -1,18 +1,19 @@
 'use strict';
+/* global __dirname */
 
 marionette('Find My Device lock >', function() {
   var assert = require('assert');
 
   var FINDMYDEVICE_TEST_APP = 'app://test-findmydevice.gaiamobile.org';
+  var SETTINGS_DIGEST_VALUE = 'lockscreen.passcode-lock.digest.value';
 
   var client = marionette.client({
-    prefs: {
-      'dom.inter-app-communication-api.enabled': true
-    },
-    settings: {
-      'ftu.manifestURL': null,
-      'lockscreen.enabled': false
-    },
+    profile: {
+      apps: {
+        'test-findmydevice.gaiamobile.org':
+          __dirname + '/fixtures/test-findmydevice',
+      }
+    }
   });
 
   setup(function() {
@@ -27,6 +28,9 @@ marionette('Find My Device lock >', function() {
     var messageInput = client.findElement('input[name="message"]');
     messageInput.sendKeys(messageText);
 
+    client.switchToFrame();
+    var oldDigest = client.settings.get(SETTINGS_DIGEST_VALUE);
+    client.apps.switchToApp(FINDMYDEVICE_TEST_APP);
     var passcode = '4567';
     var passcodeInput = client.findElement('input[name="code"]');
     passcodeInput.sendKeys(passcode);
@@ -34,6 +38,8 @@ marionette('Find My Device lock >', function() {
     var lockButton = client.findElement('#lock');
     lockButton.click();
 
+    // XXX: After we make LockScreen as an iframe or app, this should be the
+    // line to switch to LockScreen frame.
     client.switchToFrame();
     var lockscreen = client.findElement('#lockscreen');
     client.waitFor(function() {
@@ -51,16 +57,50 @@ marionette('Find My Device lock >', function() {
       return false;
     });
 
+    // sanity-check the settings we should have set
     var settings = {
       'lockscreen.enabled': true,
       'lockscreen.passcode-lock.enabled': true,
       'lockscreen.notifications-preview.enabled': false,
       'lockscreen.lock-message': messageText,
-      'lockscreen.passcode-lock.code': passcode
     };
-
     for (var s in settings) {
       assert.equal(client.settings.get(s), settings[s]);
     }
+    // checking if passcode was changed:
+    var newDigest = client.settings.get(SETTINGS_DIGEST_VALUE);
+    assert.notEqual(newDigest, oldDigest);
+
+    client.switchToFrame();
+
+    // now unlock the screen and re-lock it, the message should disappear
+    client.executeScript(function() {
+      window.wrappedJSObject.Service.request('unlock');
+    });
+
+    client.waitFor(function() {
+      return client.executeScript(function() {
+        return !window.wrappedJSObject.Service.locked;
+      });
+    });
+
+    client.executeScript(function() {
+      window.wrappedJSObject.Service.request('lock');
+    });
+
+    // XXX: After we make LockScreen as an iframe or app, this should be the
+    // line to switch to LockScreen frame.
+    client.switchToFrame();
+    lockscreen = client.findElement('#lockscreen');
+    client.waitFor(function() {
+      return lockscreen.displayed();
+    });
+
+    lockscreenMessage = client.findElement('#lockscreen-message');
+    client.waitFor(function() {
+      return !lockscreenMessage.displayed();
+    });
+
+    assert.equal(client.settings.get('lockscreen.lock-message'), '');
   });
 });

@@ -2,7 +2,6 @@ define(function(require) {
 'use strict';
 
 var Utils = require('utils');
-var mozL10n = require('l10n');
 var AudioManager = require('audio_manager');
 var PostMessageProxy = require('./panels/alarm/post_message_proxy');
 var ChildWindowManager = require('./panels/alarm/child_window_manager');
@@ -13,22 +12,41 @@ var ChildWindowManager = require('./panels/alarm/child_window_manager');
  * ideally it would display all events that fire, but currently it
  * only shows the most recent event.
  */
+
+function whenDocumentReady() {
+  return new Promise(function(resolve, reject) {
+    if (document.readyState === 'complete') {
+      resolve();
+    } else {
+      const listener = function() {
+        if (document.readyState === 'complete') {
+          resolve();
+          document.removeEventListener('readystatechange', listener);
+        }
+      };
+      document.addEventListener('readystatechange', listener);
+    }
+  });
+}
+
 function RingView() {
   this.alerts = [];
-  this.ringtonePlayer = AudioManager.createAudioPlayer({
-    interruptHandler: this
-  });
+  this.ringtonePlayer = AudioManager.createAudioPlayer();
 
   this.snoozeButton.addEventListener('click', this.onClickSnooze.bind(this));
   this.closeButton.addEventListener('click', this.onClickClose.bind(this));
   window.addEventListener('beforeunload', this.onBeforeUnload.bind(this));
+  window.addEventListener('timeformatchange', this.refreshDisplay.bind(this));
 
   this.activeAlarm = PostMessageProxy.create(window.opener, 'activeAlarm');
 
   PostMessageProxy.receive('ringView', this);
 
   if (window.opener) {
-    mozL10n.ready(() => {
+    // We have to wait for the document.readyState to be complete before
+    // we fireReady. Otherwise, when the screen is off, it doesn't get
+    // turned back on at all
+    whenDocumentReady().then(() => {
       ChildWindowManager.fireReady();
     });
   }
@@ -37,7 +55,7 @@ function RingView() {
 // The time, in milliseconds, to keep the screen awake while showing
 // an alarm. After this time, the screen shuts off and the alarm
 // silences itself.
-const WAKE_DURATION = 600000;
+const WAKE_DURATION = 10 * 60 * 1000;
 
 RingView.prototype = {
 
@@ -63,6 +81,15 @@ RingView.prototype = {
     }
 
     alert.releaseScreenWakeLock = function() { };
+
+    if (this._silenceTimeout) {
+      clearTimeout(this._silenceTimeout);
+      this._silenceTimeout = null;
+    }
+    this._silenceTimeout = setTimeout(() => {
+      this.silence();
+      alert.releaseScreenWakeLock();
+    }, WAKE_DURATION);
 
     // Insert this alert at the front of the stack, so that it
     // overrides any previous alert that was being displayed.
@@ -106,14 +133,36 @@ RingView.prototype = {
     var alert = this.alerts[0];
 
     // Set the label (blank or falsey becomes a default string).
-    this.ringLabel.textContent = alert.label ||
-      mozL10n.get(alert.type === 'alarm' ? 'alarm' : 'timer');
+    if (alert.label) {
+      this.ringLabel.removeAttribute('data-l10n-id');
+      this.ringLabel.textContent = alert.label;
+    } else {
+      this.ringLabel.setAttribute('data-l10n-id',
+                                  alert.type === 'alarm' ? 'alarm' : 'timer');
+    }
 
     // Display the proper screen widgets.
     this.ringDisplay.dataset.ringType = alert.type;
 
+    var displayedTime;
+    if (alert.type === 'alarm') {
+      // Display the time as specified with "hour" and "minute". The timestamp
+      // stored by mozAlarms does not move when the timezone changes, so we
+      // cannot just use the value stored in '.time'. See
+      // https://bugzilla.mozilla.org/show_bug.cgi?id=1178208#c4
+      displayedTime = new Date();
+      displayedTime.setHours(alert.hour);
+      displayedTime.setMinutes(alert.minute);
+    } else {
+      // XXX: Timers may be affected by timezone changes just like alarms, but
+      // the fix here is not as straightforward, since we cannot take the
+      // same shortcut as above. Since timers are rarely used across timezone
+      // changes (unlike alarms), I'm punting on this for now.
+      displayedTime = alert.time;
+    }
+
     // Set the time to display.
-    this.time.innerHTML = Utils.getLocalizedTimeHtml(alert.time);
+    this.time.innerHTML = Utils.getLocalizedTimeText(displayedTime);
 
     if (alert.sound) {
       this.ringtonePlayer.playRingtone(alert.sound);
@@ -147,16 +196,6 @@ RingView.prototype = {
     // Stop vibrating, if we were shakin'.
     clearInterval(this.vibrateInterval);
     this.vibrateInterval = null;
-  },
-
-  /**
-   * Handle an interrupt as reported from the Audio player. This could
-   * happen if an incoming call arrives while the alert is ringing. We
-   * should silence our alarm to allow the phone call to take
-   * precedence.
-   */
-  onInterrupt: function(evt) {
-    this.silence();
   },
 
   /**

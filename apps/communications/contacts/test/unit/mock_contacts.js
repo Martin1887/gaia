@@ -1,63 +1,26 @@
 'use strict';
-/* global MockNavigationStack */
-/* global ConfirmDialog */
 /* exported MockContacts */
+/* exported COMMS_APP_ORIGIN */
+
+var COMMS_APP_ORIGIN = location.origin;
+
+var loadAsyncScriptsDeferred = {};
+loadAsyncScriptsDeferred.promise = new Promise((resolve) => {
+  loadAsyncScriptsDeferred.resolve = resolve;
+});
 
 var MockContacts = {
-  getLength: function(prop) {
-    return prop.length;
-  },
   isEmpty: function(prop) {
     return false;
-  },
-  updatePhoto: function(photo, dest) {
-    dest.setAttribute('backgroundImage', photo);
-  },
-  getTags: function() {
-    return {
-      'phone-type' : [
-        {type: 'mobile', value: 'Mobile'},
-        {type: 'home', value: 'Home'},
-        {type: 'work', value: 'Work'},
-        {type: 'personal', value: 'Personal'},
-        {type: 'faxHome', value: 'FaxHome'},
-        {type: 'faxOffice', value: 'Fax Office'},
-        {type: 'faxOther', value: 'Fax Other'},
-        {type: 'other', value: 'Other'}
-      ],
-      'email-type' : [
-        {type: 'personal', value: 'Personal'},
-        {type: 'home', value: 'Home'},
-        {type: 'work', value: 'Work'}
-      ],
-      'address-type' : [
-        {type: 'home', value: 'Home'},
-        {type: 'work', value: 'Work'}
-      ],
-      'date-type': [
-        {type: 'birthday', value: 'Birthday'},
-        {type: 'anniversary', value: 'Anniversary'}
-      ]
-    };
   },
   hideOverlay: function() {
   },
   loadFacebook: function(cb) {
     cb();
   },
-  asyncScriptsLoaded: true,
   cardStateChanged: function() {
   },
-  extServices: {
-    importLive: function() {},
-    importGmail: function() {}
-  },
-  navigation: new MockNavigationStack(),
-  checkCancelableActivity: function() {},
   cancel: function() {},
-  confirmDialog: function() {
-    ConfirmDialog.show.apply(ConfirmDialog, arguments);
-  },
   utility: function(view, callback, type) {
     callback();
   },
@@ -72,11 +35,17 @@ var MockContacts = {
       'update': function() {}
     };
   },
-  showStatus: function(status) {},
-  updateSelectCountTitle: function(count) {},
   goBack: function(cb) {
     if (typeof cb === 'function') {
       cb();
     }
-  }
+  },
+  setCurrent: function(ct) {
+
+  },
+  get asyncScriptsLoaded() {
+    loadAsyncScriptsDeferred.resolve();
+    return loadAsyncScriptsDeferred.promise;
+  },
+  showForm: function() {}
 };
